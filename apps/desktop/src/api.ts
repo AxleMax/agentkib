@@ -1,0 +1,32 @@
+import { invoke } from "@tauri-apps/api/core";
+import type { ActivityRecord, AgentInstallation, AgentKind, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, Manifest, MemoryRecord, MemoryStatus, MemoryType, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary } from "./types";
+
+export const api = {
+  scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
+  manifest: (project: string) => invoke<Manifest>("prepare_manifest", { project }),
+  plan: (project: string, manifest: Manifest, includeHome: boolean) => invoke<ChangeSet>("plan_changes", { project, manifest, includeHome }),
+  apply: (changeSet: ChangeSet, approveHome: boolean) => invoke("apply_changes", { changeSet, approveHome }),
+  context: (project: string, cwd: string, agent: AgentKind) => invoke<ContextPreview>("resolve_context", { project, cwd, agent }),
+  memories: (project: string, status?: MemoryStatus) => invoke<MemoryRecord[]>("list_memories", { project, status }),
+  searchMemories: (project: string, query: string, limit = 50) => invoke<MemoryRecord[]>("search_memories", { project, query, limit }),
+  proposeMemory: (project: string, content: string, memoryType: MemoryType) => invoke<MemoryRecord>("propose_memory", { project, proposal: { project_id: "", memory_type: memoryType, content, source_agent: "agenthub-desktop" } }),
+  reviewMemory: (id: string, status: MemoryStatus, editedContent?: string) => invoke<MemoryRecord>("review_memory", { id, status, editedContent }),
+  runtime: () => invoke<RuntimeInfo>("runtime_info"),
+  setCloseBehavior: (behavior?: CloseBehavior) => invoke<void>("set_close_behavior", { behavior: behavior ?? null }),
+  installMcp: () => invoke<string>("install_mcp"),
+  discoverWorkspaces: () => invoke<DiscoveryReport>("discover_workspaces"),
+  workspaces: () => invoke<WorkspaceSummary[]>("list_workspaces"),
+  workspace: (id: string) => invoke<WorkspaceSummary | undefined>("get_workspace", { id }),
+  addWorkspace: (path: string) => invoke<WorkspaceSummary>("add_workspace", { path }),
+  refreshWorkspace: (id: string) => invoke<WorkspaceSummary>("refresh_workspace", { id }),
+  excludeWorkspace: (id: string) => invoke<void>("exclude_workspace", { id }),
+  excludedWorkspaces: () => invoke<ExcludedWorkspace[]>("list_excluded_workspaces"),
+  restoreExcludedWorkspace: (path: string) => invoke<void>("restore_excluded_workspace", { path }),
+  scanRoots: () => invoke<ScanRoot[]>("list_scan_roots"),
+  addScanRoot: (path: string, maxDepth = 5) => invoke<ScanRoot>("add_scan_root", { path, maxDepth }),
+  removeScanRoot: (id: string) => invoke<void>("remove_scan_root", { id }),
+  agentInstallations: () => invoke<AgentInstallation[]>("list_agent_installations"),
+  catalogAssets: (query = "", agent?: AgentKind, workspaceId?: string, limit = 500) => invoke<CatalogAsset[]>("search_catalog_assets", { query, agent, workspaceId, limit }),
+  globalMemories: (status?: MemoryStatus) => invoke<MemoryRecord[]>("list_global_memories", { status }),
+  activity: (limit = 200) => invoke<ActivityRecord[]>("list_activity", { limit }),
+};

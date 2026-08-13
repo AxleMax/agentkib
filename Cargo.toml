@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/desktop/src-tauri",
+  "crates/agenthub-core",
+  "crates/agenthub-adapters",
+  "crates/agenthub-discovery",
+  "crates/agenthub-store",
+  "crates/agenthub-cli",
+  "crates/agenthub-mcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+agenthub-core = { path = "crates/agenthub-core" }
+agenthub-adapters = { path = "crates/agenthub-adapters" }
+agenthub-discovery = { path = "crates/agenthub-discovery" }
+agenthub-store = { path = "crates/agenthub-store" }
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6.0"
+hex = "0.4"
+json5 = "0.4"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+sha2 = "0.10"
+tempfile = "3.20"
+thiserror = "2.0"
+toml = "0.9"
+uuid = { version = "1.17", features = ["v4", "serde"] }
+walkdir = "2.5"

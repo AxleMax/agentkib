@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+work/
+outputs/
+.DS_Store
+*.log
+*.tsbuildinfo
+.agenthub-local/
+apps/desktop/vite.config.js
+apps/desktop/vite.config.d.ts
+apps/desktop/src-tauri/binaries/*
+!apps/desktop/src-tauri/binaries/.gitkeep
+apps/desktop/src-tauri/gen/
