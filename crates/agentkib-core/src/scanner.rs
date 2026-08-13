@@ -101,62 +101,96 @@ fn validate_native_config(path: &Path) -> Option<String> {
     } else {
         None
     };
-    error.map(|error| format!("配置文件损坏：{}（{}）", path.display(), error))
+    error.map(|error| {
+        format!(
+            "Configuration file is invalid: {} ({})",
+            path.display(),
+            error
+        )
+    })
 }
 
 fn candidates(agent: AgentKind) -> Vec<(&'static str, AssetKind, &'static str)> {
     match agent {
         AgentKind::Codex => vec![
-            ("AGENTS.md", AssetKind::Instruction, "Codex 项目指令"),
-            (".agents/skills", AssetKind::Skill, "共享 Agent Skill"),
+            (
+                "AGENTS.md",
+                AssetKind::Instruction,
+                "Codex project instructions",
+            ),
+            (".agents/skills", AssetKind::Skill, "Shared Agent Skill"),
             (
                 ".codex/config.toml",
                 AssetKind::Configuration,
-                "Codex 项目配置",
+                "Codex project configuration",
             ),
-            (".codex/agents", AssetKind::Agent, "Codex 自定义 Agent"),
+            (".codex/agents", AssetKind::Agent, "Codex custom Agent"),
             (".codex/hooks.json", AssetKind::Hook, "Codex Hooks"),
         ],
         AgentKind::ClaudeCode => vec![
-            ("CLAUDE.md", AssetKind::Instruction, "Claude Code 项目指令"),
+            (
+                "CLAUDE.md",
+                AssetKind::Instruction,
+                "Claude Code project instructions",
+            ),
             (
                 ".claude/CLAUDE.md",
                 AssetKind::Instruction,
-                "Claude Code 项目指令",
+                "Claude Code project instructions",
             ),
             (
                 ".claude/rules",
                 AssetKind::Instruction,
-                "Claude Code 目录规则",
+                "Claude Code directory rules",
             ),
             (".claude/skills", AssetKind::Skill, "Claude Code Skills"),
             (".claude/agents", AssetKind::Agent, "Claude Code Subagents"),
             (
                 ".claude/settings.json",
                 AssetKind::Configuration,
-                "Claude Code 设置",
+                "Claude Code settings",
             ),
             (".mcp.json", AssetKind::Connection, "Claude Code MCP"),
         ],
         AgentKind::OpenClaw => vec![
-            ("AGENTS.md", AssetKind::Instruction, "OpenClaw 工作区指令"),
-            ("SOUL.md", AssetKind::Instruction, "OpenClaw 人格"),
-            ("IDENTITY.md", AssetKind::Instruction, "OpenClaw 身份"),
-            ("USER.md", AssetKind::Memory, "OpenClaw 用户画像"),
-            ("MEMORY.md", AssetKind::Memory, "OpenClaw 长期记忆"),
-            ("TOOLS.md", AssetKind::Configuration, "OpenClaw 工具说明"),
+            (
+                "AGENTS.md",
+                AssetKind::Instruction,
+                "OpenClaw workspace instructions",
+            ),
+            ("SOUL.md", AssetKind::Instruction, "OpenClaw persona"),
+            ("IDENTITY.md", AssetKind::Instruction, "OpenClaw identity"),
+            ("USER.md", AssetKind::Memory, "OpenClaw user profile"),
+            ("MEMORY.md", AssetKind::Memory, "OpenClaw long-term memory"),
+            ("TOOLS.md", AssetKind::Configuration, "OpenClaw tool notes"),
             ("skills", AssetKind::Skill, "OpenClaw Workspace Skills"),
-            (".agents/skills", AssetKind::Skill, "共享 Agent Skill"),
+            (".agents/skills", AssetKind::Skill, "Shared Agent Skill"),
         ],
         AgentKind::Hermes => vec![
-            (".hermes.md", AssetKind::Instruction, "Hermes 项目指令"),
-            ("HERMES.md", AssetKind::Instruction, "Hermes 项目指令"),
-            ("AGENTS.md", AssetKind::Instruction, "Hermes 兼容项目指令"),
-            ("CLAUDE.md", AssetKind::Instruction, "Hermes 兼容项目指令"),
+            (
+                ".hermes.md",
+                AssetKind::Instruction,
+                "Hermes project instructions",
+            ),
+            (
+                "HERMES.md",
+                AssetKind::Instruction,
+                "Hermes project instructions",
+            ),
+            (
+                "AGENTS.md",
+                AssetKind::Instruction,
+                "Hermes-compatible project instructions",
+            ),
+            (
+                "CLAUDE.md",
+                AssetKind::Instruction,
+                "Hermes-compatible project instructions",
+            ),
             (
                 ".cursorrules",
                 AssetKind::Instruction,
-                "Hermes Cursor 兼容规则",
+                "Hermes Cursor-compatible rules",
             ),
         ],
     }
@@ -171,7 +205,27 @@ fn record(agent: AgentKind, kind: AssetKind, path: PathBuf, summary: &str) -> Re
         exists: true,
         size: metadata.len(),
         summary: summary.into(),
+        summary_key: summary_translation_key(summary).map(str::to_string),
+        summary_params: Default::default(),
     })
+}
+
+fn summary_translation_key(summary: &str) -> Option<&'static str> {
+    if summary.contains("Codex") && summary.to_ascii_lowercase().contains("instruction") {
+        Some("assets.summary.codexInstructions")
+    } else if summary.contains("Claude Code") && summary.contains("instruction") {
+        Some("assets.summary.claudeInstructions")
+    } else if summary.contains("OpenClaw") && summary.contains("instruction") {
+        Some("assets.summary.openClawInstructions")
+    } else if summary.contains("Hermes") && summary.contains("instruction") {
+        Some("assets.summary.hermesInstructions")
+    } else if summary.contains("Skill") {
+        Some("assets.summary.skillDirectory")
+    } else if summary.contains("MCP") {
+        Some("assets.summary.mcpConfig")
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -188,7 +242,7 @@ mod tests {
         assert!(
             scan.warnings
                 .iter()
-                .any(|warning| warning.contains("配置文件损坏"))
+                .any(|warning| warning.contains("Configuration file is invalid"))
         );
         assert_eq!(
             scan.agents

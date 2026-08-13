@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -25,7 +26,36 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 
-type CommandResult<T> = Result<T, String>;
+mod i18n;
+use i18n::{LocalePreference, SupportedLocale, translate};
+
+type CommandResult<T> = Result<T, LocalizedMessage>;
+
+#[derive(Debug, Clone, Serialize)]
+struct LocalizedMessage {
+    key: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    params: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+impl LocalizedMessage {
+    fn new(key: &str) -> Self {
+        Self {
+            key: key.into(),
+            params: BTreeMap::new(),
+            detail: None,
+        }
+    }
+
+    fn with_detail(key: &str, detail: impl Into<String>) -> Self {
+        Self {
+            detail: Some(detail.into()),
+            ..Self::new(key)
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -36,12 +66,17 @@ enum CloseBehavior {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct DesktopPreferences {
+    #[serde(default)]
     close_behavior: Option<CloseBehavior>,
+    #[serde(default)]
+    locale_preference: LocalePreference,
 }
 
 #[derive(Debug)]
 struct LifecycleState {
     close_behavior: Mutex<Option<CloseBehavior>>,
+    locale_preference: Mutex<LocalePreference>,
+    effective_locale: Mutex<SupportedLocale>,
     close_prompt_open: AtomicBool,
     quitting: AtomicBool,
 }
@@ -58,20 +93,42 @@ struct InsightsRuntime {
 }
 
 impl LifecycleState {
-    fn new(close_behavior: Option<CloseBehavior>) -> Self {
+    fn new(preferences: &DesktopPreferences) -> Self {
+        let effective_locale = preferences.locale_preference.effective();
         Self {
-            close_behavior: Mutex::new(close_behavior),
+            close_behavior: Mutex::new(preferences.close_behavior),
+            locale_preference: Mutex::new(preferences.locale_preference),
+            effective_locale: Mutex::new(effective_locale),
             close_prompt_open: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
         }
     }
 
     fn close_behavior(&self) -> Option<CloseBehavior> {
-        *self.close_behavior.lock().expect("关闭行为状态锁已损坏")
+        *self
+            .close_behavior
+            .lock()
+            .expect("Close behavior state lock is poisoned")
     }
 
     fn set_close_behavior(&self, value: Option<CloseBehavior>) {
-        *self.close_behavior.lock().expect("关闭行为状态锁已损坏") = value;
+        *self
+            .close_behavior
+            .lock()
+            .expect("Close behavior state lock is poisoned") = value;
+    }
+
+    fn locale_preference(&self) -> LocalePreference {
+        *self.locale_preference.lock().expect("locale state lock")
+    }
+
+    fn effective_locale(&self) -> SupportedLocale {
+        *self.effective_locale.lock().expect("locale state lock")
+    }
+
+    fn set_locale(&self, preference: LocalePreference, effective: SupportedLocale) {
+        *self.locale_preference.lock().expect("locale state lock") = preference;
+        *self.effective_locale.lock().expect("locale state lock") = effective;
     }
 }
 
@@ -84,6 +141,8 @@ struct RuntimeInfo {
     openclaw_config: Option<PathBuf>,
     hermes_config: Option<PathBuf>,
     close_behavior: Option<CloseBehavior>,
+    locale_preference: LocalePreference,
+    effective_locale: SupportedLocale,
 }
 
 #[tauri::command]
@@ -431,7 +490,11 @@ fn review_memory(
 }
 
 #[tauri::command]
-fn runtime_info(state: tauri::State<'_, Arc<LifecycleState>>) -> CommandResult<RuntimeInfo> {
+fn runtime_info(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<LifecycleState>>,
+) -> CommandResult<RuntimeInfo> {
+    refresh_system_locale(&app, state.inner());
     let data_dir = default_data_dir().map_err(format_error)?;
     let mcp_install_path = data_dir.join("bin/agentkib-mcp");
     Ok(RuntimeInfo {
@@ -442,6 +505,8 @@ fn runtime_info(state: tauri::State<'_, Arc<LifecycleState>>) -> CommandResult<R
         openclaw_config: default_home_targets().openclaw_config,
         hermes_config: default_home_targets().hermes_config,
         close_behavior: state.close_behavior(),
+        locale_preference: state.locale_preference(),
+        effective_locale: state.effective_locale(),
     })
 }
 
@@ -450,19 +515,38 @@ fn set_close_behavior(
     behavior: Option<CloseBehavior>,
     state: tauri::State<'_, Arc<LifecycleState>>,
 ) -> CommandResult<()> {
-    save_close_behavior(behavior).map_err(format_error)?;
+    update_preferences(|preferences| preferences.close_behavior = behavior)
+        .map_err(format_error)?;
     state.set_close_behavior(behavior);
     Ok(())
 }
 
 #[tauri::command]
+fn set_locale(
+    preference: LocalePreference,
+    app: AppHandle,
+    state: tauri::State<'_, Arc<LifecycleState>>,
+) -> CommandResult<RuntimeInfo> {
+    update_preferences(|preferences| preferences.locale_preference = preference)
+        .map_err(format_error)?;
+    state.set_locale(preference, preference.effective());
+    refresh_tray_status(&app).map_err(format_error)?;
+    runtime_info(app, state)
+}
+
+#[tauri::command]
 fn install_mcp(app: AppHandle) -> CommandResult<PathBuf> {
     let source = locate_mcp_binary(&app)
-        .ok_or_else(|| "找不到随应用构建的 agentkib-mcp，请先运行 build:mcp".to_string())?;
+        .ok_or_else(|| LocalizedMessage::with_detail("errors.mcpMissing", "run build:mcp"))?;
     let target = default_data_dir()
         .map_err(format_error)?
         .join("bin/agentkib-mcp");
-    fs::create_dir_all(target.parent().expect("MCP 安装路径必须有父目录")).map_err(format_error)?;
+    fs::create_dir_all(
+        target
+            .parent()
+            .expect("MCP installation path must have a parent directory"),
+    )
+    .map_err(format_error)?;
     let temp = target.with_extension("tmp");
     fs::copy(source, &temp).map_err(format_error)?;
     #[cfg(unix)]
@@ -525,9 +609,11 @@ fn preferences_path() -> anyhow::Result<PathBuf> {
     Ok(default_data_dir()?.join("preferences.json"))
 }
 
-fn load_close_behavior() -> Option<CloseBehavior> {
-    let path = preferences_path().ok()?;
-    load_preferences(&path).ok()?.close_behavior
+fn load_desktop_preferences() -> DesktopPreferences {
+    let Ok(path) = preferences_path() else {
+        return DesktopPreferences::default();
+    };
+    load_preferences(&path).unwrap_or_default()
 }
 
 fn load_preferences(path: &Path) -> anyhow::Result<DesktopPreferences> {
@@ -537,20 +623,28 @@ fn load_preferences(path: &Path) -> anyhow::Result<DesktopPreferences> {
     Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
 }
 
-fn save_close_behavior(behavior: Option<CloseBehavior>) -> anyhow::Result<()> {
+fn update_preferences(update: impl FnOnce(&mut DesktopPreferences)) -> anyhow::Result<()> {
     let path = preferences_path()?;
-    save_preferences(
-        &path,
-        &DesktopPreferences {
-            close_behavior: behavior,
-        },
-    )
+    let mut preferences = load_preferences(&path)?;
+    update(&mut preferences);
+    save_preferences(&path, &preferences)
+}
+
+fn refresh_system_locale(app: &AppHandle, lifecycle: &LifecycleState) {
+    if lifecycle.locale_preference() != LocalePreference::System {
+        return;
+    }
+    let effective = LocalePreference::System.effective();
+    if lifecycle.effective_locale() != effective {
+        lifecycle.set_locale(LocalePreference::System, effective);
+        let _ = refresh_tray_status(app);
+    }
 }
 
 fn save_preferences(path: &Path, preferences: &DesktopPreferences) -> anyhow::Result<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("偏好设置路径缺少父目录"))?;
+        .ok_or_else(|| anyhow::anyhow!("Preferences path has no parent directory"))?;
     fs::create_dir_all(parent)?;
     let temp = path.with_extension("tmp");
     fs::write(
@@ -602,26 +696,33 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
     if lifecycle.close_prompt_open.swap(true, Ordering::SeqCst) {
         return;
     }
+    let locale = lifecycle.effective_locale();
+    let hide_label = translate(locale, "dialog.close.hide", &[]);
+    let quit_label = translate(locale, "dialog.close.quit", &[]);
     app.dialog()
-        .message("AgentKib 可以隐藏到菜单栏并继续在后台运行。以后可在 Settings 中修改此行为。")
-        .title("关闭 AgentKib")
+        .message(translate(locale, "dialog.close.message", &[]))
+        .title(translate(locale, "dialog.close.title", &[]))
         .parent(window)
         .buttons(MessageDialogButtons::YesNoCancelCustom(
-            "最小化到菜单栏".into(),
-            "退出 AgentKib".into(),
-            "取消".into(),
+            hide_label.clone(),
+            quit_label.clone(),
+            translate(locale, "dialog.close.cancel", &[]),
         ))
         .show_with_result(move |result| {
             lifecycle.close_prompt_open.store(false, Ordering::SeqCst);
             match result {
-                MessageDialogResult::Custom(label) if label == "最小化到菜单栏" => {
+                MessageDialogResult::Custom(label) if label == hide_label => {
                     lifecycle.set_close_behavior(Some(CloseBehavior::MinimizeToTray));
-                    let _ = save_close_behavior(Some(CloseBehavior::MinimizeToTray));
+                    let _ = update_preferences(|preferences| {
+                        preferences.close_behavior = Some(CloseBehavior::MinimizeToTray);
+                    });
                     hide_to_tray(&app);
                 }
-                MessageDialogResult::Custom(label) if label == "退出 AgentKib" => {
+                MessageDialogResult::Custom(label) if label == quit_label => {
                     lifecycle.set_close_behavior(Some(CloseBehavior::Quit));
-                    let _ = save_close_behavior(Some(CloseBehavior::Quit));
+                    let _ = update_preferences(|preferences| {
+                        preferences.close_behavior = Some(CloseBehavior::Quit);
+                    });
                     request_real_exit(&app, &lifecycle);
                 }
                 _ => {}
@@ -633,16 +734,17 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::menu::MenuBuilder;
     use tauri::tray::TrayIconBuilder;
 
+    let locale = app.state::<Arc<LifecycleState>>().effective_locale();
     let menu = MenuBuilder::new(app)
-        .text("show", "打开 AgentKib")
-        .text("status", "正在发现工作区…")
-        .text("refresh", "立即刷新")
+        .text("show", translate(locale, "tray.open", &[]))
+        .text("status", translate(locale, "tray.refreshing", &[]))
+        .text("refresh", translate(locale, "tray.refresh", &[]))
         .separator()
-        .text("quit", "退出 AgentKib")
+        .text("quit", translate(locale, "tray.quit", &[]))
         .build()?;
     let mut tray = TrayIconBuilder::with_id("agentkib-status")
         .menu(&menu)
-        .tooltip("AgentKib · 本地 Agent 资产")
+        .tooltip(translate(locale, "tray.tooltip", &[]))
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
@@ -673,9 +775,9 @@ fn perform_discovery(app: &AppHandle, state: &DiscoveryRuntime) -> CommandResult
         return state
             .last_report
             .lock()
-            .expect("发现状态锁已损坏")
+            .expect("Discovery state lock is poisoned")
             .clone()
-            .ok_or_else(|| "工作区发现正在运行".to_string());
+            .ok_or_else(|| LocalizedMessage::new("errors.discoveryRunning"));
     }
     let result = (|| -> anyhow::Result<DiscoveryReport> {
         let store = Store::open_default()?;
@@ -698,7 +800,10 @@ fn perform_discovery(app: &AppHandle, state: &DiscoveryRuntime) -> CommandResult
     state.running.store(false, Ordering::SeqCst);
     match result {
         Ok(report) => {
-            *state.last_report.lock().expect("发现状态锁已损坏") = Some(report.clone());
+            *state
+                .last_report
+                .lock()
+                .expect("Discovery state lock is poisoned") = Some(report.clone());
             let _ = app.emit("agentkib:discovery-updated", &report);
             let _ = refresh_tray_status(app);
             Ok(report)
@@ -716,25 +821,34 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .iter()
         .filter(|workspace| !matches!(workspace.status, agentkib_core::WorkspaceStatus::Healthy))
         .count();
+    let locale = app.state::<Arc<LifecycleState>>().effective_locale();
     let menu = MenuBuilder::new(app)
-        .text("show", "打开 AgentKib")
+        .text("show", translate(locale, "tray.open", &[]))
         .text(
             "status",
-            format!("{} 个工作区 · {} 项待处理", workspaces.len(), attention),
+            translate(
+                locale,
+                "tray.status",
+                &[
+                    ("workspaces", workspaces.len().to_string()),
+                    ("attention", attention.to_string()),
+                ],
+            ),
         )
-        .text("refresh", "立即刷新")
+        .text("refresh", translate(locale, "tray.refresh", &[]))
         .separator()
-        .text("quit", "退出 AgentKib")
+        .text("quit", translate(locale, "tray.quit", &[]))
         .build()?;
     if let Some(tray) = app.tray_by_id("agentkib-status") {
         tray.set_menu(Some(menu))?;
+        tray.set_tooltip(Some(translate(locale, "tray.tooltip", &[])))?;
     }
     Ok(())
 }
 
 fn perform_insights(app: &AppHandle, state: &InsightsRuntime) -> CommandResult<InsightsSummary> {
     if state.running.swap(true, Ordering::SeqCst) {
-        return Err("成就统计正在刷新".to_string());
+        return Err(LocalizedMessage::new("errors.insightsRunning"));
     }
     let result = (|| -> anyhow::Result<InsightsSummary> {
         let store = Store::open_default()?;
@@ -769,13 +883,14 @@ fn start_discovery_scheduler(app: AppHandle) {
     });
 }
 
-fn format_error(error: impl std::fmt::Display) -> String {
-    error.to_string()
+fn format_error(error: impl std::fmt::Display) -> LocalizedMessage {
+    LocalizedMessage::with_detail("errors.generic", error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let lifecycle = Arc::new(LifecycleState::new(load_close_behavior()));
+    let preferences = load_desktop_preferences();
+    let lifecycle = Arc::new(LifecycleState::new(&preferences));
     let discovery = Arc::new(DiscoveryRuntime::default());
     let insights = Arc::new(InsightsRuntime::default());
     let app = tauri::Builder::default()
@@ -835,10 +950,11 @@ pub fn run() {
             review_memory,
             runtime_info,
             set_close_behavior,
+            set_locale,
             install_mcp
         ])
         .build(tauri::generate_context!())
-        .expect("构建 AgentKib 失败");
+        .expect("Failed to build AgentKib");
     app.run(|app, event| match event {
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             let lifecycle = app.state::<Arc<LifecycleState>>();
@@ -865,12 +981,17 @@ mod tests {
             &path,
             &DesktopPreferences {
                 close_behavior: Some(CloseBehavior::MinimizeToTray),
+                locale_preference: LocalePreference::JaJp,
             },
         )
         .unwrap();
         assert_eq!(
             load_preferences(&path).unwrap().close_behavior,
             Some(CloseBehavior::MinimizeToTray)
+        );
+        assert_eq!(
+            load_preferences(&path).unwrap().locale_preference,
+            LocalePreference::JaJp
         );
     }
 
@@ -883,5 +1004,15 @@ mod tests {
                 .close_behavior,
             None
         );
+    }
+
+    #[test]
+    fn old_preferences_default_to_system_locale() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("preferences.json");
+        fs::write(&path, r#"{"close_behavior":"quit"}"#).unwrap();
+        let preferences = load_preferences(&path).unwrap();
+        assert_eq!(preferences.close_behavior, Some(CloseBehavior::Quit));
+        assert_eq!(preferences.locale_preference, LocalePreference::System);
     }
 }

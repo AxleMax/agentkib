@@ -112,7 +112,10 @@ fn discover_scoped_instructions(project: &Path) -> Result<Vec<agentkib_core::Sco
         if !entry.file_type().is_file() || entry.file_name() != "AGENTS.md" {
             continue;
         }
-        let parent = entry.path().parent().context("目录级规则缺少父目录")?;
+        let parent = entry
+            .path()
+            .parent()
+            .context("Scoped rule has no parent directory")?;
         let relative = parent.strip_prefix(project)?;
         scoped.push(agentkib_core::ScopedInstruction {
             path: relative.display().to_string(),
@@ -146,7 +149,8 @@ fn claude_platform_override(content: &str) -> Option<String> {
         .lines()
         .filter(|line| {
             let line = line.trim();
-            line != "@AGENTS.md" && line != "Claude Code 使用 AGENTS.md 作为共享项目规则。"
+            line != "@AGENTS.md"
+                && line != "Claude Code uses AGENTS.md as the shared project instructions."
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -209,7 +213,8 @@ pub fn plan_workspace_changes(
             .map(String::as_str)
             .unwrap_or_default();
         let claude_content = if claude_override.trim().is_empty() {
-            "@AGENTS.md\n\nClaude Code 使用 AGENTS.md 作为共享项目规则。".to_string()
+            "@AGENTS.md\n\nClaude Code uses AGENTS.md as the shared project instructions."
+                .to_string()
         } else {
             format!("@AGENTS.md\n\n{claude_override}")
         };
@@ -485,14 +490,17 @@ fn skill_source_files(
     let source = root.join(&skill.path);
     let canonical = source
         .canonicalize()
-        .with_context(|| format!("Skill 路径不存在：{}", source.display()))?;
+        .with_context(|| format!("Skill path does not exist: {}", source.display()))?;
     if !canonical.starts_with(root) {
-        anyhow::bail!("Skill 路径必须位于项目内：{}", source.display());
+        anyhow::bail!(
+            "Skill path must be inside the project: {}",
+            source.display()
+        );
     }
     if canonical.is_file() {
         let file_name = canonical
             .file_name()
-            .context("Skill 文件缺少文件名")?
+            .context("Skill file has no filename")?
             .into();
         return Ok(vec![(file_name, read_skill_text(&canonical)?)]);
     }
@@ -505,7 +513,10 @@ fn skill_source_files(
         }
         let path = entry.path().canonicalize()?;
         if !path.starts_with(root) {
-            anyhow::bail!("Skill 文件必须位于项目内：{}", entry.path().display());
+            anyhow::bail!(
+                "Skill file must be inside the project: {}",
+                entry.path().display()
+            );
         }
         let relative = path.strip_prefix(&canonical)?.to_path_buf();
         files.push((relative, read_skill_text(&path)?));
@@ -517,7 +528,7 @@ fn skill_source_files(
 fn read_skill_text(path: &Path) -> Result<String> {
     fs::read_to_string(path).with_context(|| {
         format!(
-            "Skill 首版仅支持 UTF-8 文本资产，无法读取：{}",
+            "The MVP supports only UTF-8 text Skill assets; could not read: {}",
             path.display()
         )
     })
@@ -578,8 +589,12 @@ fn push_change(
     validator: &str,
 ) -> Result<()> {
     let before = if target.exists() {
-        fs::read_to_string(&target)
-            .with_context(|| format!("无法读取现有配置：{}", target.display()))?
+        fs::read_to_string(&target).with_context(|| {
+            format!(
+                "Could not read existing configuration: {}",
+                target.display()
+            )
+        })?
     } else {
         String::new()
     };
@@ -634,7 +649,7 @@ fn merge_codex_config(path: &Path, connections: &[ConnectionDefinition]) -> Resu
             let table = format!("[mcp_servers.{}]", safe_key(&connection.name));
             if existing.lines().any(|line| line.trim() == table) {
                 anyhow::bail!(
-                    "Codex 配置已存在未受 AgentKib 管理的同名 MCP：{}。为避免覆盖平台专属字段，请先重命名其中一方或手动迁移到 AgentKib。",
+                    "Codex configuration already contains an unmanaged MCP with the same name: {}. Rename one entry or migrate it to AgentKib to preserve platform-specific fields.",
                     connection.name
                 );
             }
@@ -694,7 +709,7 @@ fn merge_claude_mcp(path: &Path, connections: &[ConnectionDefinition]) -> Result
         .entry("mcpServers")
         .or_insert_with(|| JsonValue::Object(JsonMap::new()))
         .as_object_mut()
-        .context(".mcp.json 的 mcpServers 必须是对象")?;
+        .context("mcpServers in .mcp.json must be an object")?;
     for connection in connections
         .iter()
         .filter(|value| targeted(value, AgentKind::ClaudeCode))
@@ -710,12 +725,12 @@ fn merge_openclaw(path: &Path, connections: &[ConnectionDefinition]) -> Result<S
         .entry("mcp")
         .or_insert_with(|| JsonValue::Object(JsonMap::new()))
         .as_object_mut()
-        .context("OpenClaw mcp 必须是对象")?;
+        .context("OpenClaw mcp must be an object")?;
     let servers = mcp
         .entry("servers")
         .or_insert_with(|| JsonValue::Object(JsonMap::new()))
         .as_object_mut()
-        .context("OpenClaw mcp.servers 必须是对象")?;
+        .context("OpenClaw mcp.servers must be an object")?;
     for connection in connections
         .iter()
         .filter(|value| targeted(value, AgentKind::OpenClaw))
@@ -764,21 +779,24 @@ fn connection_json(connection: &ConnectionDefinition) -> JsonValue {
 
 fn read_json_object(path: &Path) -> Result<JsonMap<String, JsonValue>> {
     let content = fs::read_to_string(path).unwrap_or_else(|_| "{}".into());
-    let value: JsonValue =
-        serde_json::from_str(&content).with_context(|| format!("JSON 无效：{}", path.display()))?;
-    value.as_object().cloned().context("JSON 根节点必须是对象")
+    let value: JsonValue = serde_json::from_str(&content)
+        .with_context(|| format!("Invalid JSON: {}", path.display()))?;
+    value
+        .as_object()
+        .cloned()
+        .context("JSON root must be an object")
 }
 
 fn merge_hermes(path: &Path, project: &Path, manifest: &Manifest) -> Result<String> {
     let content = fs::read_to_string(path).unwrap_or_else(|_| "{}".into());
-    let mut root: serde_yaml::Mapping =
-        serde_yaml::from_str(&content).with_context(|| format!("YAML 无效：{}", path.display()))?;
+    let mut root: serde_yaml::Mapping = serde_yaml::from_str(&content)
+        .with_context(|| format!("Invalid YAML: {}", path.display()))?;
     let servers_key = serde_yaml::Value::String("mcp_servers".into());
     let servers = root
         .entry(servers_key)
         .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
         .as_mapping_mut()
-        .context("Hermes mcp_servers 必须是对象")?;
+        .context("Hermes mcp_servers must be an object")?;
     for connection in manifest
         .connections
         .iter()
@@ -794,7 +812,7 @@ fn merge_hermes(path: &Path, project: &Path, manifest: &Manifest) -> Result<Stri
         .entry(skills_key)
         .or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()))
         .as_sequence_mut()
-        .context("Hermes external_skill_dirs 必须是数组")?;
+        .context("Hermes external_skill_dirs must be an array")?;
     let shared = serde_yaml::Value::String(project.join(".agents/skills").display().to_string());
     if !skills.contains(&shared) {
         skills.push(shared);
@@ -988,7 +1006,11 @@ mod tests {
         };
 
         let error = merge_codex_config(&config, &[connection]).unwrap_err();
-        assert!(error.to_string().contains("未受 AgentKib 管理的同名 MCP"));
+        assert!(
+            error
+                .to_string()
+                .contains("unmanaged MCP with the same name")
+        );
         assert!(
             fs::read_to_string(config)
                 .unwrap()

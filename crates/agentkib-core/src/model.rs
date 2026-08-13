@@ -144,6 +144,10 @@ pub struct AssetRecord {
     pub exists: bool,
     pub size: u64,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_key: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub summary_params: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,6 +257,10 @@ pub struct CatalogAsset {
     pub name: String,
     pub path: PathBuf,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_key: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub summary_params: BTreeMap<String, String>,
     pub size: u64,
     pub modified_at: Option<DateTime<Utc>>,
 }

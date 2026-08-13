@@ -23,9 +23,9 @@ pub fn resolve_context(
     };
     let cwd = cwd
         .canonicalize()
-        .with_context(|| format!("工作目录不存在：{}", cwd.display()))?;
+        .with_context(|| format!("Working directory does not exist: {}", cwd.display()))?;
     if !cwd.starts_with(&root) {
-        bail!("工作目录必须位于项目内");
+        bail!("Working directory must be inside the project");
     }
 
     let dirs = directory_chain(&root, &cwd)?;
@@ -55,7 +55,7 @@ pub fn resolve_context(
         }
     }
     if sections.is_empty() {
-        warnings.push("没有发现该 Agent 的项目指令文件".into());
+        warnings.push("No project instruction file was found for this Agent".into());
     }
 
     if let Some(manifest) = manifest
@@ -66,7 +66,7 @@ pub fn resolve_context(
             .any(|section| section.content.contains(override_text.trim()));
         if !override_text.trim().is_empty() && !already_generated {
             if !sections.is_empty() {
-                warnings.push("平台覆盖将在原生项目指令之后生效，请检查是否存在语义冲突".into());
+                warnings.push("The platform override is applied after native project instructions; check for semantic conflicts".into());
             }
             sections.push(ContextSection {
                 source: root.join(".agentkib/manifest.yaml"),
@@ -203,20 +203,23 @@ fn load_with_imports(
     warnings: &mut Vec<String>,
 ) -> Result<String> {
     if depth > 5 {
-        bail!("指令导入深度超过 5：{}", path.display());
+        bail!("Instruction import depth exceeds 5: {}", path.display());
     }
     let canonical = path.canonicalize()?;
     if !canonical.starts_with(project) {
-        bail!("拒绝导入项目外指令：{}", path.display());
+        bail!(
+            "Refusing to import instructions outside the project: {}",
+            path.display()
+        );
     }
     if !visited.insert(canonical.clone()) {
-        bail!("检测到循环导入：{}", path.display());
+        bail!("Circular instruction import detected: {}", path.display());
     }
-    let raw =
-        fs::read_to_string(&canonical).with_context(|| format!("无法读取 {}", path.display()))?;
+    let raw = fs::read_to_string(&canonical)
+        .with_context(|| format!("Could not read {}", path.display()))?;
     let content = if raw.chars().count() > MAX_CONTEXT_CHARS_PER_FILE {
         warnings.push(format!(
-            "指令文件超过 {} 字符，预览已截断：{}",
+            "Instruction file exceeds {} characters and was truncated for preview: {}",
             MAX_CONTEXT_CHARS_PER_FILE,
             path.display()
         ));
@@ -249,7 +252,7 @@ fn load_with_imports(
                 continue;
             }
             warnings.push(format!(
-                "导入文件缺失：{}（来源 {}）",
+                "Imported file is missing: {} (source: {})",
                 imported.display(),
                 canonical.display()
             ));
@@ -290,7 +293,7 @@ mod tests {
             preview
                 .warnings
                 .iter()
-                .any(|warning| warning.contains("导入文件缺失"))
+                .any(|warning| warning.contains("Imported file is missing"))
         );
     }
 
@@ -307,7 +310,7 @@ mod tests {
             preview
                 .warnings
                 .iter()
-                .any(|warning| warning.contains("拒绝导入项目外"))
+                .any(|warning| warning.contains("outside the project"))
         );
         assert!(preview.sections.is_empty());
     }

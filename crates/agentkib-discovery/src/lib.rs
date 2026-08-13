@@ -44,24 +44,22 @@ pub fn discover(scan_roots: &[(PathBuf, usize)]) -> DiscoverySnapshot {
         installations.push(installation);
         match provider.discover() {
             Ok(values) => candidates.extend(values),
-            Err(error) => errors.push(format!("{label} 工作区发现失败：{error}")),
+            Err(error) => errors.push(format!("{label} workspace discovery failed: {error}")),
         }
         match provider.scan_home_assets() {
             Ok(values) => home_assets.extend(values),
-            Err(error) => errors.push(format!("{label} Home 资产扫描失败：{error}")),
+            Err(error) => errors.push(format!("{label} Home asset scan failed: {error}")),
         }
     }
     for (root, depth) in scan_roots {
         match discover_scan_root(root, *depth) {
             Ok((values, scan_errors)) => {
                 candidates.extend(values);
-                errors.extend(
-                    scan_errors
-                        .into_iter()
-                        .map(|error| format!("扫描目录 {} 部分失败：{error}", root.display())),
-                );
+                errors.extend(scan_errors.into_iter().map(|error| {
+                    format!("Scan root {} partially failed: {error}", root.display())
+                }));
             }
-            Err(error) => errors.push(format!("扫描目录 {} 失败：{error}", root.display())),
+            Err(error) => errors.push(format!("Scan root {} failed: {error}", root.display())),
         }
     }
     DiscoverySnapshot {
@@ -730,7 +728,11 @@ fn home_asset(agent: AgentKind, path: &Path, kind: AssetKind) -> Result<CatalogA
         kind,
         name: name.to_string(),
         path: path.to_path_buf(),
-        summary: format!("{} Home 资产（只读）", agent.as_str()),
+        summary: format!("{} Home asset (read-only)", agent.as_str()),
+        summary_key: Some("assets.summary.homeAsset".into()),
+        summary_params: [("agent".into(), agent.as_str().into())]
+            .into_iter()
+            .collect(),
         size: metadata.len(),
         modified_at: metadata.modified().ok().map(DateTime::<Utc>::from),
     })

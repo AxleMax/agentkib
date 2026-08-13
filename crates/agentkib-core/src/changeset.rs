@@ -23,7 +23,7 @@ pub fn apply_changeset(
     options: &ApplyOptions,
 ) -> Result<ApplyReport> {
     if changeset.requires_home_approval && !options.home_approval {
-        bail!("该变更包含 Agent Home 文件，需要单独授权");
+        bail!("This ChangeSet contains Agent Home files and requires separate authorization");
     }
     for change in &changeset.changes {
         ensure_allowed_target(
@@ -32,7 +32,7 @@ pub fn apply_changeset(
             &options.approved_home_files,
         )?;
         if matches!(change.scope, ChangeScope::AgentHome) && !options.home_approval {
-            bail!("Agent Home 写入未授权");
+            bail!("Agent Home write is not authorized");
         }
         let current = fs::read(&change.target).unwrap_or_default();
         let current_hash = if change.target.exists() {
@@ -41,7 +41,7 @@ pub fn apply_changeset(
             None
         };
         if current_hash != change.original_hash {
-            bail!("文件已被外部修改：{}", change.target.display());
+            bail!("File was modified externally: {}", change.target.display());
         }
     }
 
@@ -49,7 +49,10 @@ pub fn apply_changeset(
     fs::create_dir_all(&backup_dir)?;
     let mut prepared = Vec::new();
     for (index, change) in changeset.changes.iter().enumerate() {
-        let parent = change.target.parent().context("目标缺少父目录")?;
+        let parent = change
+            .target
+            .parent()
+            .context("Target has no parent directory")?;
         fs::create_dir_all(parent)?;
         if change.target.exists() {
             fs::copy(&change.target, backup_dir.join(format!("{index}.bak")))?;
@@ -65,11 +68,14 @@ pub fn apply_changeset(
     for (index, (change, temp)) in changeset.changes.iter().zip(prepared).enumerate() {
         let write_result = temp
             .persist(&change.target)
-            .map_err(|error| anyhow::anyhow!("写入 {} 失败：{}", change.target.display(), error))
+            .map_err(|error| {
+                anyhow::anyhow!("Failed to write {}: {}", change.target.display(), error)
+            })
             .and_then(|_| {
                 let written = fs::read_to_string(&change.target)?;
-                validate_written(&change.validator, &written)
-                    .with_context(|| format!("写入后验证失败：{}", change.target.display()))
+                validate_written(&change.validator, &written).with_context(|| {
+                    format!("Post-write validation failed: {}", change.target.display())
+                })
             });
         if let Err(error) = write_result {
             rollback(changeset, &backup_dir, index);
@@ -108,7 +114,7 @@ fn validate_written(validator: &str, content: &str) -> Result<()> {
             let _: toml::Value = toml::from_str(content)?;
         }
         "markdown" | "text" => {}
-        other => bail!("未知验证器：{other}"),
+        other => bail!("Unknown validator: {other}"),
     }
     Ok(())
 }

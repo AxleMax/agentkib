@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, Manifest, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -13,6 +13,7 @@ export const api = {
   reviewMemory: (id: string, status: MemoryStatus, editedContent?: string) => invoke<MemoryRecord>("review_memory", { id, status, editedContent }),
   runtime: () => invoke<RuntimeInfo>("runtime_info"),
   setCloseBehavior: (behavior?: CloseBehavior) => invoke<void>("set_close_behavior", { behavior: behavior ?? null }),
+  setLocale: (preference: LocalePreference) => invoke<RuntimeInfo>("set_locale", { preference }),
   installMcp: () => invoke<string>("install_mcp"),
   discoverWorkspaces: () => invoke<DiscoveryReport>("discover_workspaces"),
   workspaces: () => invoke<WorkspaceSummary[]>("list_workspaces"),

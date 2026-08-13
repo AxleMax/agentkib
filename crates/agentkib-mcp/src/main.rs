@@ -48,7 +48,7 @@ fn handle(project: &Path, store: &Store, request: &Value) -> Result<Value> {
     let method = request
         .get("method")
         .and_then(Value::as_str)
-        .context("缺少 method")?;
+        .context("Missing method")?;
     let result = match method {
         "initialize" => {
             json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"agentkib-mcp","version":env!("CARGO_PKG_VERSION")}})
@@ -56,11 +56,11 @@ fn handle(project: &Path, store: &Store, request: &Value) -> Result<Value> {
         "ping" => json!({}),
         "tools/list" => json!({"tools": tool_definitions()}),
         "tools/call" => {
-            let params = request.get("params").context("缺少 params")?;
+            let params = request.get("params").context("Missing params")?;
             let name = params
                 .get("name")
                 .and_then(Value::as_str)
-                .context("缺少工具名称")?;
+                .context("Missing tool name")?;
             let arguments = params
                 .get("arguments")
                 .cloned()
@@ -68,7 +68,7 @@ fn handle(project: &Path, store: &Store, request: &Value) -> Result<Value> {
             let payload = call_tool(project, store, name, &arguments)?;
             json!({"content":[{"type":"text","text":serde_json::to_string_pretty(&payload)?}],"isError":false})
         }
-        _ => bail!("不支持的方法：{method}"),
+        _ => bail!("Unsupported method: {method}"),
     };
     Ok(json!({"jsonrpc":"2.0","id":id,"result":result}))
 }
@@ -77,32 +77,32 @@ fn tool_definitions() -> Vec<Value> {
     vec![
         tool(
             "workspace_get_context",
-            "获取指定 Agent 在项目目录中的有效上下文",
+            "Get the effective context for an Agent in the project directory",
             json!({"type":"object","properties":{"agent":{"type":"string","enum":["codex","claude-code","openclaw","hermes"]},"cwd":{"type":"string"}},"required":["agent"]}),
         ),
         tool(
             "asset_list",
-            "列出项目中的 Agent 资产",
+            "List Agent assets in the project",
             json!({"type":"object","properties":{}}),
         ),
         tool(
             "asset_get",
-            "读取扫描清单中的单个文本资产",
+            "Read one text asset from the scanned catalog",
             json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
         ),
         tool(
             "skill_list",
-            "列出公共 Skills",
+            "List shared Skills",
             json!({"type":"object","properties":{}}),
         ),
         tool(
             "memory_search",
-            "搜索经用户批准的共享记忆",
+            "Search user-approved shared memories",
             json!({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"]}),
         ),
         tool(
             "memory_propose",
-            "向记忆收件箱提交一条待审批记忆",
+            "Submit a pending memory proposal to the inbox",
             json!({"type":"object","properties":{"type":{"type":"string","enum":["user_preference","project_fact","decision","constraint","failed_attempt","open_loop","task_state","agent_observation"]},"content":{"type":"string"},"source_thread":{"type":"string"},"source_reference":{"type":"string"}},"required":["type","content"]}),
         ),
     ]
@@ -119,7 +119,7 @@ fn call_tool(project: &Path, store: &Store, name: &str, args: &Value) -> Result<
             let agent = parse_agent(
                 args.get("agent")
                     .and_then(Value::as_str)
-                    .context("缺少 agent")?,
+                    .context("Missing agent")?,
             )?;
             let cwd = args
                 .get("cwd")
@@ -144,7 +144,7 @@ fn call_tool(project: &Path, store: &Store, name: &str, args: &Value) -> Result<
             let requested = project.join(
                 args.get("path")
                     .and_then(Value::as_str)
-                    .context("缺少 path")?,
+                    .context("Missing path")?,
             );
             let requested = requested.canonicalize()?;
             let scan = scan_workspace(project)?;
@@ -153,11 +153,11 @@ fn call_tool(project: &Path, store: &Store, name: &str, args: &Value) -> Result<
                 .iter()
                 .any(|asset| asset.path == requested && !matches!(asset.kind, AssetKind::Memory))
             {
-                bail!("该路径不在可读取资产清单中");
+                bail!("The path is not present in the readable asset catalog");
             }
             let content = std::fs::read_to_string(&requested)?;
             if content.len() > 256 * 1024 {
-                bail!("资产超过 256 KiB 限制");
+                bail!("Asset exceeds the 256 KiB limit");
             }
             Ok(json!({"path":requested,"content":content}))
         }
@@ -179,7 +179,7 @@ fn call_tool(project: &Path, store: &Store, name: &str, args: &Value) -> Result<
             let memory_type = parse_memory_type(
                 args.get("type")
                     .and_then(Value::as_str)
-                    .context("缺少 type")?,
+                    .context("Missing type")?,
             )?;
             let record = store.propose_memory(&MemoryProposal {
                 project_id: manifest.workspace.id,
@@ -187,7 +187,7 @@ fn call_tool(project: &Path, store: &Store, name: &str, args: &Value) -> Result<
                 content: args
                     .get("content")
                     .and_then(Value::as_str)
-                    .context("缺少 content")?
+                    .context("Missing content")?
                     .into(),
                 source_agent: Some("mcp-client".into()),
                 source_thread: args
@@ -201,7 +201,7 @@ fn call_tool(project: &Path, store: &Store, name: &str, args: &Value) -> Result<
             })?;
             Ok(serde_json::to_value(record)?)
         }
-        _ => bail!("未知工具：{name}"),
+        _ => bail!("Unknown tool: {name}"),
     }
 }
 
@@ -210,8 +210,11 @@ fn parse_args() -> Result<(PathBuf, Option<PathBuf>)> {
     let project_index = args
         .iter()
         .position(|value| value == "--project")
-        .context("必须提供 --project <path>")?;
-    let project = PathBuf::from(args.get(project_index + 1).context("--project 缺少路径")?);
+        .context("--project <path> is required")?;
+    let project = PathBuf::from(
+        args.get(project_index + 1)
+            .context("--project is missing a path")?,
+    );
     let db = args
         .iter()
         .position(|value| value == "--db")
@@ -226,7 +229,7 @@ fn parse_agent(value: &str) -> Result<AgentKind> {
         "claude-code" => Ok(AgentKind::ClaudeCode),
         "openclaw" => Ok(AgentKind::OpenClaw),
         "hermes" => Ok(AgentKind::Hermes),
-        _ => bail!("未知 Agent：{value}"),
+        _ => bail!("Unknown Agent: {value}"),
     }
 }
 fn parse_memory_type(value: &str) -> Result<MemoryType> {
@@ -239,7 +242,7 @@ fn parse_memory_type(value: &str) -> Result<MemoryType> {
         "open_loop" => Ok(MemoryType::OpenLoop),
         "task_state" => Ok(MemoryType::TaskState),
         "agent_observation" => Ok(MemoryType::AgentObservation),
-        _ => bail!("未知记忆类型：{value}"),
+        _ => bail!("Unknown memory type: {value}"),
     }
 }
 

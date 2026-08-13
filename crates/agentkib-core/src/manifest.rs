@@ -13,57 +13,57 @@ pub fn manifest_path(project: &Path) -> PathBuf {
 pub fn load_manifest(project: &Path) -> Result<Manifest> {
     let path = manifest_path(project);
     let content =
-        fs::read_to_string(&path).with_context(|| format!("无法读取 {}", path.display()))?;
-    let manifest: Manifest = serde_yaml::from_str(&content).context("manifest.yaml 格式无效")?;
+        fs::read_to_string(&path).with_context(|| format!("Could not read {}", path.display()))?;
+    let manifest: Manifest = serde_yaml::from_str(&content).context("manifest.yaml is invalid")?;
     validate_manifest(&manifest)?;
     Ok(manifest)
 }
 
 pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
     if manifest.schema_version != 1 {
-        bail!("仅支持 schema_version: 1");
+        bail!("Only schema_version: 1 is supported");
     }
     if manifest.workspace.id.trim().is_empty() || manifest.workspace.name.trim().is_empty() {
-        bail!("workspace.id 和 workspace.name 不能为空");
+        bail!("workspace.id and workspace.name cannot be empty");
     }
     let mut skill_names = BTreeSet::new();
     for skill in &manifest.skills {
         validate_relative_path(&skill.path, "Skill path")?;
         if skill.name.trim().is_empty() {
-            bail!("Skill 名称不能为空");
+            bail!("Skill name cannot be empty");
         }
         if !skill_names.insert(skill.name.as_str()) {
-            bail!("Skill 名称重复：{}", skill.name);
+            bail!("Duplicate Skill name: {}", skill.name);
         }
     }
     for scoped in &manifest.instructions.scoped {
-        validate_relative_path(&scoped.path, "目录级规则 path")?;
+        validate_relative_path(&scoped.path, "Scoped instruction path")?;
     }
     let mut connection_names = BTreeSet::new();
     for connection in &manifest.connections {
         if connection.name.trim().is_empty() {
-            bail!("MCP connection 名称不能为空");
+            bail!("MCP connection name cannot be empty");
         }
         if !connection_names.insert(connection.name.as_str()) {
-            bail!("MCP connection 名称重复：{}", connection.name);
+            bail!("Duplicate MCP connection name: {}", connection.name);
         }
         for (name, value) in &connection.env {
             if !value.starts_with("${") || !value.ends_with('}') {
                 bail!(
-                    "连接 {} 的环境变量 {} 必须使用 ${{VAR}} 引用",
-                    connection.name,
-                    name
+                    "Environment variable {} for connection {} must use a ${{VAR}} reference",
+                    name,
+                    connection.name
                 );
             }
         }
         match &connection.transport {
             ConnectionTransport::Stdio { command, .. } if command.trim().is_empty() => {
-                bail!("stdio command 不能为空")
+                bail!("stdio command cannot be empty")
             }
             ConnectionTransport::Http { url }
                 if !(url.starts_with("http://") || url.starts_with("https://")) =>
             {
-                bail!("HTTP MCP URL 无效")
+                bail!("HTTP MCP URL is invalid")
             }
             _ => {}
         }
@@ -84,7 +84,7 @@ fn validate_relative_path(value: &str, label: &str) -> Result<()> {
             )
         })
     {
-        bail!("{label} 必须是项目内相对路径：{value}");
+        bail!("{label} must be a relative path inside the project: {value}");
     }
     Ok(())
 }

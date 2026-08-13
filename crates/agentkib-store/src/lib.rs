@@ -244,6 +244,22 @@ impl Store {
                  COMMIT;",
             )?;
         }
+        if current_version.is_none_or(|version| version < 4) {
+            self.connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE catalog_assets ADD COLUMN summary_key TEXT;
+                 ALTER TABLE catalog_assets ADD COLUMN summary_params TEXT NOT NULL DEFAULT '{}';
+                 ALTER TABLE insight_cursors ADD COLUMN error_key TEXT;
+                 ALTER TABLE insight_cursors ADD COLUMN error_params TEXT NOT NULL DEFAULT '{}';
+                 UPDATE catalog_assets SET summary_key = CASE summary
+                   WHEN 'AgentKib 公共指令' THEN 'assets.summary.sharedInstructions'
+                   WHEN '公共 Skill' THEN 'assets.summary.sharedSkill'
+                   WHEN '公共 MCP Connection' THEN 'assets.summary.sharedConnection'
+                   ELSE summary_key END;
+                 INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '4');
+                 COMMIT;",
+            )?;
+        }
         Ok(())
     }
 
@@ -272,7 +288,7 @@ impl Store {
             let workspace_id = upsert_workspace(&transaction, &path, &sources)?;
             if let Err(error) = refresh_workspace_record(&transaction, &workspace_id, &path) {
                 record_scan_failure(&transaction, &workspace_id)?;
-                discovery_errors.push(format!("工作区 {} 扫描失败：{error}", path.display()));
+                discovery_errors.push(format!("Workspace {} scan failed: {error}", path.display()));
             }
         }
 
@@ -371,13 +387,13 @@ impl Store {
             )
             .optional()?
             .map(PathBuf::from)
-            .context("工作区不存在")
+            .context("Workspace does not exist")
     }
 
     pub fn add_workspace(&self, path: &Path) -> Result<WorkspaceSummary> {
-        let path = path.canonicalize().context("工作区不存在")?;
+        let path = path.canonicalize().context("Workspace does not exist")?;
         if !path.is_dir() {
-            bail!("工作区必须是目录");
+            bail!("Workspace must be a directory");
         }
         let candidate = DiscoveryCandidate {
             path: path.clone(),
@@ -398,7 +414,8 @@ impl Store {
             record_scan_failure(&transaction, &workspace_id)?;
         }
         transaction.commit()?;
-        self.get_workspace_by_path(&path)?.context("工作区写入失败")
+        self.get_workspace_by_path(&path)?
+            .context("Workspace registration failed")
     }
 
     pub fn refresh_workspace(&self, id: &str) -> Result<WorkspaceSummary> {
@@ -410,7 +427,7 @@ impl Store {
         }
         transaction.commit()?;
         result?;
-        self.get_workspace(id)?.context("工作区不存在")
+        self.get_workspace(id)?.context("Workspace does not exist")
     }
 
     pub fn exclude_workspace(&self, id: &str) -> Result<()> {
@@ -464,9 +481,9 @@ impl Store {
     }
 
     pub fn add_scan_root(&self, path: &Path, max_depth: usize) -> Result<ScanRoot> {
-        let path = path.canonicalize().context("扫描目录不存在")?;
+        let path = path.canonicalize().context("Scan root does not exist")?;
         if !path.is_dir() {
-            bail!("扫描根必须是目录");
+            bail!("Scan root must be a directory");
         }
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now();
@@ -516,7 +533,7 @@ impl Store {
         let pattern = format!("%{}%", query.trim().replace('%', "\\%").replace('_', "\\_"));
         let agent = agent.map(enum_string).transpose()?;
         let mut statement = self.connection.prepare(
-            "SELECT id, scope, workspace_id, agent, kind, name, path, summary, size, modified_at FROM catalog_assets WHERE (name LIKE ?1 ESCAPE '\\' OR path LIKE ?1 ESCAPE '\\' OR summary LIKE ?1 ESCAPE '\\') AND (?2 IS NULL OR agent = ?2) AND (?3 IS NULL OR workspace_id = ?3) ORDER BY modified_at DESC, name ASC LIMIT ?4",
+            "SELECT id, scope, workspace_id, agent, kind, name, path, summary, size, modified_at, summary_key, summary_params FROM catalog_assets WHERE (name LIKE ?1 ESCAPE '\\' OR path LIKE ?1 ESCAPE '\\' OR summary LIKE ?1 ESCAPE '\\' OR COALESCE(summary_key, '') LIKE ?1 ESCAPE '\\') AND (?2 IS NULL OR agent = ?2) AND (?3 IS NULL OR workspace_id = ?3) ORDER BY modified_at DESC, name ASC LIMIT ?4",
         )?;
         let rows = statement.query_map(
             params![pattern, agent, workspace_id, limit.clamp(1, 500) as i64],
@@ -609,9 +626,9 @@ impl Store {
             }
             let provider = enum_string(batch.status.agent)?;
             transaction.execute(
-                "INSERT INTO insight_cursors(provider, cursor_json, available, quality, coverage_from, coverage_to, imported_events, error, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                 ON CONFLICT(provider) DO UPDATE SET cursor_json = excluded.cursor_json, available = excluded.available, quality = excluded.quality, coverage_from = excluded.coverage_from, coverage_to = excluded.coverage_to, imported_events = excluded.imported_events, error = excluded.error, updated_at = excluded.updated_at",
+                "INSERT INTO insight_cursors(provider, cursor_json, available, quality, coverage_from, coverage_to, imported_events, error, error_key, error_params, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(provider) DO UPDATE SET cursor_json = excluded.cursor_json, available = excluded.available, quality = excluded.quality, coverage_from = excluded.coverage_from, coverage_to = excluded.coverage_to, imported_events = excluded.imported_events, error = excluded.error, error_key = excluded.error_key, error_params = excluded.error_params, updated_at = excluded.updated_at",
                 params![
                     provider,
                     batch.cursor.as_ref().map(|value| value.value.as_str()),
@@ -621,6 +638,8 @@ impl Store {
                     batch.status.coverage_to.map(|value| value.to_string()),
                     to_i64(batch.status.imported_events as u64),
                     batch.status.error,
+                    batch.status.error_key,
+                    serde_json::to_string(&batch.status.error_params)?,
                     now,
                 ],
             )?;
@@ -674,8 +693,8 @@ impl Store {
             let provider = format!("git:{}", repository.repository_group_id);
             if let Some(error) = &repository.error {
                 transaction.execute(
-                    "INSERT INTO insight_cursors(provider, available, quality, imported_events, error, updated_at) VALUES (?1, 0, 'incomplete', 0, ?2, ?3)
-                     ON CONFLICT(provider) DO UPDATE SET available = 0, quality = 'incomplete', error = excluded.error, updated_at = excluded.updated_at",
+                    "INSERT INTO insight_cursors(provider, available, quality, imported_events, error, error_key, error_params, updated_at) VALUES (?1, 0, 'incomplete', 0, ?2, 'errors.providerUnavailable', '{}', ?3)
+                     ON CONFLICT(provider) DO UPDATE SET available = 0, quality = 'incomplete', error = excluded.error, error_key = excluded.error_key, error_params = excluded.error_params, updated_at = excluded.updated_at",
                     params![provider, error, now],
                 )?;
                 continue;
@@ -928,10 +947,10 @@ impl Store {
     pub fn model_usage_breakdown(&self, query: &InsightsQuery) -> Result<Vec<ModelUsageBreakdown>> {
         let (from, to, agent, workspace, repository) = query_values(&self.connection, query)?;
         let mut statement = self.connection.prepare(
-            "SELECT COALESCE(NULLIF(u.model, ''), '未知模型'), SUM(u.total_tokens), SUM(u.session_count)
+            "SELECT COALESCE(NULLIF(u.model, ''), '__unknown_model__'), SUM(u.total_tokens), SUM(u.session_count)
              FROM usage_events u LEFT JOIN workspaces w ON w.id = u.workspace_id
              WHERE (?1 IS NULL OR u.day >= ?1) AND (?2 IS NULL OR u.day <= ?2) AND (?3 IS NULL OR u.surface_agent = ?3) AND (?4 IS NULL OR u.workspace_id = ?4) AND (?5 IS NULL OR w.repository_group_id = ?5)
-             GROUP BY COALESCE(NULLIF(u.model, ''), '未知模型') HAVING SUM(u.total_tokens) > 0 ORDER BY SUM(u.total_tokens) DESC LIMIT 20",
+             GROUP BY COALESCE(NULLIF(u.model, ''), '__unknown_model__') HAVING SUM(u.total_tokens) > 0 ORDER BY SUM(u.total_tokens) DESC LIMIT 20",
         )?;
         let rows = statement.query_map(params![from, to, agent, workspace, repository], |row| {
             Ok(ModelUsageBreakdown {
@@ -950,10 +969,10 @@ impl Store {
     ) -> Result<Vec<WorkspaceUsageBreakdown>> {
         let (from, to, agent, workspace, repository) = query_values(&self.connection, query)?;
         let mut statement = self.connection.prepare(
-            "SELECT u.workspace_id, COALESCE(w.name, '未关联工作区'), SUM(u.total_tokens), SUM(u.session_count)
+            "SELECT u.workspace_id, COALESCE(w.name, '__unlinked_workspace__'), SUM(u.total_tokens), SUM(u.session_count)
              FROM usage_events u LEFT JOIN workspaces w ON w.id = u.workspace_id
              WHERE (?1 IS NULL OR u.day >= ?1) AND (?2 IS NULL OR u.day <= ?2) AND (?3 IS NULL OR u.surface_agent = ?3) AND (?4 IS NULL OR u.workspace_id = ?4) AND (?5 IS NULL OR w.repository_group_id = ?5)
-             GROUP BY u.workspace_id, COALESCE(w.name, '未关联工作区') HAVING SUM(u.total_tokens) > 0 OR SUM(u.session_count) > 0 ORDER BY SUM(u.total_tokens) DESC LIMIT 20",
+             GROUP BY u.workspace_id, COALESCE(w.name, '__unlinked_workspace__') HAVING SUM(u.total_tokens) > 0 OR SUM(u.session_count) > 0 ORDER BY SUM(u.total_tokens) DESC LIMIT 20",
         )?;
         let rows = statement.query_map(params![from, to, agent, workspace, repository], |row| {
             Ok(WorkspaceUsageBreakdown {
@@ -1042,7 +1061,7 @@ impl Store {
 
     pub fn insights_status(&self, running: bool) -> Result<InsightsStatus> {
         let mut statement = self.connection.prepare(
-            "SELECT provider, available, quality, coverage_from, coverage_to, imported_events, error, updated_at FROM insight_cursors WHERE provider NOT LIKE 'git:%' ORDER BY provider",
+            "SELECT provider, available, quality, coverage_from, coverage_to, imported_events, error, error_key, error_params, updated_at FROM insight_cursors WHERE provider NOT LIKE 'git:%' ORDER BY provider",
         )?;
         let rows = statement.query_map([], |row| {
             let provider: String = row.get(0)?;
@@ -1063,8 +1082,11 @@ impl Store {
                         .map_err(|error| sql_error(error.into()))?,
                     imported_events: row.get::<_, i64>(5)?.max(0) as usize,
                     error: row.get(6)?,
+                    error_key: row.get(7)?,
+                    error_params: serde_json::from_str(&row.get::<_, String>(8)?)
+                        .map_err(|error| sql_error(error.into()))?,
                 },
-                row.get::<_, String>(7)?,
+                row.get::<_, String>(9)?,
             ))
         })?;
         let mut providers = Vec::new();
@@ -1085,7 +1107,9 @@ impl Store {
                     coverage_from: None,
                     coverage_to: None,
                     imported_events: 0,
-                    error: Some("尚未采集".into()),
+                    error_key: None,
+                    error_params: BTreeMap::new(),
+                    error: None,
                 });
             }
         }
@@ -1116,18 +1140,18 @@ impl Store {
     pub fn add_git_identity_alias(&self, email: &str) -> Result<GitIdentitySummary> {
         let email = email.trim().to_ascii_lowercase();
         if !email.contains('@') || email.len() > 320 {
-            bail!("请输入有效的 Git 邮箱");
+            bail!("Enter a valid Git email address");
         }
         let id = keyed_hash(&self.insight_salt()?, email.as_bytes());
         self.connection.execute(
-            "INSERT INTO git_identities(id, identity_hash, source, label, enabled, created_at) VALUES (?1, ?1, 'manual', '历史邮箱别名', 1, ?2) ON CONFLICT(identity_hash) DO UPDATE SET enabled = 1",
+            "INSERT INTO git_identities(id, identity_hash, source, label, enabled, created_at) VALUES (?1, ?1, 'manual', 'settings.gitIdentityAlias', 1, ?2) ON CONFLICT(identity_hash) DO UPDATE SET enabled = 1",
             params![id, Utc::now().to_rfc3339()],
         )?;
         self.recompute_mine_flags()?;
         self.list_git_identities()?
             .into_iter()
             .find(|value| value.id == id)
-            .context("Git 身份保存失败")
+            .context("Git identity could not be saved")
     }
 
     pub fn set_git_identity_enabled(&self, id: &str, enabled: bool) -> Result<()> {
@@ -1136,7 +1160,7 @@ impl Store {
             params![enabled, id],
         )? == 0
         {
-            bail!("Git 身份不存在");
+            bail!("Git identity does not exist");
         }
         self.recompute_mine_flags()?;
         Ok(())
@@ -1283,7 +1307,7 @@ impl Store {
 
     pub fn propose_memory(&self, proposal: &MemoryProposal) -> Result<MemoryRecord> {
         if proposal.content.trim().is_empty() {
-            bail!("记忆内容不能为空");
+            bail!("Memory content cannot be empty");
         }
         let record = MemoryRecord {
             id: Uuid::new_v4().to_string(),
@@ -1382,12 +1406,12 @@ impl Store {
             status,
             MemoryStatus::Approved | MemoryStatus::Rejected | MemoryStatus::Invalidated
         ) {
-            bail!("review 只能设置 approved、rejected 或 invalidated");
+            bail!("Review status must be approved, rejected, or invalidated");
         }
         let approved_at = matches!(status, MemoryStatus::Approved).then(|| Utc::now().to_rfc3339());
         if let Some(content) = edited_content {
             if content.trim().is_empty() {
-                bail!("记忆内容不能为空");
+                bail!("Memory content cannot be empty");
             }
             self.connection.execute(
                 "UPDATE memories SET content = ?1, status = ?2, approved_at = ?3 WHERE id = ?4",
@@ -1399,7 +1423,7 @@ impl Store {
                 params![enum_string(status)?, approved_at, id],
             )?;
         }
-        let record = self.get_memory(id)?.context("记忆不存在")?;
+        let record = self.get_memory(id)?.context("Memory does not exist")?;
         self.audit(
             Some(&record.project_id),
             "memory.review",
@@ -1641,72 +1665,25 @@ fn calculate_streaks(active: &BTreeSet<NaiveDate>, today: NaiveDate) -> (u64, u6
 
 fn achievement_definitions(summary: &InsightsSummary, agent_count: u64) -> Vec<Achievement> {
     let mut output = Vec::new();
-    for (threshold, title) in [
-        (100_000, "Token 初航"),
-        (1_000_000, "百万上下文"),
-        (10_000_000, "千万协作"),
-        (100_000_000, "亿级共创"),
-    ] {
-        output.push(achievement(
-            "token",
-            threshold,
-            title,
-            "累计已记录 Token",
-            summary.total_tokens,
-        ));
+    for threshold in [100_000, 1_000_000, 10_000_000, 100_000_000] {
+        output.push(achievement("token", threshold, summary.total_tokens));
     }
-    for (threshold, title) in [
-        (1, "首次落地"),
-        (10, "持续交付"),
-        (100, "百次提交"),
-        (1_000, "千锤百炼"),
-    ] {
-        output.push(achievement(
-            "commit",
-            threshold,
-            title,
-            "累计本人 Git 提交",
-            summary.my_commits,
-        ));
+    for threshold in [1, 10, 100, 1_000] {
+        output.push(achievement("commit", threshold, summary.my_commits));
     }
-    for (threshold, title) in [
-        (3, "三日节奏"),
-        (7, "一周连胜"),
-        (30, "月度坚持"),
-        (100, "百日同行"),
-    ] {
-        output.push(achievement(
-            "streak",
-            threshold,
-            title,
-            "最长连续活跃天数",
-            summary.longest_streak,
-        ));
+    for threshold in [3, 7, 30, 100] {
+        output.push(achievement("streak", threshold, summary.longest_streak));
     }
-    for (threshold, title) in [(2, "双 Agent 协作"), (4, "全栈 Agent 指挥官")] {
-        output.push(achievement(
-            "agents",
-            threshold,
-            title,
-            "有活动记录的 Agent 种类",
-            agent_count,
-        ));
+    for threshold in [2, 4] {
+        output.push(achievement("agents", threshold, agent_count));
     }
     output
 }
 
-fn achievement(
-    category: &str,
-    threshold: u64,
-    title: &str,
-    description: &str,
-    progress: u64,
-) -> Achievement {
+fn achievement(category: &str, threshold: u64, progress: u64) -> Achievement {
     Achievement {
         code: format!("{category}-{threshold}"),
         category: category.into(),
-        title: title.into(),
-        description: description.into(),
         threshold,
         progress,
         unlocked_at: None,
@@ -1782,7 +1759,7 @@ fn record_scan_failure(connection: &Connection, id: &str) -> Result<()> {
 
 fn refresh_workspace_record(connection: &Connection, id: &str, path: &Path) -> Result<()> {
     if !path.is_dir() {
-        bail!("工作区不存在：{}", path.display());
+        bail!("Workspace does not exist: {}", path.display());
     }
     let scan = scan_workspace(path)?;
     let mut warning_count = scan.warnings.len() as u64;
@@ -1845,6 +1822,8 @@ fn refresh_workspace_record(connection: &Connection, id: &str, path: &Path) -> R
                     .to_string(),
                 path: asset.path,
                 summary: asset.summary,
+                summary_key: asset.summary_key,
+                summary_params: asset.summary_params,
                 size: asset.size,
                 modified_at,
             },
@@ -1866,9 +1845,11 @@ fn refresh_workspace_record(connection: &Connection, id: &str, path: &Path) -> R
                 workspace_id: Some(id.to_string()),
                 agent: None,
                 kind: AssetKind::Instruction,
-                name: "共享项目指令".into(),
+                name: "Shared project instructions".into(),
                 path: manifest_path.clone(),
-                summary: "AgentKib 公共指令".into(),
+                summary: "AgentKib shared instructions".into(),
+                summary_key: Some("assets.summary.sharedInstructions".into()),
+                summary_params: Default::default(),
                 size: manifest.instructions.shared.len() as u64,
                 modified_at: None,
             },
@@ -1891,7 +1872,9 @@ fn refresh_workspace_record(connection: &Connection, id: &str, path: &Path) -> R
                     kind: AssetKind::Skill,
                     name: skill.name,
                     path: asset_path,
-                    summary: "公共 Skill".into(),
+                    summary: "Shared Skill".into(),
+                    summary_key: Some("assets.summary.sharedSkill".into()),
+                    summary_params: Default::default(),
                     size: 0,
                     modified_at: None,
                 },
@@ -1916,7 +1899,9 @@ fn refresh_workspace_record(connection: &Connection, id: &str, path: &Path) -> R
                     kind: AssetKind::Connection,
                     name: connection_definition.name,
                     path: asset_path.clone(),
-                    summary: "公共 MCP Connection".into(),
+                    summary: "Shared MCP Connection".into(),
+                    summary_key: Some("assets.summary.sharedConnection".into()),
+                    summary_params: Default::default(),
                     size: 0,
                     modified_at: None,
                 },
@@ -1939,8 +1924,8 @@ fn insert_catalog_asset(connection: &Connection, asset: &CatalogAsset) -> Result
         asset.id.clone()
     };
     connection.execute(
-        "INSERT OR REPLACE INTO catalog_assets(id, scope, workspace_id, agent, kind, name, path, summary, size, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![id, enum_string(asset.scope)?, asset.workspace_id, asset.agent.map(enum_string).transpose()?, enum_string(asset.kind)?, asset.name, asset.path.display().to_string(), asset.summary, asset.size as i64, asset.modified_at.map(|value| value.to_rfc3339())],
+        "INSERT OR REPLACE INTO catalog_assets(id, scope, workspace_id, agent, kind, name, path, summary, size, modified_at, summary_key, summary_params) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![id, enum_string(asset.scope)?, asset.workspace_id, asset.agent.map(enum_string).transpose()?, enum_string(asset.kind)?, asset.name, asset.path.display().to_string(), asset.summary, asset.size as i64, asset.modified_at.map(|value| value.to_rfc3339()), asset.summary_key, serde_json::to_string(&asset.summary_params)?],
     )?;
     Ok(())
 }
@@ -1995,6 +1980,7 @@ fn row_to_catalog_asset(row: &Row<'_>) -> rusqlite::Result<CatalogAsset> {
     let agent: Option<String> = row.get(3)?;
     let kind: String = row.get(4)?;
     let modified_at: Option<String> = row.get(9)?;
+    let summary_params: String = row.get(11)?;
     Ok(CatalogAsset {
         id: row.get(0)?,
         scope: parse_enum(&scope).map_err(sql_error)?,
@@ -2007,6 +1993,9 @@ fn row_to_catalog_asset(row: &Row<'_>) -> rusqlite::Result<CatalogAsset> {
         name: row.get(5)?,
         path: PathBuf::from(row.get::<_, String>(6)?),
         summary: row.get(7)?,
+        summary_key: row.get(10)?,
+        summary_params: serde_json::from_str(&summary_params)
+            .map_err(|error| sql_error(error.into()))?,
         size: row.get::<_, i64>(8)?.max(0) as u64,
         modified_at: modified_at
             .map(|value| parse_time(&value))
@@ -2016,7 +2005,8 @@ fn row_to_catalog_asset(row: &Row<'_>) -> rusqlite::Result<CatalogAsset> {
 }
 
 pub fn default_data_dir() -> Result<PathBuf> {
-    let base = dirs::data_local_dir().context("无法确定本地应用数据目录")?;
+    let base =
+        dirs::data_local_dir().context("Could not determine the local app data directory")?;
     Ok(base.join("com.agentkib.desktop"))
 }
 
@@ -2057,7 +2047,7 @@ fn parse_time(value: &str) -> Result<DateTime<Utc>> {
 fn enum_string<T: serde::Serialize>(value: T) -> Result<String> {
     Ok(serde_json::to_value(value)?
         .as_str()
-        .context("枚举序列化失败")?
+        .context("Enum serialization failed")?
         .to_string())
 }
 fn parse_enum<T: serde::de::DeserializeOwned>(value: &str) -> Result<T> {
@@ -2211,6 +2201,40 @@ mod tests {
     }
 
     #[test]
+    fn version_three_catalog_summaries_gain_translation_keys() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO schema_meta(key, value) VALUES ('schema_version', '3');
+                 CREATE TABLE catalog_assets(
+                   id TEXT PRIMARY KEY, scope TEXT NOT NULL, workspace_id TEXT, agent TEXT,
+                   kind TEXT NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL,
+                   summary TEXT NOT NULL, size INTEGER NOT NULL DEFAULT 0, modified_at TEXT
+                 );
+                 INSERT INTO catalog_assets(id, scope, kind, name, path, summary)
+                   VALUES ('asset', 'workspace', 'instruction', 'shared', '/project', 'AgentKib 公共指令');
+                 CREATE TABLE insight_cursors(
+                   provider TEXT PRIMARY KEY, cursor_json TEXT, available INTEGER NOT NULL DEFAULT 0,
+                   quality TEXT NOT NULL, coverage_from TEXT, coverage_to TEXT,
+                   imported_events INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at TEXT NOT NULL
+                 );",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&database).unwrap();
+        let assets = store.search_catalog_assets("", None, None, 10).unwrap();
+        assert_eq!(
+            assets[0].summary_key.as_deref(),
+            Some("assets.summary.sharedInstructions")
+        );
+        assert!(assets[0].summary_params.is_empty());
+    }
+
+    #[test]
     fn current_schema_allows_concurrent_read_connections() {
         let dir = tempdir().unwrap();
         let database = dir.path().join("db.sqlite");
@@ -2264,6 +2288,8 @@ mod tests {
                 coverage_from: Some(day),
                 coverage_to: Some(day),
                 imported_events: 1,
+                error_key: None,
+                error_params: BTreeMap::new(),
                 error: None,
             },
             cursor: None,

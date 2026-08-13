@@ -27,7 +27,7 @@ fn run() -> Result<()> {
         }
         "context" => {
             let project = required_path(&args, 1)?;
-            let agent = parse_agent(args.get(2).context("缺少 agent 参数")?)?;
+            let agent = parse_agent(args.get(2).context("Missing agent argument")?)?;
             let cwd = args
                 .get(3)
                 .map(PathBuf::from)
@@ -77,7 +77,9 @@ fn run() -> Result<()> {
 }
 
 fn required_path(args: &[String], index: usize) -> Result<PathBuf> {
-    Ok(PathBuf::from(args.get(index).context("缺少项目路径")?))
+    Ok(PathBuf::from(
+        args.get(index).context("Missing project path")?,
+    ))
 }
 fn parse_agent(value: &str) -> Result<AgentKind> {
     match value {
@@ -85,7 +87,7 @@ fn parse_agent(value: &str) -> Result<AgentKind> {
         "claude" | "claude-code" => Ok(AgentKind::ClaudeCode),
         "openclaw" => Ok(AgentKind::OpenClaw),
         "hermes" => Ok(AgentKind::Hermes),
-        _ => bail!("未知 Agent：{value}"),
+        _ => bail!("Unknown Agent: {value}"),
     }
 }
 fn print_help() {

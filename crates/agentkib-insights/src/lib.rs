@@ -71,6 +71,10 @@ pub struct ProviderStatus {
     pub coverage_from: Option<NaiveDate>,
     pub coverage_to: Option<NaiveDate>,
     pub imported_events: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_key: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub error_params: BTreeMap<String, String>,
     pub error: Option<String>,
 }
 
@@ -192,8 +196,6 @@ pub struct RepositoryCommitBreakdown {
 pub struct Achievement {
     pub code: String,
     pub category: String,
-    pub title: String,
-    pub description: String,
     pub threshold: u64,
     pub progress: u64,
     pub unlocked_at: Option<DateTime<Utc>>,
@@ -247,6 +249,8 @@ pub fn collect_usage(cursors: &BTreeMap<AgentKind, String>) -> Vec<UsageBatch> {
                     coverage_from: None,
                     coverage_to: None,
                     imported_events: 0,
+                    error_key: Some("errors.providerUnavailable".into()),
+                    error_params: BTreeMap::new(),
                     error: Some(error.to_string()),
                 },
                 cursor: None,
@@ -310,9 +314,9 @@ impl UsageProvider for CodexProvider {
     }
 
     fn import(&self, cursor: Option<ImportCursor>) -> Result<UsageBatch> {
-        let home = self.home.as_ref().context("未找到 Codex Home")?;
+        let home = self.home.as_ref().context("Codex Home was not found")?;
         if !home.is_dir() {
-            bail!("未安装 Codex 或 Codex Home 不存在");
+            bail!("Codex is not installed or Codex Home does not exist");
         }
         let mut source_paths: Vec<_> = WalkDir::new(home.join("sessions"))
             .follow_links(false)
@@ -524,7 +528,7 @@ impl UsageProvider for ClaudeProvider {
     }
 
     fn import(&self, cursor: Option<ImportCursor>) -> Result<UsageBatch> {
-        let path = self.path.as_ref().context("未找到 Claude Home")?;
+        let path = self.path.as_ref().context("Claude Home was not found")?;
         let fingerprint = source_fingerprint(std::slice::from_ref(path));
         if cursor
             .as_ref()
@@ -533,7 +537,7 @@ impl UsageProvider for ClaudeProvider {
             return Ok(unchanged_batch(AgentKind::ClaudeCode, fingerprint));
         }
         let value: Value =
-            serde_json::from_slice(&fs::read(path).context("未找到 Claude 统计缓存")?)?;
+            serde_json::from_slice(&fs::read(path).context("Claude stats cache was not found")?)?;
         let mut events = Vec::new();
         if let Some(days) = value.get("dailyModelTokens").and_then(Value::as_array) {
             for day_value in days {
@@ -642,7 +646,7 @@ impl UsageProvider for ClaudeProvider {
             }
         }
         if events.is_empty() {
-            bail!("Claude 统计缓存不包含可用的每日数据");
+            bail!("Claude stats cache does not contain usable daily data");
         }
         Ok(finish_batch(
             AgentKind::ClaudeCode,
@@ -670,12 +674,12 @@ impl UsageProvider for OpenClawProvider {
             &["gateway", "usage-cost", "--all-agents", "--json"],
             Duration::from_secs(10),
         )
-        .map_err(|_| anyhow::anyhow!("OpenClaw 本地 usage-cost 查询不可用"))?;
+        .map_err(|_| anyhow::anyhow!("OpenClaw local usage-cost query is unavailable"))?;
         let value: Value = serde_json::from_slice(&output)?;
         let mut events = Vec::new();
         collect_openclaw_values(&value, None, &mut events, "root");
         if events.is_empty() {
-            bail!("OpenClaw 未返回可用的每日 Token 数据");
+            bail!("OpenClaw did not return usable daily Token data");
         }
         Ok(finish_batch(AgentKind::OpenClaw, events, None, None))
     }
@@ -787,7 +791,7 @@ impl UsageProvider for HermesProvider {
 
     fn import(&self, cursor: Option<ImportCursor>) -> Result<UsageBatch> {
         if self.paths.is_empty() {
-            bail!("未安装 Hermes 或未找到 state.db");
+            bail!("Hermes is not installed or state.db was not found");
         }
         let fingerprint = source_fingerprint(&self.paths);
         if cursor
@@ -801,7 +805,7 @@ impl UsageProvider for HermesProvider {
             import_hermes_database(path, &mut events)?;
         }
         if events.is_empty() {
-            bail!("Hermes state.db 不包含可用会话统计");
+            bail!("Hermes state.db does not contain usable session statistics");
         }
         Ok(finish_batch(
             AgentKind::Hermes,
@@ -911,6 +915,8 @@ fn finish_batch(
             coverage_from,
             coverage_to,
             imported_events: events.len(),
+            error_key: error.as_ref().map(|_| "errors.providerUnavailable".into()),
+            error_params: BTreeMap::new(),
             error,
         },
         events,
@@ -929,6 +935,8 @@ fn unchanged_batch(agent: AgentKind, cursor: String) -> UsageBatch {
             coverage_from: None,
             coverage_to: None,
             imported_events: 0,
+            error_key: None,
+            error_params: BTreeMap::new(),
             error: None,
         },
         cursor: Some(ImportCursor { value: cursor }),
@@ -986,7 +994,7 @@ fn collect_git_repository(
         if !email.is_empty() {
             identities.push(GitIdentityCandidate {
                 email: email.to_string(),
-                label: "仓库 Git 身份".into(),
+                label: "settings.gitIdentityRepository".into(),
                 source: format!("repository:{group}"),
             });
         }
@@ -996,7 +1004,7 @@ fn collect_git_repository(
         if !email.is_empty() {
             identities.push(GitIdentityCandidate {
                 email: email.to_string(),
-                label: "全局 Git 身份".into(),
+                label: "settings.gitIdentityGlobal".into(),
                 source: "git-global".into(),
             });
         }
@@ -1042,7 +1050,7 @@ fn collect_git_repository(
 }
 
 fn git_output(path: &Path, args: &[&str]) -> Result<String> {
-    let mut command_args = vec!["-C", path.to_str().context("Git 路径不是有效 UTF-8")?];
+    let mut command_args = vec!["-C", path.to_str().context("Git path is not valid UTF-8")?];
     command_args.extend_from_slice(args);
     command_text("git", &command_args)
 }
@@ -1053,7 +1061,7 @@ fn command_text(program: &str, args: &[&str]) -> Result<String> {
         .stdin(Stdio::null())
         .stderr(Stdio::piped())
         .output()
-        .with_context(|| format!("无法执行 {program}"))?;
+        .with_context(|| format!("Failed to execute {program}"))?;
     if !output.status.success() {
         bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
     }
@@ -1067,7 +1075,7 @@ fn command_output_with_timeout(program: &str, args: &[&str], timeout: Duration) 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("无法执行 {program}"))?;
+        .with_context(|| format!("Failed to execute {program}"))?;
     let started = Instant::now();
     loop {
         if child.try_wait()?.is_some() {
@@ -1080,7 +1088,7 @@ fn command_output_with_timeout(program: &str, args: &[&str], timeout: Duration) 
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            bail!("{program} 用量查询超时");
+            bail!("{program} usage query timed out");
         }
         thread::sleep(Duration::from_millis(25));
     }
