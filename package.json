@@ -1,12 +1,12 @@
 {
-  "name": "agenthub",
+  "name": "agentkib",
   "private": true,
   "packageManager": "pnpm@10.8.1",
   "scripts": {
-    "dev": "pnpm --filter @agenthub/desktop dev",
-    "build": "pnpm --filter @agenthub/desktop build",
-    "test": "pnpm --filter @agenthub/desktop test",
-    "tauri": "pnpm --filter @agenthub/desktop tauri",
-    "typecheck": "pnpm --filter @agenthub/desktop typecheck"
+    "dev": "pnpm --filter @agentkib/desktop dev",
+    "build": "pnpm --filter @agentkib/desktop build",
+    "test": "pnpm --filter @agentkib/desktop test",
+    "tauri": "pnpm --filter @agentkib/desktop tauri",
+    "typecheck": "pnpm --filter @agentkib/desktop typecheck"
   }
 }

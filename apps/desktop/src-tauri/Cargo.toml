@@ -1,21 +1,22 @@
 [package]
-name = "agenthub-desktop"
+name = "agentkib-desktop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "agenthub_desktop_lib"
+name = "agentkib_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-agenthub-core.workspace = true
-agenthub-adapters.workspace = true
-agenthub-discovery.workspace = true
-agenthub-store.workspace = true
+agentkib-core.workspace = true
+agentkib-adapters.workspace = true
+agentkib-discovery.workspace = true
+agentkib-insights.workspace = true
+agentkib-store.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 dirs.workspace = true

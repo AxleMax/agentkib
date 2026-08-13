@@ -1,3 +1,3 @@
 fn main() {
-    agenthub_desktop_lib::run();
+    agentkib_desktop_lib::run();
 }

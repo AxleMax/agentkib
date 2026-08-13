@@ -78,7 +78,6 @@ pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
     {
         warnings.push(error.to_string());
     }
-
     Ok(WorkspaceScan {
         root: root.clone(),
         manifest_exists: manifest_path(&root).is_file(),

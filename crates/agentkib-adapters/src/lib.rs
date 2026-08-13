@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use agenthub_core::{
+use agentkib_core::{
     AdapterState, AgentKind, ChangeScope, ChangeSet, ConnectionDefinition, ConnectionTransport,
     FileChange, Manifest, RiskLevel, hash_content, manifest_path,
 };
@@ -12,10 +12,10 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-const START: &str = "<!-- agenthub:managed:start -->";
-const END: &str = "<!-- agenthub:managed:end -->";
-const TOML_START: &str = "# agenthub:managed:start";
-const TOML_END: &str = "# agenthub:managed:end";
+const START: &str = "<!-- agentkib:managed:start -->";
+const END: &str = "<!-- agentkib:managed:end -->";
+const TOML_START: &str = "# agentkib:managed:start";
+const TOML_END: &str = "# agentkib:managed:end";
 
 #[derive(Debug, Clone, Default)]
 pub struct HomeTargets {
@@ -77,11 +77,11 @@ pub fn default_manifest(project: &Path) -> Result<Manifest> {
     let scoped = discover_scoped_instructions(project)?;
     Ok(Manifest {
         schema_version: 1,
-        workspace: agenthub_core::WorkspaceIdentity {
+        workspace: agentkib_core::WorkspaceIdentity {
             id: Uuid::new_v4().to_string(),
             name,
         },
-        instructions: agenthub_core::InstructionSet {
+        instructions: agentkib_core::InstructionSet {
             shared,
             scoped,
             platform_overrides,
@@ -93,7 +93,7 @@ pub fn default_manifest(project: &Path) -> Result<Manifest> {
     })
 }
 
-fn discover_scoped_instructions(project: &Path) -> Result<Vec<agenthub_core::ScopedInstruction>> {
+fn discover_scoped_instructions(project: &Path) -> Result<Vec<agentkib_core::ScopedInstruction>> {
     let mut scoped = Vec::new();
     for entry in WalkDir::new(project)
         .min_depth(2)
@@ -104,7 +104,7 @@ fn discover_scoped_instructions(project: &Path) -> Result<Vec<agenthub_core::Sco
             !entry.file_type().is_dir()
                 || !matches!(
                     entry.file_name().to_str(),
-                    Some(".git" | ".agenthub" | "node_modules" | "target" | "dist")
+                    Some(".git" | ".agentkib" | "node_modules" | "target" | "dist")
                 )
         })
     {
@@ -114,7 +114,7 @@ fn discover_scoped_instructions(project: &Path) -> Result<Vec<agenthub_core::Sco
         }
         let parent = entry.path().parent().context("目录级规则缺少父目录")?;
         let relative = parent.strip_prefix(project)?;
-        scoped.push(agenthub_core::ScopedInstruction {
+        scoped.push(agentkib_core::ScopedInstruction {
             path: relative.display().to_string(),
             content: fs::read_to_string(entry.path())?,
         });
@@ -153,7 +153,7 @@ fn claude_platform_override(content: &str) -> Option<String> {
     Some(remaining.trim().to_string()).filter(|value| !value.is_empty())
 }
 
-fn discover_shared_skills(project: &Path) -> Result<Vec<agenthub_core::SkillDefinition>> {
+fn discover_shared_skills(project: &Path) -> Result<Vec<agentkib_core::SkillDefinition>> {
     let directory = project.join(".agents/skills");
     if !directory.is_dir() {
         return Ok(Vec::new());
@@ -165,7 +165,7 @@ fn discover_shared_skills(project: &Path) -> Result<Vec<agenthub_core::SkillDefi
         if skill_file.is_file()
             && let Some(name) = entry.file_name().to_str()
         {
-            skills.push(agenthub_core::SkillDefinition {
+            skills.push(agentkib_core::SkillDefinition {
                 name: name.to_string(),
                 path: format!(".agents/skills/{name}"),
                 targets: Vec::new(),
@@ -181,8 +181,8 @@ pub fn plan_workspace_changes(
     manifest: &Manifest,
     home: &HomeTargets,
 ) -> Result<ChangeSet> {
-    agenthub_core::validate_manifest(manifest)?;
-    let root = agenthub_core::canonical_project(project)?;
+    agentkib_core::validate_manifest(manifest)?;
+    let root = agentkib_core::canonical_project(project)?;
     let mut changes = Vec::new();
 
     let common_enabled = [AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
@@ -480,7 +480,7 @@ fn adapter_enabled(manifest: &Manifest, agent: AgentKind) -> bool {
 
 fn skill_source_files(
     root: &Path,
-    skill: &agenthub_core::SkillDefinition,
+    skill: &agentkib_core::SkillDefinition,
 ) -> Result<Vec<(PathBuf, String)>> {
     let source = root.join(&skill.path);
     let canonical = source
@@ -634,7 +634,7 @@ fn merge_codex_config(path: &Path, connections: &[ConnectionDefinition]) -> Resu
             let table = format!("[mcp_servers.{}]", safe_key(&connection.name));
             if existing.lines().any(|line| line.trim() == table) {
                 anyhow::bail!(
-                    "Codex 配置已存在未受 AgentHub 管理的同名 MCP：{}。为避免覆盖平台专属字段，请先重命名其中一方或手动迁移到 AgentHub。",
+                    "Codex 配置已存在未受 AgentKib 管理的同名 MCP：{}。为避免覆盖平台专属字段，请先重命名其中一方或手动迁移到 AgentKib。",
                     connection.name
                 );
             }
@@ -899,9 +899,9 @@ mod tests {
         fs::write(&config, "theme: dark\nmcp_servers:\n  custom:\n    command: custom\nexternal_skill_dirs:\n  - /existing/skills\n").unwrap();
         let mut manifest = default_manifest(dir.path()).unwrap();
         manifest.connections.push(ConnectionDefinition {
-            name: "agenthub".into(),
+            name: "agentkib".into(),
             transport: ConnectionTransport::Stdio {
-                command: "/bin/agenthub-mcp".into(),
+                command: "/bin/agentkib-mcp".into(),
                 args: vec![],
             },
             env: BTreeMap::new(),
@@ -912,7 +912,7 @@ mod tests {
         assert!(merged.contains("theme: dark"));
         assert!(merged.contains("custom:"));
         assert!(merged.contains("/existing/skills"));
-        assert!(merged.contains("agenthub:"));
+        assert!(merged.contains("agentkib:"));
     }
 
     #[test]
@@ -921,11 +921,11 @@ mod tests {
         let config = dir.path().join(".mcp.json");
         fs::write(
             &config,
-            r#"{"mcpServers":{"agenthub":{"command":"old","platformOnly":true}},"topLevel":7}"#,
+            r#"{"mcpServers":{"agentkib":{"command":"old","platformOnly":true}},"topLevel":7}"#,
         )
         .unwrap();
         let connection = ConnectionDefinition {
-            name: "agenthub".into(),
+            name: "agentkib".into(),
             transport: ConnectionTransport::Stdio {
                 command: "/new".into(),
                 args: vec![],
@@ -937,8 +937,8 @@ mod tests {
         let merged = merge_claude_mcp(&config, &[connection]).unwrap();
         let value: JsonValue = serde_json::from_str(&merged).unwrap();
         assert_eq!(value["topLevel"], 7);
-        assert_eq!(value["mcpServers"]["agenthub"]["platformOnly"], true);
-        assert_eq!(value["mcpServers"]["agenthub"]["command"], "/new");
+        assert_eq!(value["mcpServers"]["agentkib"]["platformOnly"], true);
+        assert_eq!(value["mcpServers"]["agentkib"]["command"], "/new");
     }
 
     #[test]
@@ -947,11 +947,11 @@ mod tests {
         let config = dir.path().join("openclaw.json");
         fs::write(
             &config,
-            r#"{"theme":"dark","mcp":{"servers":{"agenthub":{"command":"old","platformOnly":true}}}}"#,
+            r#"{"theme":"dark","mcp":{"servers":{"agentkib":{"command":"old","platformOnly":true}}}}"#,
         )
         .unwrap();
         let connection = ConnectionDefinition {
-            name: "agenthub".into(),
+            name: "agentkib".into(),
             transport: ConnectionTransport::Stdio {
                 command: "/new".into(),
                 args: vec![],
@@ -963,8 +963,8 @@ mod tests {
         let merged = merge_openclaw(&config, &[connection]).unwrap();
         let value: JsonValue = serde_json::from_str(&merged).unwrap();
         assert_eq!(value["theme"], "dark");
-        assert_eq!(value["mcp"]["servers"]["agenthub"]["platformOnly"], true);
-        assert_eq!(value["mcp"]["servers"]["agenthub"]["command"], "/new");
+        assert_eq!(value["mcp"]["servers"]["agentkib"]["platformOnly"], true);
+        assert_eq!(value["mcp"]["servers"]["agentkib"]["command"], "/new");
     }
 
     #[test]
@@ -973,11 +973,11 @@ mod tests {
         let config = dir.path().join("config.toml");
         fs::write(
             &config,
-            "theme = \"dark\"\n\n[mcp_servers.agenthub]\ncommand = \"custom\"\nplatform_only = true\n",
+            "theme = \"dark\"\n\n[mcp_servers.agentkib]\ncommand = \"custom\"\nplatform_only = true\n",
         )
         .unwrap();
         let connection = ConnectionDefinition {
-            name: "agenthub".into(),
+            name: "agentkib".into(),
             transport: ConnectionTransport::Stdio {
                 command: "/new".into(),
                 args: vec![],
@@ -988,7 +988,7 @@ mod tests {
         };
 
         let error = merge_codex_config(&config, &[connection]).unwrap_err();
-        assert!(error.to_string().contains("未受 AgentHub 管理的同名 MCP"));
+        assert!(error.to_string().contains("未受 AgentKib 管理的同名 MCP"));
         assert!(
             fs::read_to_string(config)
                 .unwrap()
@@ -1004,7 +1004,7 @@ mod tests {
         fs::write(source.join("SKILL.md"), "# Reviewer").unwrap();
         fs::write(source.join("references/checklist.md"), "- Run tests").unwrap();
         let mut manifest = default_manifest(dir.path()).unwrap();
-        manifest.skills.push(agenthub_core::SkillDefinition {
+        manifest.skills.push(agentkib_core::SkillDefinition {
             name: "reviewer".into(),
             path: "shared/reviewer".into(),
             targets: vec![AgentKind::ClaudeCode],

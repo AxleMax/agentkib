@@ -2,12 +2,13 @@
 resolver = "2"
 members = [
   "apps/desktop/src-tauri",
-  "crates/agenthub-core",
-  "crates/agenthub-adapters",
-  "crates/agenthub-discovery",
-  "crates/agenthub-store",
-  "crates/agenthub-cli",
-  "crates/agenthub-mcp",
+  "crates/agentkib-core",
+  "crates/agentkib-adapters",
+  "crates/agentkib-discovery",
+  "crates/agentkib-insights",
+  "crates/agentkib-store",
+  "crates/agentkib-cli",
+  "crates/agentkib-mcp",
 ]
 
 [workspace.package]
@@ -16,10 +17,11 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-agenthub-core = { path = "crates/agenthub-core" }
-agenthub-adapters = { path = "crates/agenthub-adapters" }
-agenthub-discovery = { path = "crates/agenthub-discovery" }
-agenthub-store = { path = "crates/agenthub-store" }
+agentkib-core = { path = "crates/agentkib-core" }
+agentkib-adapters = { path = "crates/agentkib-adapters" }
+agentkib-discovery = { path = "crates/agentkib-discovery" }
+agentkib-insights = { path = "crates/agentkib-insights" }
+agentkib-store = { path = "crates/agentkib-store" }
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6.0"

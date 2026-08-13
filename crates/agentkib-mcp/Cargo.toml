@@ -1,18 +1,19 @@
 [package]
-name = "agenthub-store"
+name = "agentkib-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "agentkib-mcp"
+path = "src/main.rs"
+
 [dependencies]
-agenthub-core.workspace = true
+agentkib-core.workspace = true
+agentkib-store.workspace = true
 anyhow.workspace = true
-chrono.workspace = true
-dirs.workspace = true
-rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

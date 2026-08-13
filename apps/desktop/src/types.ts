@@ -26,3 +26,15 @@ export interface DiscoveryReport { started_at: string; finished_at: string; disc
 export interface ScanRoot { id: string; path: string; enabled: boolean; max_depth: number; created_at: string }
 export interface ExcludedWorkspace { path: string; created_at: string }
 export interface ActivityRecord { id: string; project_id?: string; action: string; detail: string; created_at: string }
+export type UsageQuality = "exact" | "estimated" | "incomplete";
+export interface InsightsQuery { from?: string; to?: string; agent?: AgentKind; workspace_id?: string; repository_group_id?: string }
+export interface InsightsSummary { total_tokens: number; input_tokens: number; output_tokens: number; cache_tokens: number; reasoning_tokens: number; session_count: number; my_commits: number; all_commits: number; attributed_commits: number; active_days: number; current_streak: number; longest_streak: number; quality: UsageQuality; coverage_from?: string; coverage_to?: string; refreshed_at?: string }
+export interface HeatmapPoint { date: string; tokens: number; my_commits: number; all_commits: number; attributed_commits: number; sessions: number; quality: UsageQuality }
+export interface AgentUsageBreakdown { agent: AgentKind; total_tokens: number; input_tokens: number; output_tokens: number; cache_tokens: number; reasoning_tokens: number; session_count: number; quality: UsageQuality }
+export interface ModelUsageBreakdown { model: string; total_tokens: number; session_count: number }
+export interface WorkspaceUsageBreakdown { workspace_id?: string; name: string; total_tokens: number; session_count: number }
+export interface RepositoryCommitBreakdown { repository_group_id: string; name: string; my_commits: number; all_commits: number; attributed_commits: number }
+export interface Achievement { code: string; category: string; title: string; description: string; threshold: number; progress: number; unlocked_at?: string }
+export interface ProviderStatus { agent: AgentKind; available: boolean; quality: UsageQuality; coverage_from?: string; coverage_to?: string; imported_events: number; error?: string }
+export interface InsightsStatus { providers: ProviderStatus[]; refreshed_at?: string; running: boolean }
+export interface GitIdentitySummary { id: string; label: string; source: string; enabled: boolean }

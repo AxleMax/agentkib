@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AgentHub",
+  "productName": "AgentKib",
   "version": "0.1.0",
-  "identifier": "com.agenthub.desktop",
+  "identifier": "com.agentkib.desktop",
   "build": {
     "beforeDevCommand": "pnpm build:mcp:dev && pnpm dev:web",
     "devUrl": "http://localhost:1420",
@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "AgentHub", "width": 1360, "height": 860, "minWidth": 1080, "minHeight": 680, "decorations": true, "transparent": false }],
+    "windows": [{ "title": "AgentKib", "width": 1360, "height": 860, "minWidth": 1080, "minHeight": 680, "decorations": true, "transparent": false }],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost" }
   },
   "bundle": {
@@ -23,6 +23,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/agenthub-mcp"]
+    "externalBin": ["binaries/agentkib-mcp"]
   }
 }

@@ -2,24 +2,24 @@ use std::env;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use agenthub_core::{
+use agentkib_core::{
     AgentKind, AssetKind, MemoryProposal, MemoryStatus, MemoryType, load_manifest, resolve_context,
     scan_workspace,
 };
-use agenthub_store::Store;
+use agentkib_store::Store;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("agenthub-mcp: {error:#}");
+        eprintln!("agentkib-mcp: {error:#}");
         std::process::exit(1);
     }
 }
 
 fn run() -> Result<()> {
     let (project, db_path) = parse_args()?;
-    let project = agenthub_core::canonical_project(&project)?;
+    let project = agentkib_core::canonical_project(&project)?;
     let store = match db_path {
         Some(path) => Store::open(&path)?,
         None => Store::open_default()?,
@@ -51,7 +51,7 @@ fn handle(project: &Path, store: &Store, request: &Value) -> Result<Value> {
         .context("缺少 method")?;
     let result = match method {
         "initialize" => {
-            json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"agenthub-mcp","version":env!("CARGO_PKG_VERSION")}})
+            json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"agentkib-mcp","version":env!("CARGO_PKG_VERSION")}})
         }
         "ping" => json!({}),
         "tools/list" => json!({"tools": tool_definitions()}),
@@ -250,10 +250,10 @@ mod tests {
 
     fn fixture() -> (tempfile::TempDir, Store) {
         let dir = tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".agenthub")).unwrap();
+        std::fs::create_dir(dir.path().join(".agentkib")).unwrap();
         std::fs::write(dir.path().join("AGENTS.md"), "shared rules").unwrap();
         std::fs::write(
-            dir.path().join(".agenthub/manifest.yaml"),
+            dir.path().join(".agentkib/manifest.yaml"),
             "schema_version: 1\nworkspace:\n  id: fixture\n  name: fixture\n",
         )
         .unwrap();
@@ -270,7 +270,7 @@ mod tests {
             &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
         )
         .unwrap();
-        assert_eq!(initialize["result"]["serverInfo"]["name"], "agenthub-mcp");
+        assert_eq!(initialize["result"]["serverInfo"]["name"], "agentkib-mcp");
         let listed = handle(
             dir.path(),
             &store,

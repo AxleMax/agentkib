@@ -1,0 +1,2333 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use agentkib_core::{
+    ActivityRecord, AgentInstallation, AgentKind, AssetKind, CatalogAsset, CatalogScope,
+    DiscoveryCandidate, DiscoveryEvidence, DiscoveryReport, ExcludedWorkspace, MemoryProposal,
+    MemoryRecord, MemoryStatus, ScanRoot, WorkspaceSource, WorkspaceStatus, WorkspaceSummary,
+    hash_content, load_manifest, scan_workspace,
+};
+use agentkib_insights::{
+    Achievement, AgentUsageBreakdown, GitIdentitySummary, GitRepositorySnapshot, HeatmapPoint,
+    InsightsQuery, InsightsStatus, InsightsSummary, ModelUsageBreakdown, ProviderStatus,
+    RepositoryCommitBreakdown, UsageBatch, UsageQuality, WorkspaceUsageBreakdown,
+};
+use anyhow::{Context, Result, bail};
+use chrono::{DateTime, Days, Local, NaiveDate, TimeZone, Utc};
+use rusqlite::{Connection, OptionalExtension, Row, params};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
+
+pub struct Store {
+    connection: Connection,
+}
+
+impl Store {
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let connection = Connection::open(path)?;
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        let store = Self { connection };
+        store.migrate()?;
+        Ok(store)
+    }
+
+    pub fn open_default() -> Result<Self> {
+        Self::open(&default_database_path()?)
+    }
+
+    fn migrate(&self) -> Result<()> {
+        self.connection.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA journal_mode = WAL;",
+        )?;
+        let current_version = self
+            .connection
+            .query_row(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse::<u32>().ok());
+        if current_version.is_none_or(|version| version < 2) {
+            self.connection.execute_batch(
+            "BEGIN IMMEDIATE;
+             CREATE TABLE IF NOT EXISTS memories (
+               id TEXT PRIMARY KEY,
+               project_id TEXT NOT NULL,
+               memory_type TEXT NOT NULL,
+               content TEXT NOT NULL,
+               status TEXT NOT NULL,
+               source_agent TEXT,
+               source_thread TEXT,
+               source_reference TEXT,
+               created_at TEXT NOT NULL,
+               approved_at TEXT,
+               invalidated_by TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_memories_project_status ON memories(project_id, status);
+             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(id UNINDEXED, project_id UNINDEXED, content);
+             CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+               INSERT INTO memories_fts(id, project_id, content) VALUES (new.id, new.project_id, new.content);
+             END;
+             CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content ON memories BEGIN
+               DELETE FROM memories_fts WHERE id = old.id;
+               INSERT INTO memories_fts(id, project_id, content) VALUES (new.id, new.project_id, new.content);
+             END;
+             CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+               DELETE FROM memories_fts WHERE id = old.id;
+             END;
+             CREATE TABLE IF NOT EXISTS audit_events (
+               id TEXT PRIMARY KEY,
+               project_id TEXT,
+               action TEXT NOT NULL,
+               detail TEXT NOT NULL,
+               created_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS schema_meta (
+               key TEXT PRIMARY KEY,
+               value TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS workspaces (
+               id TEXT PRIMARY KEY,
+               canonical_path TEXT NOT NULL UNIQUE,
+               name TEXT NOT NULL,
+               repository_group_id TEXT,
+               manifest_workspace_id TEXT,
+               status TEXT NOT NULL,
+               asset_count INTEGER NOT NULL DEFAULT 0,
+               warning_count INTEGER NOT NULL DEFAULT 0,
+               last_active_at TEXT,
+               last_discovered_at TEXT NOT NULL,
+               last_scanned_at TEXT
+             );
+             CREATE TABLE IF NOT EXISTS workspace_sources (
+               workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+               agent TEXT NOT NULL,
+               evidence TEXT NOT NULL,
+               session_count INTEGER NOT NULL DEFAULT 0,
+               last_active_at TEXT,
+               PRIMARY KEY(workspace_id, agent, evidence)
+             );
+             CREATE TABLE IF NOT EXISTS catalog_assets (
+               id TEXT PRIMARY KEY,
+               scope TEXT NOT NULL,
+               workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+               agent TEXT,
+               kind TEXT NOT NULL,
+               name TEXT NOT NULL,
+               path TEXT NOT NULL,
+               summary TEXT NOT NULL,
+               size INTEGER NOT NULL DEFAULT 0,
+               modified_at TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_catalog_assets_workspace ON catalog_assets(workspace_id);
+             CREATE INDEX IF NOT EXISTS idx_catalog_assets_search ON catalog_assets(name, path, summary);
+             CREATE TABLE IF NOT EXISTS agent_installations (
+               agent TEXT PRIMARY KEY,
+               installed INTEGER NOT NULL,
+               configured INTEGER NOT NULL,
+               version TEXT,
+               home TEXT,
+               warnings TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS scan_roots (
+               id TEXT PRIMARY KEY,
+               canonical_path TEXT NOT NULL UNIQUE,
+               enabled INTEGER NOT NULL DEFAULT 1,
+               max_depth INTEGER NOT NULL DEFAULT 5,
+               created_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS excluded_workspaces (
+               canonical_path TEXT PRIMARY KEY,
+               created_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS discovery_runs (
+               id TEXT PRIMARY KEY,
+               started_at TEXT NOT NULL,
+               finished_at TEXT NOT NULL,
+               discovered_count INTEGER NOT NULL,
+               removed_count INTEGER NOT NULL,
+               errors TEXT NOT NULL
+             );
+             INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '2');
+             COMMIT;"
+            )?;
+        }
+        if current_version.is_none_or(|version| version < 3) {
+            self.connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS usage_events (
+                   source_key TEXT PRIMARY KEY,
+                   surface_agent TEXT NOT NULL,
+                   workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
+                   occurred_at TEXT,
+                   day TEXT,
+                   model TEXT,
+                   input_tokens INTEGER NOT NULL DEFAULT 0,
+                   output_tokens INTEGER NOT NULL DEFAULT 0,
+                   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                   cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                   reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                   total_tokens INTEGER NOT NULL DEFAULT 0,
+                   session_hash TEXT,
+                   session_count INTEGER NOT NULL DEFAULT 0,
+                   date_precision TEXT NOT NULL,
+                   quality TEXT NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_usage_events_day_agent ON usage_events(day, surface_agent);
+                 CREATE INDEX IF NOT EXISTS idx_usage_events_workspace ON usage_events(workspace_id);
+                 CREATE TABLE IF NOT EXISTS usage_daily (
+                   day TEXT NOT NULL,
+                   surface_agent TEXT NOT NULL,
+                   workspace_id TEXT NOT NULL DEFAULT '',
+                   input_tokens INTEGER NOT NULL DEFAULT 0,
+                   output_tokens INTEGER NOT NULL DEFAULT 0,
+                   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                   cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                   reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                   total_tokens INTEGER NOT NULL DEFAULT 0,
+                   session_count INTEGER NOT NULL DEFAULT 0,
+                   quality TEXT NOT NULL,
+                   PRIMARY KEY(day, surface_agent, workspace_id)
+                 );
+                 CREATE TABLE IF NOT EXISTS git_commits (
+                   repository_group_id TEXT NOT NULL,
+                   commit_hash TEXT NOT NULL,
+                   authored_at TEXT NOT NULL,
+                   day TEXT NOT NULL,
+                   author_identity_hash TEXT NOT NULL,
+                   is_mine INTEGER NOT NULL DEFAULT 0,
+                   PRIMARY KEY(repository_group_id, commit_hash)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_git_commits_day ON git_commits(day);
+                 CREATE TABLE IF NOT EXISTS commit_attributions (
+                   repository_group_id TEXT NOT NULL,
+                   commit_hash TEXT NOT NULL,
+                   agent TEXT NOT NULL,
+                   confidence TEXT NOT NULL,
+                   method TEXT NOT NULL,
+                   PRIMARY KEY(repository_group_id, commit_hash, agent)
+                 );
+                 CREATE TABLE IF NOT EXISTS git_identities (
+                   id TEXT PRIMARY KEY,
+                   identity_hash TEXT NOT NULL UNIQUE,
+                   source TEXT NOT NULL,
+                   label TEXT NOT NULL,
+                   enabled INTEGER NOT NULL DEFAULT 1,
+                   created_at TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS insight_cursors (
+                   provider TEXT PRIMARY KEY,
+                   cursor_json TEXT,
+                   available INTEGER NOT NULL DEFAULT 0,
+                   quality TEXT NOT NULL,
+                   coverage_from TEXT,
+                   coverage_to TEXT,
+                   imported_events INTEGER NOT NULL DEFAULT 0,
+                   error TEXT,
+                   updated_at TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS achievement_unlocks (
+                   code TEXT PRIMARY KEY,
+                   unlocked_at TEXT NOT NULL,
+                   rule_version INTEGER NOT NULL
+                 );
+                 INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '3');
+                 COMMIT;",
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn sync_discovery(
+        &self,
+        candidates: &[DiscoveryCandidate],
+        installations: &[AgentInstallation],
+        home_assets: &[CatalogAsset],
+        started_at: DateTime<Utc>,
+        errors: &[String],
+    ) -> Result<DiscoveryReport> {
+        let transaction = self.connection.unchecked_transaction()?;
+        let excluded = excluded_paths(&transaction)?;
+        let mut grouped: BTreeMap<PathBuf, Vec<&DiscoveryCandidate>> = BTreeMap::new();
+        for candidate in candidates {
+            if candidate.path.is_dir() && !excluded.contains(&candidate.path) {
+                grouped
+                    .entry(candidate.path.clone())
+                    .or_default()
+                    .push(candidate);
+            }
+        }
+        let discovered_paths: BTreeSet<_> = grouped.keys().cloned().collect();
+        let mut discovery_errors = errors.to_vec();
+        for (path, sources) in grouped {
+            let workspace_id = upsert_workspace(&transaction, &path, &sources)?;
+            if let Err(error) = refresh_workspace_record(&transaction, &workspace_id, &path) {
+                record_scan_failure(&transaction, &workspace_id)?;
+                discovery_errors.push(format!("工作区 {} 扫描失败：{error}", path.display()));
+            }
+        }
+
+        let mut stale = Vec::new();
+        {
+            let mut statement = transaction.prepare("SELECT id, canonical_path FROM workspaces")?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    PathBuf::from(row.get::<_, String>(1)?),
+                ))
+            })?;
+            for row in rows {
+                let (id, path) = row?;
+                // Provider 读取失败或用户撤销扫描目录时，不能误删仍然存在的工作区。
+                // 历史清理由路径是否仍存在驱动，来源在后续成功发现时再聚合更新。
+                if !path.is_dir() {
+                    stale.push(id);
+                }
+            }
+        }
+        for id in &stale {
+            transaction.execute("DELETE FROM workspaces WHERE id = ?1", params![id])?;
+        }
+
+        transaction.execute("DELETE FROM catalog_assets WHERE scope = 'agent-home'", [])?;
+        for asset in home_assets {
+            insert_catalog_asset(&transaction, asset)?;
+        }
+        transaction.execute("DELETE FROM agent_installations", [])?;
+        for installation in installations {
+            transaction.execute(
+                "INSERT INTO agent_installations(agent, installed, configured, version, home, warnings) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    enum_string(installation.agent)?,
+                    installation.installed,
+                    installation.configured,
+                    installation.version,
+                    installation.home.as_ref().map(|value| value.display().to_string()),
+                    serde_json::to_string(&installation.warnings)?,
+                ],
+            )?;
+        }
+        let finished_at = Utc::now();
+        let report = DiscoveryReport {
+            started_at,
+            finished_at,
+            discovered_count: discovered_paths.len(),
+            removed_count: stale.len(),
+            errors: discovery_errors.clone(),
+        };
+        transaction.execute(
+            "INSERT INTO discovery_runs(id, started_at, finished_at, discovered_count, removed_count, errors) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![Uuid::new_v4().to_string(), report.started_at.to_rfc3339(), report.finished_at.to_rfc3339(), report.discovered_count as i64, report.removed_count as i64, serde_json::to_string(&discovery_errors)?],
+        )?;
+        transaction.execute(
+            "INSERT INTO audit_events(id, project_id, action, detail, created_at) VALUES (?1, NULL, 'discovery.complete', ?2, ?3)",
+            params![Uuid::new_v4().to_string(), format!("{} workspaces, {} errors", report.discovered_count, discovery_errors.len()), finished_at.to_rfc3339()],
+        )?;
+        transaction.commit()?;
+        Ok(report)
+    }
+
+    pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, canonical_path, name, repository_group_id, manifest_workspace_id, status, asset_count, warning_count, last_active_at, last_scanned_at FROM workspaces ORDER BY COALESCE(last_active_at, last_scanned_at) DESC, name ASC",
+        )?;
+        let rows = statement.query_map([], row_to_workspace)?;
+        let mut values = Vec::new();
+        for row in rows {
+            let mut workspace = row?;
+            workspace.sources = self.workspace_sources(&workspace.id)?;
+            values.push(workspace);
+        }
+        Ok(values)
+    }
+
+    pub fn get_workspace(&self, id: &str) -> Result<Option<WorkspaceSummary>> {
+        let mut value = self.connection.query_row(
+            "SELECT id, canonical_path, name, repository_group_id, manifest_workspace_id, status, asset_count, warning_count, last_active_at, last_scanned_at FROM workspaces WHERE id = ?1",
+            params![id],
+            row_to_workspace,
+        ).optional()?;
+        if let Some(workspace) = value.as_mut() {
+            workspace.sources = self.workspace_sources(id)?;
+        }
+        Ok(value)
+    }
+
+    pub fn workspace_path(&self, id: &str) -> Result<PathBuf> {
+        self.connection
+            .query_row(
+                "SELECT canonical_path FROM workspaces WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(PathBuf::from)
+            .context("工作区不存在")
+    }
+
+    pub fn add_workspace(&self, path: &Path) -> Result<WorkspaceSummary> {
+        let path = path.canonicalize().context("工作区不存在")?;
+        if !path.is_dir() {
+            bail!("工作区必须是目录");
+        }
+        let candidate = DiscoveryCandidate {
+            path: path.clone(),
+            source_agent: None,
+            evidence: DiscoveryEvidence::Manual,
+            last_active_at: Some(Utc::now()),
+            session_count: 0,
+            explicit_workspace: true,
+            repository_group_id: None,
+        };
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM excluded_workspaces WHERE canonical_path = ?1",
+            params![path.display().to_string()],
+        )?;
+        let workspace_id = upsert_workspace(&transaction, &path, &[&candidate])?;
+        if refresh_workspace_record(&transaction, &workspace_id, &path).is_err() {
+            record_scan_failure(&transaction, &workspace_id)?;
+        }
+        transaction.commit()?;
+        self.get_workspace_by_path(&path)?.context("工作区写入失败")
+    }
+
+    pub fn refresh_workspace(&self, id: &str) -> Result<WorkspaceSummary> {
+        let path = self.workspace_path(id)?;
+        let transaction = self.connection.unchecked_transaction()?;
+        let result = refresh_workspace_record(&transaction, id, &path);
+        if result.is_err() {
+            record_scan_failure(&transaction, id)?;
+        }
+        transaction.commit()?;
+        result?;
+        self.get_workspace(id)?.context("工作区不存在")
+    }
+
+    pub fn exclude_workspace(&self, id: &str) -> Result<()> {
+        let path = self.workspace_path(id)?;
+        self.connection.execute(
+            "INSERT OR REPLACE INTO excluded_workspaces(canonical_path, created_at) VALUES (?1, ?2)",
+            params![path.display().to_string(), Utc::now().to_rfc3339()],
+        )?;
+        self.connection
+            .execute("DELETE FROM workspaces WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn list_excluded_workspaces(&self) -> Result<Vec<ExcludedWorkspace>> {
+        let mut statement = self.connection.prepare(
+            "SELECT canonical_path, created_at FROM excluded_workspaces ORDER BY created_at DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let created: String = row.get(1)?;
+            Ok(ExcludedWorkspace {
+                path: PathBuf::from(row.get::<_, String>(0)?),
+                created_at: parse_time(&created).map_err(sql_error)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn restore_excluded_workspace(&self, path: &Path) -> Result<()> {
+        self.connection.execute(
+            "DELETE FROM excluded_workspaces WHERE canonical_path = ?1",
+            params![path.display().to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_scan_roots(&self) -> Result<Vec<ScanRoot>> {
+        let mut statement = self.connection.prepare("SELECT id, canonical_path, enabled, max_depth, created_at FROM scan_roots ORDER BY created_at ASC")?;
+        let rows = statement.query_map([], |row| {
+            let created: String = row.get(4)?;
+            Ok(ScanRoot {
+                id: row.get(0)?,
+                path: PathBuf::from(row.get::<_, String>(1)?),
+                enabled: row.get(2)?,
+                max_depth: row.get::<_, i64>(3)? as usize,
+                created_at: parse_time(&created).map_err(sql_error)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn add_scan_root(&self, path: &Path, max_depth: usize) -> Result<ScanRoot> {
+        let path = path.canonicalize().context("扫描目录不存在")?;
+        if !path.is_dir() {
+            bail!("扫描根必须是目录");
+        }
+        let id = Uuid::new_v4().to_string();
+        let created_at = Utc::now();
+        self.connection.execute(
+            "INSERT INTO scan_roots(id, canonical_path, enabled, max_depth, created_at) VALUES (?1, ?2, 1, ?3, ?4) ON CONFLICT(canonical_path) DO UPDATE SET enabled = 1, max_depth = excluded.max_depth",
+            params![id, path.display().to_string(), max_depth.clamp(1, 8) as i64, created_at.to_rfc3339()],
+        )?;
+        self.connection.query_row(
+            "SELECT id, canonical_path, enabled, max_depth, created_at FROM scan_roots WHERE canonical_path = ?1",
+            params![path.display().to_string()],
+            |row| { let created: String = row.get(4)?; Ok(ScanRoot { id: row.get(0)?, path: PathBuf::from(row.get::<_, String>(1)?), enabled: row.get(2)?, max_depth: row.get::<_, i64>(3)? as usize, created_at: parse_time(&created).map_err(sql_error)? }) },
+        ).map_err(Into::into)
+    }
+
+    pub fn remove_scan_root(&self, id: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM scan_roots WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn list_agent_installations(&self) -> Result<Vec<AgentInstallation>> {
+        let mut statement = self.connection.prepare("SELECT agent, installed, configured, version, home, warnings FROM agent_installations ORDER BY agent")?;
+        let rows = statement.query_map([], |row| {
+            let agent: String = row.get(0)?;
+            let warnings: String = row.get(5)?;
+            Ok(AgentInstallation {
+                agent: parse_enum(&agent).map_err(sql_error)?,
+                installed: row.get(1)?,
+                configured: row.get(2)?,
+                version: row.get(3)?,
+                home: row.get::<_, Option<String>>(4)?.map(PathBuf::from),
+                warnings: serde_json::from_str(&warnings)
+                    .map_err(|error| sql_error(error.into()))?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn search_catalog_assets(
+        &self,
+        query: &str,
+        agent: Option<AgentKind>,
+        workspace_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<CatalogAsset>> {
+        let pattern = format!("%{}%", query.trim().replace('%', "\\%").replace('_', "\\_"));
+        let agent = agent.map(enum_string).transpose()?;
+        let mut statement = self.connection.prepare(
+            "SELECT id, scope, workspace_id, agent, kind, name, path, summary, size, modified_at FROM catalog_assets WHERE (name LIKE ?1 ESCAPE '\\' OR path LIKE ?1 ESCAPE '\\' OR summary LIKE ?1 ESCAPE '\\') AND (?2 IS NULL OR agent = ?2) AND (?3 IS NULL OR workspace_id = ?3) ORDER BY modified_at DESC, name ASC LIMIT ?4",
+        )?;
+        let rows = statement.query_map(
+            params![pattern, agent, workspace_id, limit.clamp(1, 500) as i64],
+            row_to_catalog_asset,
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn list_global_memories(&self, status: Option<MemoryStatus>) -> Result<Vec<MemoryRecord>> {
+        let mut records = Vec::new();
+        let (sql, status_value) = if let Some(status) = status {
+            (
+                "SELECT id, project_id, memory_type, content, status, source_agent, source_thread, source_reference, created_at, approved_at, invalidated_by FROM memories WHERE status = ?1 ORDER BY created_at DESC",
+                Some(enum_string(status)?),
+            )
+        } else {
+            (
+                "SELECT id, project_id, memory_type, content, status, source_agent, source_thread, source_reference, created_at, approved_at, invalidated_by FROM memories ORDER BY created_at DESC",
+                None,
+            )
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        if let Some(status) = status_value {
+            let rows = statement.query_map(params![status], row_to_memory)?;
+            for row in rows {
+                records.push(row?);
+            }
+        } else {
+            let rows = statement.query_map([], row_to_memory)?;
+            for row in rows {
+                records.push(row?);
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn list_activity(&self, limit: usize) -> Result<Vec<ActivityRecord>> {
+        let mut statement = self.connection.prepare("SELECT id, project_id, action, detail, created_at FROM audit_events ORDER BY created_at DESC LIMIT ?1")?;
+        let rows = statement.query_map(params![limit.clamp(1, 500) as i64], |row| {
+            let created: String = row.get(4)?;
+            Ok(ActivityRecord {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                action: row.get(2)?,
+                detail: row.get(3)?,
+                created_at: parse_time(&created).map_err(sql_error)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn insight_git_fingerprints(&self) -> Result<BTreeMap<String, String>> {
+        let mut statement = self.connection.prepare(
+            "SELECT substr(provider, 5), cursor_json FROM insight_cursors WHERE provider LIKE 'git:%' AND cursor_json IS NOT NULL",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<rusqlite::Result<BTreeMap<_, _>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn insight_usage_cursors(&self) -> Result<BTreeMap<AgentKind, String>> {
+        let mut statement = self.connection.prepare(
+            "SELECT provider, cursor_json FROM insight_cursors WHERE provider NOT LIKE 'git:%' AND cursor_json IS NOT NULL",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut output = BTreeMap::new();
+        for row in rows {
+            let (agent, cursor) = row?;
+            output.insert(parse_enum(&agent)?, cursor);
+        }
+        Ok(output)
+    }
+
+    pub fn sync_insights(
+        &self,
+        usage_batches: &[UsageBatch],
+        repositories: &[GitRepositorySnapshot],
+    ) -> Result<()> {
+        let salt = self.insight_salt()?;
+        let workspace_paths = self.workspace_path_index()?;
+        let transaction = self.connection.unchecked_transaction()?;
+        let now = Utc::now().to_rfc3339();
+        for batch in usage_batches {
+            if batch.unchanged {
+                continue;
+            }
+            let provider = enum_string(batch.status.agent)?;
+            transaction.execute(
+                "INSERT INTO insight_cursors(provider, cursor_json, available, quality, coverage_from, coverage_to, imported_events, error, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(provider) DO UPDATE SET cursor_json = excluded.cursor_json, available = excluded.available, quality = excluded.quality, coverage_from = excluded.coverage_from, coverage_to = excluded.coverage_to, imported_events = excluded.imported_events, error = excluded.error, updated_at = excluded.updated_at",
+                params![
+                    provider,
+                    batch.cursor.as_ref().map(|value| value.value.as_str()),
+                    batch.status.available,
+                    enum_string(batch.status.quality)?,
+                    batch.status.coverage_from.map(|value| value.to_string()),
+                    batch.status.coverage_to.map(|value| value.to_string()),
+                    to_i64(batch.status.imported_events as u64),
+                    batch.status.error,
+                    now,
+                ],
+            )?;
+            for event in &batch.events {
+                let source_key = keyed_hash(&salt, event.source_key.as_bytes());
+                let session_hash = event
+                    .session_key
+                    .as_ref()
+                    .map(|value| keyed_hash(&salt, value.as_bytes()));
+                let workspace_id = event
+                    .workspace_path
+                    .as_ref()
+                    .and_then(|path| match_workspace(path, &workspace_paths));
+                if !matches!(
+                    event.date_precision,
+                    agentkib_insights::DatePrecision::Aggregate
+                ) && let Some(session_hash) = session_hash.as_deref()
+                {
+                    transaction.execute(
+                        "DELETE FROM usage_events WHERE session_hash = ?1 AND date_precision = 'aggregate'",
+                        params![session_hash],
+                    )?;
+                }
+                transaction.execute(
+                    "INSERT INTO usage_events(source_key, surface_agent, workspace_id, occurred_at, day, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, total_tokens, session_hash, session_count, date_precision, quality)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                     ON CONFLICT(source_key) DO UPDATE SET workspace_id = excluded.workspace_id, occurred_at = excluded.occurred_at, day = excluded.day, model = excluded.model, input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens, cache_read_tokens = excluded.cache_read_tokens, cache_write_tokens = excluded.cache_write_tokens, reasoning_tokens = excluded.reasoning_tokens, total_tokens = excluded.total_tokens, session_hash = excluded.session_hash, session_count = excluded.session_count, date_precision = excluded.date_precision, quality = excluded.quality",
+                    params![
+                        source_key,
+                        enum_string(event.surface_agent)?,
+                        workspace_id,
+                        event.occurred_at.map(|value| value.to_rfc3339()),
+                        event.day.map(|value| value.to_string()),
+                        event.model,
+                        to_i64(event.input_tokens),
+                        to_i64(event.output_tokens),
+                        to_i64(event.cache_read_tokens),
+                        to_i64(event.cache_write_tokens),
+                        to_i64(event.reasoning_tokens),
+                        to_i64(event.total_tokens),
+                        session_hash,
+                        to_i64(event.session_count),
+                        enum_string(event.date_precision)?,
+                        enum_string(event.quality)?,
+                    ],
+                )?;
+            }
+        }
+
+        for repository in repositories {
+            let provider = format!("git:{}", repository.repository_group_id);
+            if let Some(error) = &repository.error {
+                transaction.execute(
+                    "INSERT INTO insight_cursors(provider, available, quality, imported_events, error, updated_at) VALUES (?1, 0, 'incomplete', 0, ?2, ?3)
+                     ON CONFLICT(provider) DO UPDATE SET available = 0, quality = 'incomplete', error = excluded.error, updated_at = excluded.updated_at",
+                    params![provider, error, now],
+                )?;
+                continue;
+            }
+            for identity in &repository.identities {
+                let identity_hash =
+                    keyed_hash(&salt, identity.email.trim().to_ascii_lowercase().as_bytes());
+                transaction.execute(
+                    "INSERT INTO git_identities(id, identity_hash, source, label, enabled, created_at) VALUES (?1, ?1, ?2, ?3, 1, ?4)
+                     ON CONFLICT(identity_hash) DO UPDATE SET source = excluded.source, label = excluded.label",
+                    params![identity_hash, identity.source, identity.label, now],
+                )?;
+            }
+            if repository.changed {
+                transaction.execute(
+                    "DELETE FROM commit_attributions WHERE repository_group_id = ?1",
+                    params![repository.repository_group_id],
+                )?;
+                transaction.execute(
+                    "DELETE FROM git_commits WHERE repository_group_id = ?1",
+                    params![repository.repository_group_id],
+                )?;
+                for commit in &repository.commits {
+                    let identity_hash = keyed_hash(
+                        &salt,
+                        commit.author_email.trim().to_ascii_lowercase().as_bytes(),
+                    );
+                    transaction.execute(
+                        "INSERT INTO git_commits(repository_group_id, commit_hash, authored_at, day, author_identity_hash, is_mine)
+                         VALUES (?1, ?2, ?3, ?4, ?5, EXISTS(SELECT 1 FROM git_identities WHERE identity_hash = ?5 AND enabled = 1))",
+                        params![
+                            repository.repository_group_id,
+                            commit.hash,
+                            commit.authored_at.to_rfc3339(),
+                            commit.authored_at.with_timezone(&Local).date_naive().to_string(),
+                            identity_hash,
+                        ],
+                    )?;
+                }
+            }
+            transaction.execute(
+                "INSERT INTO insight_cursors(provider, cursor_json, available, quality, imported_events, error, updated_at)
+                 VALUES (?1, ?2, 1, 'exact', ?3, NULL, ?4)
+                 ON CONFLICT(provider) DO UPDATE SET cursor_json = excluded.cursor_json, available = 1, quality = 'exact', imported_events = excluded.imported_events, error = NULL, updated_at = excluded.updated_at",
+                params![provider, repository.fingerprint, to_i64(repository.commits.len() as u64), now],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE git_commits SET is_mine = EXISTS(SELECT 1 FROM git_identities WHERE identity_hash = git_commits.author_identity_hash AND enabled = 1)",
+            [],
+        )?;
+        rebuild_usage_daily(&transaction)?;
+        rebuild_commit_attributions(&transaction)?;
+        transaction.execute(
+            "INSERT INTO audit_events(id, project_id, action, detail, created_at) VALUES (?1, NULL, 'insights.refresh', ?2, ?3)",
+            params![
+                Uuid::new_v4().to_string(),
+                format!("{} providers, {} repositories", usage_batches.len(), repositories.len()),
+                now,
+            ],
+        )?;
+        transaction.commit()?;
+        self.refresh_achievement_unlocks()?;
+        Ok(())
+    }
+
+    pub fn insights_summary(&self, query: &InsightsQuery) -> Result<InsightsSummary> {
+        let (from, to, agent, workspace, repository) = query_values(&self.connection, query)?;
+        let usage = self.connection.query_row(
+            "SELECT COALESCE(SUM(u.total_tokens), 0), COALESCE(SUM(u.input_tokens), 0), COALESCE(SUM(u.output_tokens), 0), COALESCE(SUM(u.cache_read_tokens + u.cache_write_tokens), 0), COALESCE(SUM(u.reasoning_tokens), 0), COALESCE(SUM(u.session_count), 0)
+             FROM usage_events u LEFT JOIN workspaces w ON w.id = u.workspace_id
+             WHERE (?1 IS NULL OR u.day >= ?1) AND (?2 IS NULL OR u.day <= ?2) AND (?3 IS NULL OR u.surface_agent = ?3) AND (?4 IS NULL OR u.workspace_id = ?4) AND (?5 IS NULL OR w.repository_group_id = ?5)",
+            params![from, to, agent, workspace, repository],
+            |row| Ok((as_u64(row, 0)?, as_u64(row, 1)?, as_u64(row, 2)?, as_u64(row, 3)?, as_u64(row, 4)?, as_u64(row, 5)?)),
+        )?;
+        let commits = self.connection.query_row(
+            "SELECT COALESCE(SUM(is_mine), 0), COUNT(*), COALESCE(SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND (?4 IS NULL OR a.agent = ?4))), 0)
+             FROM git_commits c WHERE (?1 IS NULL OR c.day >= ?1) AND (?2 IS NULL OR c.day <= ?2) AND (?3 IS NULL OR c.repository_group_id = ?3)",
+            params![from, to, repository, agent],
+            |row| Ok((as_u64(row, 0)?, as_u64(row, 1)?, as_u64(row, 2)?)),
+        )?;
+        let active = self.insight_active_dates(query)?;
+        let (current_streak, longest_streak) =
+            calculate_streaks(&active, Local::now().date_naive());
+        let coverage_from = active.first().copied();
+        let coverage_to = active.last().copied();
+        let statuses = self.insights_status(false)?;
+        let installed = self.installed_agents()?;
+        let relevant: Vec<_> = statuses
+            .providers
+            .iter()
+            .filter(|status| {
+                query.agent.is_none_or(|agent| agent == status.agent)
+                    && (status.available || installed.contains(&status.agent))
+            })
+            .collect();
+        let quality = if relevant.is_empty()
+            || relevant
+                .iter()
+                .any(|status| !status.available || status.quality == UsageQuality::Incomplete)
+        {
+            UsageQuality::Incomplete
+        } else if relevant
+            .iter()
+            .any(|status| status.quality == UsageQuality::Estimated)
+        {
+            UsageQuality::Estimated
+        } else {
+            UsageQuality::Exact
+        };
+        Ok(InsightsSummary {
+            total_tokens: usage.0,
+            input_tokens: usage.1,
+            output_tokens: usage.2,
+            cache_tokens: usage.3,
+            reasoning_tokens: usage.4,
+            session_count: usage.5,
+            my_commits: commits.0,
+            all_commits: commits.1,
+            attributed_commits: commits.2,
+            active_days: active.len() as u64,
+            current_streak,
+            longest_streak,
+            quality,
+            coverage_from,
+            coverage_to,
+            refreshed_at: statuses.refreshed_at,
+        })
+    }
+
+    pub fn insights_heatmap(&self, query: &InsightsQuery) -> Result<Vec<HeatmapPoint>> {
+        let today = Local::now().date_naive();
+        let from_day = query
+            .from
+            .unwrap_or_else(|| today.checked_sub_days(Days::new(363)).unwrap_or(today));
+        let to_day = query.to.unwrap_or(today);
+        let (_, _, agent, workspace, repository) = query_values(&self.connection, query)?;
+        let mut output = BTreeMap::new();
+        let mut day = from_day;
+        while day <= to_day {
+            output.insert(
+                day,
+                HeatmapPoint {
+                    date: day,
+                    tokens: 0,
+                    my_commits: 0,
+                    all_commits: 0,
+                    attributed_commits: 0,
+                    sessions: 0,
+                    quality: UsageQuality::Exact,
+                },
+            );
+            let Some(next) = day.succ_opt() else { break };
+            day = next;
+        }
+        let mut usage_statement = self.connection.prepare(
+            "SELECT d.day, SUM(d.total_tokens), SUM(d.session_count), MAX(CASE d.quality WHEN 'incomplete' THEN 2 WHEN 'estimated' THEN 1 ELSE 0 END)
+             FROM usage_daily d LEFT JOIN workspaces w ON w.id = NULLIF(d.workspace_id, '')
+             WHERE d.day >= ?1 AND d.day <= ?2 AND (?3 IS NULL OR d.surface_agent = ?3) AND (?4 IS NULL OR d.workspace_id = ?4) AND (?5 IS NULL OR w.repository_group_id = ?5)
+             GROUP BY d.day",
+        )?;
+        let usage_rows = usage_statement.query_map(
+            params![
+                from_day.to_string(),
+                to_day.to_string(),
+                agent,
+                workspace,
+                repository
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    as_u64(row, 1)?,
+                    as_u64(row, 2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )?;
+        for row in usage_rows {
+            let (date, tokens, sessions, quality) = row?;
+            if let Ok(date) = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+                && let Some(point) = output.get_mut(&date)
+            {
+                point.tokens = tokens;
+                point.sessions = sessions;
+                point.quality = match quality {
+                    2 => UsageQuality::Incomplete,
+                    1 => UsageQuality::Estimated,
+                    _ => UsageQuality::Exact,
+                };
+            }
+        }
+        let mut commit_statement = self.connection.prepare(
+            "SELECT c.day, SUM(c.is_mine), COUNT(*), SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND (?4 IS NULL OR a.agent = ?4)))
+             FROM git_commits c WHERE c.day >= ?1 AND c.day <= ?2 AND (?3 IS NULL OR c.repository_group_id = ?3) GROUP BY c.day",
+        )?;
+        let commit_rows = commit_statement.query_map(
+            params![from_day.to_string(), to_day.to_string(), repository, agent],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    as_u64(row, 1)?,
+                    as_u64(row, 2)?,
+                    as_u64(row, 3)?,
+                ))
+            },
+        )?;
+        for row in commit_rows {
+            let (date, mine, all, attributed) = row?;
+            if let Ok(date) = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+                && let Some(point) = output.get_mut(&date)
+            {
+                point.my_commits = mine;
+                point.all_commits = all;
+                point.attributed_commits = attributed;
+            }
+        }
+        Ok(output.into_values().collect())
+    }
+
+    pub fn agent_usage_breakdown(&self, query: &InsightsQuery) -> Result<Vec<AgentUsageBreakdown>> {
+        let (from, to, _, workspace, repository) = query_values(&self.connection, query)?;
+        let mut statement = self.connection.prepare(
+            "SELECT u.surface_agent, SUM(u.total_tokens), SUM(u.input_tokens), SUM(u.output_tokens), SUM(u.cache_read_tokens + u.cache_write_tokens), SUM(u.reasoning_tokens), SUM(u.session_count), MAX(CASE u.quality WHEN 'incomplete' THEN 2 WHEN 'estimated' THEN 1 ELSE 0 END)
+             FROM usage_events u LEFT JOIN workspaces w ON w.id = u.workspace_id
+             WHERE (?1 IS NULL OR u.day >= ?1) AND (?2 IS NULL OR u.day <= ?2) AND (?3 IS NULL OR u.workspace_id = ?3) AND (?4 IS NULL OR w.repository_group_id = ?4)
+             GROUP BY u.surface_agent ORDER BY SUM(u.total_tokens) DESC",
+        )?;
+        let rows = statement.query_map(params![from, to, workspace, repository], |row| {
+            let quality: i64 = row.get(7)?;
+            Ok(AgentUsageBreakdown {
+                agent: parse_enum(&row.get::<_, String>(0)?).map_err(sql_error)?,
+                total_tokens: as_u64(row, 1)?,
+                input_tokens: as_u64(row, 2)?,
+                output_tokens: as_u64(row, 3)?,
+                cache_tokens: as_u64(row, 4)?,
+                reasoning_tokens: as_u64(row, 5)?,
+                session_count: as_u64(row, 6)?,
+                quality: match quality {
+                    2 => UsageQuality::Incomplete,
+                    1 => UsageQuality::Estimated,
+                    _ => UsageQuality::Exact,
+                },
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn model_usage_breakdown(&self, query: &InsightsQuery) -> Result<Vec<ModelUsageBreakdown>> {
+        let (from, to, agent, workspace, repository) = query_values(&self.connection, query)?;
+        let mut statement = self.connection.prepare(
+            "SELECT COALESCE(NULLIF(u.model, ''), '未知模型'), SUM(u.total_tokens), SUM(u.session_count)
+             FROM usage_events u LEFT JOIN workspaces w ON w.id = u.workspace_id
+             WHERE (?1 IS NULL OR u.day >= ?1) AND (?2 IS NULL OR u.day <= ?2) AND (?3 IS NULL OR u.surface_agent = ?3) AND (?4 IS NULL OR u.workspace_id = ?4) AND (?5 IS NULL OR w.repository_group_id = ?5)
+             GROUP BY COALESCE(NULLIF(u.model, ''), '未知模型') HAVING SUM(u.total_tokens) > 0 ORDER BY SUM(u.total_tokens) DESC LIMIT 20",
+        )?;
+        let rows = statement.query_map(params![from, to, agent, workspace, repository], |row| {
+            Ok(ModelUsageBreakdown {
+                model: row.get(0)?,
+                total_tokens: as_u64(row, 1)?,
+                session_count: as_u64(row, 2)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn workspace_usage_breakdown(
+        &self,
+        query: &InsightsQuery,
+    ) -> Result<Vec<WorkspaceUsageBreakdown>> {
+        let (from, to, agent, workspace, repository) = query_values(&self.connection, query)?;
+        let mut statement = self.connection.prepare(
+            "SELECT u.workspace_id, COALESCE(w.name, '未关联工作区'), SUM(u.total_tokens), SUM(u.session_count)
+             FROM usage_events u LEFT JOIN workspaces w ON w.id = u.workspace_id
+             WHERE (?1 IS NULL OR u.day >= ?1) AND (?2 IS NULL OR u.day <= ?2) AND (?3 IS NULL OR u.surface_agent = ?3) AND (?4 IS NULL OR u.workspace_id = ?4) AND (?5 IS NULL OR w.repository_group_id = ?5)
+             GROUP BY u.workspace_id, COALESCE(w.name, '未关联工作区') HAVING SUM(u.total_tokens) > 0 OR SUM(u.session_count) > 0 ORDER BY SUM(u.total_tokens) DESC LIMIT 20",
+        )?;
+        let rows = statement.query_map(params![from, to, agent, workspace, repository], |row| {
+            Ok(WorkspaceUsageBreakdown {
+                workspace_id: row.get(0)?,
+                name: row.get(1)?,
+                total_tokens: as_u64(row, 2)?,
+                session_count: as_u64(row, 3)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    fn insight_active_dates(&self, query: &InsightsQuery) -> Result<BTreeSet<NaiveDate>> {
+        let (from, to, agent, workspace, repository) = query_values(&self.connection, query)?;
+        let mut active = BTreeSet::new();
+        let mut usage_statement = self.connection.prepare(
+            "SELECT DISTINCT d.day FROM usage_daily d LEFT JOIN workspaces w ON w.id = NULLIF(d.workspace_id, '')
+             WHERE (d.total_tokens > 0 OR d.session_count > 0) AND (?1 IS NULL OR d.day >= ?1) AND (?2 IS NULL OR d.day <= ?2) AND (?3 IS NULL OR d.surface_agent = ?3) AND (?4 IS NULL OR d.workspace_id = ?4) AND (?5 IS NULL OR w.repository_group_id = ?5)",
+        )?;
+        let rows = usage_statement
+            .query_map(params![from, to, agent, workspace, repository], |row| {
+                row.get::<_, String>(0)
+            })?;
+        for row in rows {
+            active.insert(NaiveDate::parse_from_str(&row?, "%Y-%m-%d")?);
+        }
+        let mut commit_statement = self.connection.prepare(
+            "SELECT DISTINCT c.day FROM git_commits c WHERE c.is_mine = 1 AND (?1 IS NULL OR c.day >= ?1) AND (?2 IS NULL OR c.day <= ?2) AND (?3 IS NULL OR c.repository_group_id = ?3) AND (?4 IS NULL OR EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND a.agent = ?4))",
+        )?;
+        let rows = commit_statement.query_map(params![from, to, repository, agent], |row| {
+            row.get::<_, String>(0)
+        })?;
+        for row in rows {
+            active.insert(NaiveDate::parse_from_str(&row?, "%Y-%m-%d")?);
+        }
+        Ok(active)
+    }
+
+    pub fn repository_commit_breakdown(
+        &self,
+        query: &InsightsQuery,
+    ) -> Result<Vec<RepositoryCommitBreakdown>> {
+        let (from, to, _, _, repository) = query_values(&self.connection, query)?;
+        let mut statement = self.connection.prepare(
+            "SELECT c.repository_group_id, COALESCE((SELECT MIN(w.name) FROM workspaces w WHERE w.repository_group_id = c.repository_group_id), 'Repository'), SUM(c.is_mine), COUNT(*), SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash))
+             FROM git_commits c
+             WHERE (?1 IS NULL OR c.day >= ?1) AND (?2 IS NULL OR c.day <= ?2) AND (?3 IS NULL OR c.repository_group_id = ?3)
+             GROUP BY c.repository_group_id ORDER BY SUM(c.is_mine) DESC",
+        )?;
+        let rows = statement.query_map(params![from, to, repository], |row| {
+            Ok(RepositoryCommitBreakdown {
+                repository_group_id: row.get(0)?,
+                name: row.get(1)?,
+                my_commits: as_u64(row, 2)?,
+                all_commits: as_u64(row, 3)?,
+                attributed_commits: as_u64(row, 4)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn list_achievements(&self) -> Result<Vec<Achievement>> {
+        let summary = self.insights_summary(&InsightsQuery::default())?;
+        let agent_count = self
+            .agent_usage_breakdown(&InsightsQuery::default())?
+            .into_iter()
+            .filter(|value| value.total_tokens > 0 || value.session_count > 0)
+            .count() as u64;
+        let definitions = achievement_definitions(&summary, agent_count);
+        let mut statement = self
+            .connection
+            .prepare("SELECT unlocked_at FROM achievement_unlocks WHERE code = ?1")?;
+        definitions
+            .into_iter()
+            .map(|mut value| {
+                let unlocked: Option<String> = statement
+                    .query_row(params![value.code], |row| row.get(0))
+                    .optional()?;
+                value.unlocked_at = unlocked.map(|value| parse_time(&value)).transpose()?;
+                Ok(value)
+            })
+            .collect()
+    }
+
+    pub fn insights_status(&self, running: bool) -> Result<InsightsStatus> {
+        let mut statement = self.connection.prepare(
+            "SELECT provider, available, quality, coverage_from, coverage_to, imported_events, error, updated_at FROM insight_cursors WHERE provider NOT LIKE 'git:%' ORDER BY provider",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let provider: String = row.get(0)?;
+            Ok((
+                ProviderStatus {
+                    agent: parse_enum(&provider).map_err(sql_error)?,
+                    available: row.get(1)?,
+                    quality: parse_enum(&row.get::<_, String>(2)?).map_err(sql_error)?,
+                    coverage_from: row
+                        .get::<_, Option<String>>(3)?
+                        .map(|value| NaiveDate::parse_from_str(&value, "%Y-%m-%d"))
+                        .transpose()
+                        .map_err(|error| sql_error(error.into()))?,
+                    coverage_to: row
+                        .get::<_, Option<String>>(4)?
+                        .map(|value| NaiveDate::parse_from_str(&value, "%Y-%m-%d"))
+                        .transpose()
+                        .map_err(|error| sql_error(error.into()))?,
+                    imported_events: row.get::<_, i64>(5)?.max(0) as usize,
+                    error: row.get(6)?,
+                },
+                row.get::<_, String>(7)?,
+            ))
+        })?;
+        let mut providers = Vec::new();
+        let mut refreshed_at = None;
+        for row in rows {
+            let (status, updated) = row?;
+            let updated = parse_time(&updated)?;
+            refreshed_at =
+                Some(refreshed_at.map_or(updated, |current: DateTime<Utc>| current.max(updated)));
+            providers.push(status);
+        }
+        for agent in AgentKind::ALL {
+            if !providers.iter().any(|status| status.agent == agent) {
+                providers.push(ProviderStatus {
+                    agent,
+                    available: false,
+                    quality: UsageQuality::Incomplete,
+                    coverage_from: None,
+                    coverage_to: None,
+                    imported_events: 0,
+                    error: Some("尚未采集".into()),
+                });
+            }
+        }
+        providers.sort_by_key(|status| status.agent);
+        Ok(InsightsStatus {
+            providers,
+            refreshed_at,
+            running,
+        })
+    }
+
+    pub fn list_git_identities(&self) -> Result<Vec<GitIdentitySummary>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, label, source, enabled FROM git_identities ORDER BY source, label",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(GitIdentitySummary {
+                id: row.get(0)?,
+                label: row.get(1)?,
+                source: row.get(2)?,
+                enabled: row.get(3)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn add_git_identity_alias(&self, email: &str) -> Result<GitIdentitySummary> {
+        let email = email.trim().to_ascii_lowercase();
+        if !email.contains('@') || email.len() > 320 {
+            bail!("请输入有效的 Git 邮箱");
+        }
+        let id = keyed_hash(&self.insight_salt()?, email.as_bytes());
+        self.connection.execute(
+            "INSERT INTO git_identities(id, identity_hash, source, label, enabled, created_at) VALUES (?1, ?1, 'manual', '历史邮箱别名', 1, ?2) ON CONFLICT(identity_hash) DO UPDATE SET enabled = 1",
+            params![id, Utc::now().to_rfc3339()],
+        )?;
+        self.recompute_mine_flags()?;
+        self.list_git_identities()?
+            .into_iter()
+            .find(|value| value.id == id)
+            .context("Git 身份保存失败")
+    }
+
+    pub fn set_git_identity_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        if self.connection.execute(
+            "UPDATE git_identities SET enabled = ?1 WHERE id = ?2",
+            params![enabled, id],
+        )? == 0
+        {
+            bail!("Git 身份不存在");
+        }
+        self.recompute_mine_flags()?;
+        Ok(())
+    }
+
+    fn recompute_mine_flags(&self) -> Result<()> {
+        self.connection.execute("UPDATE git_commits SET is_mine = EXISTS(SELECT 1 FROM git_identities WHERE identity_hash = git_commits.author_identity_hash AND enabled = 1)", [])?;
+        Ok(())
+    }
+
+    fn insight_salt(&self) -> Result<String> {
+        if let Some(value) = self
+            .connection
+            .query_row(
+                "SELECT value FROM schema_meta WHERE key = 'insights_salt'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return Ok(value);
+        }
+        let value = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('insights_salt', ?1)",
+            params![value],
+        )?;
+        self.connection
+            .query_row(
+                "SELECT value FROM schema_meta WHERE key = 'insights_salt'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    fn workspace_path_index(&self) -> Result<Vec<(PathBuf, String)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT canonical_path, id FROM workspaces ORDER BY length(canonical_path) DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((PathBuf::from(row.get::<_, String>(0)?), row.get(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    fn installed_agents(&self) -> Result<BTreeSet<AgentKind>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT agent FROM agent_installations WHERE installed = 1")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut output = BTreeSet::new();
+        for row in rows {
+            output.insert(parse_enum(&row?)?);
+        }
+        Ok(output)
+    }
+
+    fn refresh_achievement_unlocks(&self) -> Result<()> {
+        let summary = self.insights_summary(&InsightsQuery::default())?;
+        let agent_count = self
+            .agent_usage_breakdown(&InsightsQuery::default())?
+            .into_iter()
+            .filter(|value| value.total_tokens > 0 || value.session_count > 0)
+            .count() as u64;
+        for achievement in achievement_definitions(&summary, agent_count) {
+            if achievement.progress >= achievement.threshold {
+                let unlocked_at = self
+                    .achievement_unlock_day(&achievement.category, achievement.threshold)?
+                    .and_then(|day| day.and_hms_opt(0, 0, 0))
+                    .map(|value| Utc.from_utc_datetime(&value))
+                    .unwrap_or_else(Utc::now);
+                self.connection.execute("INSERT OR IGNORE INTO achievement_unlocks(code, unlocked_at, rule_version) VALUES (?1, ?2, 1)", params![achievement.code, unlocked_at.to_rfc3339()])?;
+            }
+        }
+        Ok(())
+    }
+
+    fn achievement_unlock_day(&self, category: &str, threshold: u64) -> Result<Option<NaiveDate>> {
+        let mut daily = Vec::<(NaiveDate, u64)>::new();
+        match category {
+            "token" => {
+                let mut statement = self.connection.prepare(
+                    "SELECT day, SUM(total_tokens) FROM usage_daily GROUP BY day ORDER BY day",
+                )?;
+                let rows = statement
+                    .query_map([], |row| Ok((row.get::<_, String>(0)?, as_u64(row, 1)?)))?;
+                for row in rows {
+                    let (day, value) = row?;
+                    daily.push((NaiveDate::parse_from_str(&day, "%Y-%m-%d")?, value));
+                }
+            }
+            "commit" => {
+                let mut statement = self.connection.prepare(
+                    "SELECT day, SUM(is_mine) FROM git_commits GROUP BY day ORDER BY day",
+                )?;
+                let rows = statement
+                    .query_map([], |row| Ok((row.get::<_, String>(0)?, as_u64(row, 1)?)))?;
+                for row in rows {
+                    let (day, value) = row?;
+                    daily.push((NaiveDate::parse_from_str(&day, "%Y-%m-%d")?, value));
+                }
+            }
+            "streak" => {
+                let active = self.insight_active_dates(&InsightsQuery::default())?;
+                let mut run = 0;
+                let mut previous = None;
+                for day in active {
+                    run = if previous.is_some_and(|value: NaiveDate| value.succ_opt() == Some(day))
+                    {
+                        run + 1
+                    } else {
+                        1
+                    };
+                    if run >= threshold {
+                        return Ok(Some(day));
+                    }
+                    previous = Some(day);
+                }
+                return Ok(None);
+            }
+            "agents" => {
+                let mut statement = self.connection.prepare("SELECT MIN(day) FROM usage_daily WHERE total_tokens > 0 OR session_count > 0 GROUP BY surface_agent ORDER BY MIN(day)")?;
+                let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+                let days = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+                return days
+                    .get(threshold.saturating_sub(1) as usize)
+                    .map(|day| NaiveDate::parse_from_str(day, "%Y-%m-%d"))
+                    .transpose()
+                    .map_err(Into::into);
+            }
+            _ => return Ok(None),
+        }
+        let mut cumulative = 0_u64;
+        for (day, value) in daily {
+            cumulative = cumulative.saturating_add(value);
+            if cumulative >= threshold {
+                return Ok(Some(day));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn propose_memory(&self, proposal: &MemoryProposal) -> Result<MemoryRecord> {
+        if proposal.content.trim().is_empty() {
+            bail!("记忆内容不能为空");
+        }
+        let record = MemoryRecord {
+            id: Uuid::new_v4().to_string(),
+            project_id: proposal.project_id.clone(),
+            memory_type: proposal.memory_type,
+            content: proposal.content.trim().to_string(),
+            status: MemoryStatus::Pending,
+            source_agent: proposal.source_agent.clone(),
+            source_thread: proposal.source_thread.clone(),
+            source_reference: proposal.source_reference.clone(),
+            created_at: Utc::now(),
+            approved_at: None,
+            invalidated_by: None,
+        };
+        self.insert_memory(&record)?;
+        self.audit(Some(&record.project_id), "memory.propose", &record.id)?;
+        Ok(record)
+    }
+
+    pub fn propose(&self, proposal: &MemoryProposal) -> Result<MemoryRecord> {
+        self.propose_memory(proposal)
+    }
+
+    pub fn list_memories(
+        &self,
+        project_id: &str,
+        status: Option<MemoryStatus>,
+    ) -> Result<Vec<MemoryRecord>> {
+        let mut records = Vec::new();
+        if let Some(status) = status {
+            let mut statement = self.connection.prepare("SELECT id, project_id, memory_type, content, status, source_agent, source_thread, source_reference, created_at, approved_at, invalidated_by FROM memories WHERE project_id = ?1 AND status = ?2 ORDER BY created_at DESC")?;
+            let rows =
+                statement.query_map(params![project_id, enum_string(status)?], row_to_memory)?;
+            for row in rows {
+                records.push(row?);
+            }
+        } else {
+            let mut statement = self.connection.prepare("SELECT id, project_id, memory_type, content, status, source_agent, source_thread, source_reference, created_at, approved_at, invalidated_by FROM memories WHERE project_id = ?1 ORDER BY created_at DESC")?;
+            let rows = statement.query_map(params![project_id], row_to_memory)?;
+            for row in rows {
+                records.push(row?);
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn list(
+        &self,
+        project_id: &str,
+        status: Option<MemoryStatus>,
+    ) -> Result<Vec<MemoryRecord>> {
+        self.list_memories(project_id, status)
+    }
+
+    pub fn search_approved(
+        &self,
+        project_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>> {
+        if query.trim().is_empty() {
+            return Ok(self
+                .list_memories(project_id, Some(MemoryStatus::Approved))?
+                .into_iter()
+                .take(limit)
+                .collect());
+        }
+        let mut statement = self.connection.prepare(
+            "SELECT m.id, m.project_id, m.memory_type, m.content, m.status, m.source_agent, m.source_thread, m.source_reference, m.created_at, m.approved_at, m.invalidated_by
+             FROM memories_fts f JOIN memories m ON m.id = f.id
+             WHERE f.project_id = ?1 AND memories_fts MATCH ?2 AND m.status = 'approved'
+             ORDER BY rank LIMIT ?3"
+        )?;
+        let rows = statement.query_map(
+            params![project_id, fts_query(query), limit as i64],
+            row_to_memory,
+        )?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        Ok(records)
+    }
+
+    pub fn search(&self, project_id: &str, query: &str, limit: usize) -> Result<Vec<MemoryRecord>> {
+        self.search_approved(project_id, query, limit)
+    }
+
+    pub fn review_memory(
+        &self,
+        id: &str,
+        status: MemoryStatus,
+        edited_content: Option<&str>,
+    ) -> Result<MemoryRecord> {
+        if !matches!(
+            status,
+            MemoryStatus::Approved | MemoryStatus::Rejected | MemoryStatus::Invalidated
+        ) {
+            bail!("review 只能设置 approved、rejected 或 invalidated");
+        }
+        let approved_at = matches!(status, MemoryStatus::Approved).then(|| Utc::now().to_rfc3339());
+        if let Some(content) = edited_content {
+            if content.trim().is_empty() {
+                bail!("记忆内容不能为空");
+            }
+            self.connection.execute(
+                "UPDATE memories SET content = ?1, status = ?2, approved_at = ?3 WHERE id = ?4",
+                params![content.trim(), enum_string(status)?, approved_at, id],
+            )?;
+        } else {
+            self.connection.execute(
+                "UPDATE memories SET status = ?1, approved_at = ?2 WHERE id = ?3",
+                params![enum_string(status)?, approved_at, id],
+            )?;
+        }
+        let record = self.get_memory(id)?.context("记忆不存在")?;
+        self.audit(
+            Some(&record.project_id),
+            "memory.review",
+            &format!("{}:{}", id, enum_string(status)?),
+        )?;
+        Ok(record)
+    }
+
+    pub fn approve_memory(&self, id: &str, edited_content: Option<&str>) -> Result<MemoryRecord> {
+        self.review_memory(id, MemoryStatus::Approved, edited_content)
+    }
+
+    pub fn audit(&self, project_id: Option<&str>, action: &str, detail: &str) -> Result<()> {
+        self.connection.execute("INSERT INTO audit_events(id, project_id, action, detail, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![Uuid::new_v4().to_string(), project_id, action, detail, Utc::now().to_rfc3339()])?;
+        Ok(())
+    }
+
+    fn get_workspace_by_path(&self, path: &Path) -> Result<Option<WorkspaceSummary>> {
+        let id = self
+            .connection
+            .query_row(
+                "SELECT id FROM workspaces WHERE canonical_path = ?1",
+                params![path.display().to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        id.map(|id| self.get_workspace(&id))
+            .transpose()
+            .map(Option::flatten)
+    }
+
+    fn workspace_sources(&self, id: &str) -> Result<Vec<WorkspaceSource>> {
+        let mut statement = self.connection.prepare(
+            "SELECT agent, evidence, session_count, last_active_at FROM workspace_sources WHERE workspace_id = ?1 ORDER BY last_active_at DESC",
+        )?;
+        let rows = statement.query_map(params![id], |row| {
+            let agent: String = row.get(0)?;
+            let evidence: String = row.get(1)?;
+            let last_active_at: Option<String> = row.get(3)?;
+            Ok(WorkspaceSource {
+                agent: if agent.is_empty() {
+                    None
+                } else {
+                    Some(parse_enum(&agent).map_err(sql_error)?)
+                },
+                evidence: parse_enum(&evidence).map_err(sql_error)?,
+                session_count: row.get::<_, i64>(2)?.max(0) as u64,
+                last_active_at: last_active_at
+                    .map(|value| parse_time(&value))
+                    .transpose()
+                    .map_err(sql_error)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    fn insert_memory(&self, record: &MemoryRecord) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO memories(id, project_id, memory_type, content, status, source_agent, source_thread, source_reference, created_at, approved_at, invalidated_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![record.id, record.project_id, enum_string(record.memory_type)?, record.content, enum_string(record.status)?, record.source_agent, record.source_thread, record.source_reference, record.created_at.to_rfc3339(), record.approved_at.map(|v| v.to_rfc3339()), record.invalidated_by]
+        )?;
+        Ok(())
+    }
+
+    fn get_memory(&self, id: &str) -> Result<Option<MemoryRecord>> {
+        self.connection.query_row(
+            "SELECT id, project_id, memory_type, content, status, source_agent, source_thread, source_reference, created_at, approved_at, invalidated_by FROM memories WHERE id = ?1",
+            params![id], row_to_memory,
+        ).optional().map_err(Into::into)
+    }
+}
+
+fn rebuild_usage_daily(connection: &Connection) -> Result<()> {
+    connection.execute("DELETE FROM usage_daily", [])?;
+    connection.execute(
+        "INSERT INTO usage_daily(day, surface_agent, workspace_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, total_tokens, session_count, quality)
+         SELECT day, surface_agent, COALESCE(workspace_id, ''), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(reasoning_tokens), SUM(total_tokens), SUM(session_count),
+                CASE MAX(CASE quality WHEN 'incomplete' THEN 2 WHEN 'estimated' THEN 1 ELSE 0 END) WHEN 2 THEN 'incomplete' WHEN 1 THEN 'estimated' ELSE 'exact' END
+         FROM usage_events WHERE day IS NOT NULL AND date_precision != 'aggregate'
+         GROUP BY day, surface_agent, COALESCE(workspace_id, '')",
+        [],
+    )?;
+    Ok(())
+}
+
+fn rebuild_commit_attributions(connection: &Connection) -> Result<()> {
+    connection.execute(
+        "DELETE FROM commit_attributions WHERE method = 'time-correlation'",
+        [],
+    )?;
+    let commits = {
+        let mut statement = connection.prepare(
+            "SELECT repository_group_id, commit_hash, authored_at FROM git_commits WHERE is_mine = 1",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (repository, commit_hash, authored_at) in commits {
+        let Some(authored_at) = DateTime::parse_from_rfc3339(&authored_at)
+            .ok()
+            .map(|value| value.with_timezone(&Utc))
+        else {
+            continue;
+        };
+        let from = authored_at - chrono::Duration::minutes(30);
+        let agents = {
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT u.surface_agent FROM usage_events u JOIN workspaces w ON w.id = u.workspace_id
+                 WHERE w.repository_group_id = ?1 AND u.occurred_at >= ?2 AND u.occurred_at <= ?3",
+            )?;
+            let rows = statement.query_map(
+                params![repository, from.to_rfc3339(), authored_at.to_rfc3339()],
+                |row| row.get::<_, String>(0),
+            )?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        if agents.len() == 1 {
+            connection.execute(
+                "INSERT OR IGNORE INTO commit_attributions(repository_group_id, commit_hash, agent, confidence, method) VALUES (?1, ?2, ?3, 'estimated', 'time-correlation')",
+                params![repository, commit_hash, agents[0]],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+type InsightQueryValues = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+fn query_values(connection: &Connection, query: &InsightsQuery) -> Result<InsightQueryValues> {
+    let repository = if query.repository_group_id.is_some() {
+        query.repository_group_id.clone()
+    } else if let Some(workspace_id) = &query.workspace_id {
+        connection
+            .query_row(
+                "SELECT repository_group_id FROM workspaces WHERE id = ?1",
+                params![workspace_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
+    } else {
+        None
+    };
+    Ok((
+        query.from.map(|value| value.to_string()),
+        query.to.map(|value| value.to_string()),
+        query.agent.map(enum_string).transpose()?,
+        query.workspace_id.clone(),
+        repository,
+    ))
+}
+
+fn match_workspace(path: &Path, workspaces: &[(PathBuf, String)]) -> Option<String> {
+    let normalized = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    workspaces
+        .iter()
+        .find(|(workspace, _)| normalized == *workspace || normalized.starts_with(workspace))
+        .map(|(_, id)| id.clone())
+}
+
+fn as_u64(row: &Row<'_>, index: usize) -> rusqlite::Result<u64> {
+    Ok(row.get::<_, i64>(index)?.max(0) as u64)
+}
+
+fn to_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+
+// HMAC-SHA256 is kept local so identity and session matching never requires storing plaintext.
+fn keyed_hash(key: &str, value: &[u8]) -> String {
+    const BLOCK_SIZE: usize = 64;
+    let mut key_block = [0_u8; BLOCK_SIZE];
+    let key_bytes = key.as_bytes();
+    if key_bytes.len() > BLOCK_SIZE {
+        key_block[..32].copy_from_slice(&Sha256::digest(key_bytes));
+    } else {
+        key_block[..key_bytes.len()].copy_from_slice(key_bytes);
+    }
+    let mut inner_pad = [0x36_u8; BLOCK_SIZE];
+    let mut outer_pad = [0x5c_u8; BLOCK_SIZE];
+    for index in 0..BLOCK_SIZE {
+        inner_pad[index] ^= key_block[index];
+        outer_pad[index] ^= key_block[index];
+    }
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(value);
+    let inner_hash = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner_hash);
+    hex::encode(outer.finalize())
+}
+
+fn calculate_streaks(active: &BTreeSet<NaiveDate>, today: NaiveDate) -> (u64, u64) {
+    let mut longest = 0_u64;
+    let mut run = 0_u64;
+    let mut previous = None;
+    for day in active {
+        if previous.is_some_and(|value: NaiveDate| value.succ_opt() == Some(*day)) {
+            run += 1;
+        } else {
+            run = 1;
+        }
+        longest = longest.max(run);
+        previous = Some(*day);
+    }
+    let yesterday = today.pred_opt();
+    let mut cursor = if active.contains(&today) {
+        Some(today)
+    } else if yesterday.is_some_and(|value| active.contains(&value)) {
+        yesterday
+    } else {
+        None
+    };
+    let mut current = 0;
+    while let Some(day) = cursor {
+        if !active.contains(&day) {
+            break;
+        }
+        current += 1;
+        cursor = day.pred_opt();
+    }
+    (current, longest)
+}
+
+fn achievement_definitions(summary: &InsightsSummary, agent_count: u64) -> Vec<Achievement> {
+    let mut output = Vec::new();
+    for (threshold, title) in [
+        (100_000, "Token 初航"),
+        (1_000_000, "百万上下文"),
+        (10_000_000, "千万协作"),
+        (100_000_000, "亿级共创"),
+    ] {
+        output.push(achievement(
+            "token",
+            threshold,
+            title,
+            "累计已记录 Token",
+            summary.total_tokens,
+        ));
+    }
+    for (threshold, title) in [
+        (1, "首次落地"),
+        (10, "持续交付"),
+        (100, "百次提交"),
+        (1_000, "千锤百炼"),
+    ] {
+        output.push(achievement(
+            "commit",
+            threshold,
+            title,
+            "累计本人 Git 提交",
+            summary.my_commits,
+        ));
+    }
+    for (threshold, title) in [
+        (3, "三日节奏"),
+        (7, "一周连胜"),
+        (30, "月度坚持"),
+        (100, "百日同行"),
+    ] {
+        output.push(achievement(
+            "streak",
+            threshold,
+            title,
+            "最长连续活跃天数",
+            summary.longest_streak,
+        ));
+    }
+    for (threshold, title) in [(2, "双 Agent 协作"), (4, "全栈 Agent 指挥官")] {
+        output.push(achievement(
+            "agents",
+            threshold,
+            title,
+            "有活动记录的 Agent 种类",
+            agent_count,
+        ));
+    }
+    output
+}
+
+fn achievement(
+    category: &str,
+    threshold: u64,
+    title: &str,
+    description: &str,
+    progress: u64,
+) -> Achievement {
+    Achievement {
+        code: format!("{category}-{threshold}"),
+        category: category.into(),
+        title: title.into(),
+        description: description.into(),
+        threshold,
+        progress,
+        unlocked_at: None,
+    }
+}
+
+fn excluded_paths(connection: &Connection) -> Result<BTreeSet<PathBuf>> {
+    let mut statement = connection.prepare("SELECT canonical_path FROM excluded_workspaces")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut output = BTreeSet::new();
+    for row in rows {
+        output.insert(PathBuf::from(row?));
+    }
+    Ok(output)
+}
+
+fn upsert_workspace(
+    connection: &Connection,
+    path: &Path,
+    sources: &[&DiscoveryCandidate],
+) -> Result<String> {
+    let path_text = path.display().to_string();
+    let id = connection
+        .query_row(
+            "SELECT id FROM workspaces WHERE canonical_path = ?1",
+            params![path_text],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let last_active_at = sources
+        .iter()
+        .filter_map(|value| value.last_active_at)
+        .max();
+    let repository_group_id = sources
+        .iter()
+        .find_map(|value| value.repository_group_id.clone());
+    connection.execute(
+        "INSERT INTO workspaces(id, canonical_path, name, repository_group_id, manifest_workspace_id, status, asset_count, warning_count, last_active_at, last_discovered_at, last_scanned_at) VALUES (?1, ?2, ?3, ?4, NULL, 'needs-import', 0, 0, ?5, ?6, NULL) ON CONFLICT(canonical_path) DO UPDATE SET name = excluded.name, repository_group_id = COALESCE(excluded.repository_group_id, workspaces.repository_group_id), last_active_at = CASE WHEN excluded.last_active_at IS NULL THEN workspaces.last_active_at WHEN workspaces.last_active_at IS NULL OR excluded.last_active_at > workspaces.last_active_at THEN excluded.last_active_at ELSE workspaces.last_active_at END, last_discovered_at = excluded.last_discovered_at",
+        params![id, path_text, path.file_name().and_then(|value| value.to_str()).unwrap_or("workspace"), repository_group_id, last_active_at.map(|value| value.to_rfc3339()), Utc::now().to_rfc3339()],
+    )?;
+    let workspace_id: String = connection.query_row(
+        "SELECT id FROM workspaces WHERE canonical_path = ?1",
+        params![path.display().to_string()],
+        |row| row.get(0),
+    )?;
+    connection.execute(
+        "DELETE FROM workspace_sources WHERE workspace_id = ?1 AND evidence != 'manual'",
+        params![workspace_id],
+    )?;
+    for source in sources {
+        let agent = source
+            .source_agent
+            .map(enum_string)
+            .transpose()?
+            .unwrap_or_default();
+        let evidence = enum_string(source.evidence)?;
+        connection.execute(
+            "INSERT INTO workspace_sources(workspace_id, agent, evidence, session_count, last_active_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(workspace_id, agent, evidence) DO UPDATE SET session_count = excluded.session_count, last_active_at = excluded.last_active_at",
+            params![workspace_id, agent, evidence, source.session_count as i64, source.last_active_at.map(|value| value.to_rfc3339())],
+        )?;
+    }
+    Ok(workspace_id)
+}
+
+fn record_scan_failure(connection: &Connection, id: &str) -> Result<()> {
+    connection.execute(
+        "UPDATE workspaces SET status = 'attention', warning_count = MAX(warning_count, 1), last_scanned_at = ?1 WHERE id = ?2",
+        params![Utc::now().to_rfc3339(), id],
+    )?;
+    Ok(())
+}
+
+fn refresh_workspace_record(connection: &Connection, id: &str, path: &Path) -> Result<()> {
+    if !path.is_dir() {
+        bail!("工作区不存在：{}", path.display());
+    }
+    let scan = scan_workspace(path)?;
+    let mut warning_count = scan.warnings.len() as u64;
+    let manifest = load_manifest(path).ok();
+    if let Some(manifest) = manifest.as_ref() {
+        for adapter in manifest.adapters.values() {
+            for (target, expected) in &adapter.generated_hashes {
+                let target = PathBuf::from(target);
+                let target = if target.is_absolute() {
+                    target
+                } else {
+                    path.join(target)
+                };
+                match fs::read(&target) {
+                    Ok(content) if hash_content(&content) == *expected => {}
+                    _ => warning_count += 1,
+                }
+            }
+        }
+    }
+    let status = if !scan.manifest_exists {
+        WorkspaceStatus::NeedsImport
+    } else if warning_count == 0 && manifest.is_some() {
+        WorkspaceStatus::Healthy
+    } else {
+        WorkspaceStatus::Attention
+    };
+    connection.execute(
+        "UPDATE workspaces SET manifest_workspace_id = ?1, status = ?2, asset_count = ?3, warning_count = ?4, last_scanned_at = ?5 WHERE id = ?6",
+        params![manifest.as_ref().map(|value| value.workspace.id.clone()), enum_string(status)?, scan.assets.len() as i64, warning_count as i64, Utc::now().to_rfc3339(), id],
+    )?;
+    connection.execute(
+        "DELETE FROM catalog_assets WHERE workspace_id = ?1",
+        params![id],
+    )?;
+    for asset in scan.assets {
+        let modified_at = fs::metadata(&asset.path)
+            .ok()
+            .and_then(|value| value.modified().ok())
+            .map(DateTime::<Utc>::from);
+        insert_catalog_asset(
+            connection,
+            &CatalogAsset {
+                id: catalog_id(
+                    CatalogScope::Workspace,
+                    Some(id),
+                    Some(asset.agent),
+                    asset.kind,
+                    &asset.path,
+                ),
+                scope: CatalogScope::Workspace,
+                workspace_id: Some(id.to_string()),
+                agent: Some(asset.agent),
+                kind: asset.kind,
+                name: asset
+                    .path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("asset")
+                    .to_string(),
+                path: asset.path,
+                summary: asset.summary,
+                size: asset.size,
+                modified_at,
+            },
+        )?;
+    }
+    if let Some(manifest) = manifest {
+        let manifest_path = path.join(".agentkib/manifest.yaml");
+        insert_catalog_asset(
+            connection,
+            &CatalogAsset {
+                id: catalog_id(
+                    CatalogScope::Workspace,
+                    Some(id),
+                    None,
+                    AssetKind::Instruction,
+                    &manifest_path,
+                ),
+                scope: CatalogScope::Workspace,
+                workspace_id: Some(id.to_string()),
+                agent: None,
+                kind: AssetKind::Instruction,
+                name: "共享项目指令".into(),
+                path: manifest_path.clone(),
+                summary: "AgentKib 公共指令".into(),
+                size: manifest.instructions.shared.len() as u64,
+                modified_at: None,
+            },
+        )?;
+        for skill in manifest.skills {
+            let asset_path = path.join(&skill.path);
+            insert_catalog_asset(
+                connection,
+                &CatalogAsset {
+                    id: catalog_id(
+                        CatalogScope::Workspace,
+                        Some(id),
+                        None,
+                        AssetKind::Skill,
+                        &asset_path,
+                    ),
+                    scope: CatalogScope::Workspace,
+                    workspace_id: Some(id.to_string()),
+                    agent: None,
+                    kind: AssetKind::Skill,
+                    name: skill.name,
+                    path: asset_path,
+                    summary: "公共 Skill".into(),
+                    size: 0,
+                    modified_at: None,
+                },
+            )?;
+        }
+        for connection_definition in manifest.connections {
+            let asset_path = manifest_path.clone();
+            let key_path = asset_path.join(format!("connection-{}", connection_definition.name));
+            insert_catalog_asset(
+                connection,
+                &CatalogAsset {
+                    id: catalog_id(
+                        CatalogScope::Workspace,
+                        Some(id),
+                        None,
+                        AssetKind::Connection,
+                        &key_path,
+                    ),
+                    scope: CatalogScope::Workspace,
+                    workspace_id: Some(id.to_string()),
+                    agent: None,
+                    kind: AssetKind::Connection,
+                    name: connection_definition.name,
+                    path: asset_path.clone(),
+                    summary: "公共 MCP Connection".into(),
+                    size: 0,
+                    modified_at: None,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_catalog_asset(connection: &Connection, asset: &CatalogAsset) -> Result<()> {
+    let id = if asset.id.is_empty() {
+        catalog_id(
+            asset.scope,
+            asset.workspace_id.as_deref(),
+            asset.agent,
+            asset.kind,
+            &asset.path,
+        )
+    } else {
+        asset.id.clone()
+    };
+    connection.execute(
+        "INSERT OR REPLACE INTO catalog_assets(id, scope, workspace_id, agent, kind, name, path, summary, size, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![id, enum_string(asset.scope)?, asset.workspace_id, asset.agent.map(enum_string).transpose()?, enum_string(asset.kind)?, asset.name, asset.path.display().to_string(), asset.summary, asset.size as i64, asset.modified_at.map(|value| value.to_rfc3339())],
+    )?;
+    Ok(())
+}
+
+fn catalog_id(
+    scope: CatalogScope,
+    workspace_id: Option<&str>,
+    agent: Option<AgentKind>,
+    kind: AssetKind,
+    path: &Path,
+) -> String {
+    hash_content(
+        format!(
+            "{:?}|{}|{:?}|{:?}|{}",
+            scope,
+            workspace_id.unwrap_or_default(),
+            agent,
+            kind,
+            path.display()
+        )
+        .as_bytes(),
+    )
+}
+
+fn row_to_workspace(row: &Row<'_>) -> rusqlite::Result<WorkspaceSummary> {
+    let status: String = row.get(5)?;
+    let last_active: Option<String> = row.get(8)?;
+    let last_scanned: Option<String> = row.get(9)?;
+    Ok(WorkspaceSummary {
+        id: row.get(0)?,
+        path: PathBuf::from(row.get::<_, String>(1)?),
+        name: row.get(2)?,
+        repository_group_id: row.get(3)?,
+        manifest_workspace_id: row.get(4)?,
+        status: parse_enum(&status).map_err(sql_error)?,
+        asset_count: row.get::<_, i64>(6)?.max(0) as u64,
+        warning_count: row.get::<_, i64>(7)?.max(0) as u64,
+        last_active_at: last_active
+            .map(|value| parse_time(&value))
+            .transpose()
+            .map_err(sql_error)?,
+        last_scanned_at: last_scanned
+            .map(|value| parse_time(&value))
+            .transpose()
+            .map_err(sql_error)?,
+        sources: Vec::new(),
+    })
+}
+
+fn row_to_catalog_asset(row: &Row<'_>) -> rusqlite::Result<CatalogAsset> {
+    let scope: String = row.get(1)?;
+    let agent: Option<String> = row.get(3)?;
+    let kind: String = row.get(4)?;
+    let modified_at: Option<String> = row.get(9)?;
+    Ok(CatalogAsset {
+        id: row.get(0)?,
+        scope: parse_enum(&scope).map_err(sql_error)?,
+        workspace_id: row.get(2)?,
+        agent: agent
+            .map(|value| parse_enum(&value))
+            .transpose()
+            .map_err(sql_error)?,
+        kind: parse_enum(&kind).map_err(sql_error)?,
+        name: row.get(5)?,
+        path: PathBuf::from(row.get::<_, String>(6)?),
+        summary: row.get(7)?,
+        size: row.get::<_, i64>(8)?.max(0) as u64,
+        modified_at: modified_at
+            .map(|value| parse_time(&value))
+            .transpose()
+            .map_err(sql_error)?,
+    })
+}
+
+pub fn default_data_dir() -> Result<PathBuf> {
+    let base = dirs::data_local_dir().context("无法确定本地应用数据目录")?;
+    Ok(base.join("com.agentkib.desktop"))
+}
+
+pub fn default_database_path() -> Result<PathBuf> {
+    Ok(default_data_dir()?.join("agentkib.db"))
+}
+
+pub fn default_backup_dir() -> Result<PathBuf> {
+    Ok(default_data_dir()?.join("backups"))
+}
+
+fn row_to_memory(row: &Row<'_>) -> rusqlite::Result<MemoryRecord> {
+    let memory_type: String = row.get(2)?;
+    let status: String = row.get(4)?;
+    let created_at: String = row.get(8)?;
+    let approved_at: Option<String> = row.get(9)?;
+    Ok(MemoryRecord {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        memory_type: parse_enum(&memory_type).map_err(sql_error)?,
+        content: row.get(3)?,
+        status: parse_enum(&status).map_err(sql_error)?,
+        source_agent: row.get(5)?,
+        source_thread: row.get(6)?,
+        source_reference: row.get(7)?,
+        created_at: parse_time(&created_at).map_err(sql_error)?,
+        approved_at: approved_at
+            .map(|value| parse_time(&value))
+            .transpose()
+            .map_err(sql_error)?,
+        invalidated_by: row.get(10)?,
+    })
+}
+
+fn parse_time(value: &str) -> Result<DateTime<Utc>> {
+    Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
+}
+fn enum_string<T: serde::Serialize>(value: T) -> Result<String> {
+    Ok(serde_json::to_value(value)?
+        .as_str()
+        .context("枚举序列化失败")?
+        .to_string())
+}
+fn parse_enum<T: serde::de::DeserializeOwned>(value: &str) -> Result<T> {
+    Ok(serde_json::from_value(serde_json::Value::String(
+        value.into(),
+    ))?)
+}
+fn sql_error(error: anyhow::Error) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, error.into())
+}
+fn fts_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentkib_core::MemoryType;
+    use agentkib_insights::{
+        DatePrecision, GitCommitRecord, GitIdentityCandidate, ProviderStatus, UsageEvent,
+    };
+    use tempfile::tempdir;
+
+    fn candidate(path: &Path) -> DiscoveryCandidate {
+        DiscoveryCandidate {
+            path: path.canonicalize().unwrap(),
+            source_agent: Some(AgentKind::Codex),
+            evidence: DiscoveryEvidence::SessionCwd,
+            last_active_at: Some(Utc::now()),
+            session_count: 2,
+            explicit_workspace: false,
+            repository_group_id: Some("repository".into()),
+        }
+    }
+
+    #[test]
+    fn only_approved_memories_are_searchable() {
+        let dir = tempdir().unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let record = store
+            .propose_memory(&MemoryProposal {
+                project_id: "p1".into(),
+                memory_type: MemoryType::Decision,
+                content: "统一使用 SQLite FTS5".into(),
+                source_agent: None,
+                source_thread: None,
+                source_reference: None,
+            })
+            .unwrap();
+        assert!(
+            store
+                .search_approved("p1", "SQLite", 10)
+                .unwrap()
+                .is_empty()
+        );
+        store
+            .review_memory(&record.id, MemoryStatus::Approved, None)
+            .unwrap();
+        assert_eq!(store.search_approved("p1", "SQLite", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn discovery_is_idempotent_and_preserves_existing_workspace_on_provider_error() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let candidate = candidate(&workspace);
+        for _ in 0..2 {
+            store
+                .sync_discovery(std::slice::from_ref(&candidate), &[], &[], Utc::now(), &[])
+                .unwrap();
+        }
+        let workspaces = store.list_workspaces().unwrap();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].sources.len(), 1);
+        assert_eq!(workspaces[0].sources[0].session_count, 2);
+
+        store
+            .sync_discovery(&[], &[], &[], Utc::now(), &["codex provider failed".into()])
+            .unwrap();
+        assert_eq!(store.list_workspaces().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn excluded_workspace_stays_hidden_until_restored() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let candidate = candidate(&workspace);
+        store
+            .sync_discovery(std::slice::from_ref(&candidate), &[], &[], Utc::now(), &[])
+            .unwrap();
+        let id = store.list_workspaces().unwrap()[0].id.clone();
+        store.exclude_workspace(&id).unwrap();
+        store
+            .sync_discovery(std::slice::from_ref(&candidate), &[], &[], Utc::now(), &[])
+            .unwrap();
+        assert!(store.list_workspaces().unwrap().is_empty());
+
+        store
+            .restore_excluded_workspace(&workspace.canonicalize().unwrap())
+            .unwrap();
+        store
+            .sync_discovery(&[candidate], &[], &[], Utc::now(), &[])
+            .unwrap();
+        assert_eq!(store.list_workspaces().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn nonexistent_history_paths_are_removed() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        store
+            .sync_discovery(&[candidate(&workspace)], &[], &[], Utc::now(), &[])
+            .unwrap();
+        fs::remove_dir_all(&workspace).unwrap();
+        let report = store
+            .sync_discovery(&[], &[], &[], Utc::now(), &[])
+            .unwrap();
+        assert_eq!(report.removed_count, 1);
+        assert!(store.list_workspaces().unwrap().is_empty());
+    }
+
+    #[test]
+    fn schema_upgrade_keeps_existing_memories() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        {
+            let store = Store::open(&database).unwrap();
+            store
+                .propose_memory(&MemoryProposal {
+                    project_id: "p1".into(),
+                    memory_type: MemoryType::ProjectFact,
+                    content: "保留的记忆".into(),
+                    source_agent: None,
+                    source_thread: None,
+                    source_reference: None,
+                })
+                .unwrap();
+        }
+        let reopened = Store::open(&database).unwrap();
+        assert_eq!(reopened.list_global_memories(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn current_schema_allows_concurrent_read_connections() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        Store::open(&database).unwrap();
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let database = database.clone();
+                std::thread::spawn(move || {
+                    Store::open(&database).unwrap().list_workspaces().unwrap()
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert!(handle.join().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn insights_are_idempotent_and_sensitive_identifiers_are_hashed() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        store
+            .sync_discovery(&[candidate(&workspace)], &[], &[], Utc::now(), &[])
+            .unwrap();
+        let day = Local::now().date_naive();
+        let batch = UsageBatch {
+            events: vec![UsageEvent {
+                source_key: "private-source-key".into(),
+                surface_agent: AgentKind::Codex,
+                workspace_path: Some(workspace.clone()),
+                occurred_at: Some(Utc::now()),
+                day: Some(day),
+                model: Some("test-model".into()),
+                input_tokens: 70,
+                output_tokens: 30,
+                cache_read_tokens: 10,
+                cache_write_tokens: 0,
+                reasoning_tokens: 5,
+                total_tokens: 100,
+                session_key: Some("private-session-id".into()),
+                session_count: 1,
+                date_precision: DatePrecision::Exact,
+                quality: UsageQuality::Exact,
+            }],
+            status: ProviderStatus {
+                agent: AgentKind::Codex,
+                available: true,
+                quality: UsageQuality::Exact,
+                coverage_from: Some(day),
+                coverage_to: Some(day),
+                imported_events: 1,
+                error: None,
+            },
+            cursor: None,
+            unchanged: false,
+        };
+        let repository = GitRepositorySnapshot {
+            repository_group_id: "repository".into(),
+            path: workspace,
+            fingerprint: "refs-v1".into(),
+            changed: true,
+            commits: vec![GitCommitRecord {
+                hash: "commit-hash".into(),
+                authored_at: Utc::now(),
+                author_email: "private@example.com".into(),
+            }],
+            identities: vec![GitIdentityCandidate {
+                email: "private@example.com".into(),
+                label: "测试身份".into(),
+                source: "test".into(),
+            }],
+            error: None,
+        };
+        for _ in 0..2 {
+            store
+                .sync_insights(
+                    std::slice::from_ref(&batch),
+                    std::slice::from_ref(&repository),
+                )
+                .unwrap();
+        }
+        let summary = store.insights_summary(&InsightsQuery::default()).unwrap();
+        assert_eq!(summary.total_tokens, 100);
+        assert_eq!(summary.my_commits, 1);
+        let stored_source: String = store
+            .connection
+            .query_row("SELECT source_key FROM usage_events", [], |row| row.get(0))
+            .unwrap();
+        let stored_session: String = store
+            .connection
+            .query_row("SELECT session_hash FROM usage_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let stored_identity: String = store
+            .connection
+            .query_row("SELECT identity_hash FROM git_identities", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_ne!(stored_source, "private-source-key");
+        assert_ne!(stored_session, "private-session-id");
+        assert_ne!(stored_identity, "private@example.com");
+    }
+
+    #[test]
+    fn streak_allows_yesterday_to_continue_current_run() {
+        let today = NaiveDate::from_ymd_opt(2026, 8, 13).unwrap();
+        let active = [
+            NaiveDate::from_ymd_opt(2026, 8, 10).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 8, 11).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 8, 12).unwrap(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(calculate_streaks(&active, today), (3, 3));
+    }
+}

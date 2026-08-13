@@ -1,8 +1,8 @@
 use std::env;
 use std::path::PathBuf;
 
-use agenthub_adapters::{HomeTargets, default_manifest, plan_workspace_changes};
-use agenthub_core::{
+use agentkib_adapters::{HomeTargets, default_manifest, plan_workspace_changes};
+use agentkib_core::{
     AgentKind, load_manifest, resolve_context, scan_workspace, validate_workspace,
 };
 use anyhow::{Context, Result, bail};
@@ -46,7 +46,7 @@ fn run() -> Result<()> {
         }
         "plan" => {
             let project = required_path(&args, 1)?;
-            let manifest = if agenthub_core::manifest_path(&project).is_file() {
+            let manifest = if agentkib_core::manifest_path(&project).is_file() {
                 load_manifest(&project)?
             } else {
                 default_manifest(&project)?
@@ -90,6 +90,6 @@ fn parse_agent(value: &str) -> Result<AgentKind> {
 }
 fn print_help() {
     println!(
-        "agenthub scan <project>\nagenthub context <project> <codex|claude-code|openclaw|hermes> [cwd]\nagenthub plan <project>\nagenthub validate <project>\nagenthub manifest <project>"
+        "agentkib scan <project>\nagentkib context <project> <codex|claude-code|openclaw|hermes> [cwd]\nagentkib plan <project>\nagentkib validate <project>\nagentkib manifest <project>"
     );
 }

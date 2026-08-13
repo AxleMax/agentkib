@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActivityRecord, AgentInstallation, AgentKind, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, Manifest, MemoryRecord, MemoryStatus, MemoryType, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, Manifest, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -9,7 +9,7 @@ export const api = {
   context: (project: string, cwd: string, agent: AgentKind) => invoke<ContextPreview>("resolve_context", { project, cwd, agent }),
   memories: (project: string, status?: MemoryStatus) => invoke<MemoryRecord[]>("list_memories", { project, status }),
   searchMemories: (project: string, query: string, limit = 50) => invoke<MemoryRecord[]>("search_memories", { project, query, limit }),
-  proposeMemory: (project: string, content: string, memoryType: MemoryType) => invoke<MemoryRecord>("propose_memory", { project, proposal: { project_id: "", memory_type: memoryType, content, source_agent: "agenthub-desktop" } }),
+  proposeMemory: (project: string, content: string, memoryType: MemoryType) => invoke<MemoryRecord>("propose_memory", { project, proposal: { project_id: "", memory_type: memoryType, content, source_agent: "agentkib-desktop" } }),
   reviewMemory: (id: string, status: MemoryStatus, editedContent?: string) => invoke<MemoryRecord>("review_memory", { id, status, editedContent }),
   runtime: () => invoke<RuntimeInfo>("runtime_info"),
   setCloseBehavior: (behavior?: CloseBehavior) => invoke<void>("set_close_behavior", { behavior: behavior ?? null }),
@@ -29,4 +29,16 @@ export const api = {
   catalogAssets: (query = "", agent?: AgentKind, workspaceId?: string, limit = 500) => invoke<CatalogAsset[]>("search_catalog_assets", { query, agent, workspaceId, limit }),
   globalMemories: (status?: MemoryStatus) => invoke<MemoryRecord[]>("list_global_memories", { status }),
   activity: (limit = 200) => invoke<ActivityRecord[]>("list_activity", { limit }),
+  refreshInsights: () => invoke<InsightsSummary>("refresh_insights"),
+  insightsSummary: (query: InsightsQuery = {}) => invoke<InsightsSummary>("get_insights_summary", { query }),
+  insightsHeatmap: (query: InsightsQuery = {}) => invoke<HeatmapPoint[]>("get_insights_heatmap", { query }),
+  agentUsageBreakdown: (query: InsightsQuery = {}) => invoke<AgentUsageBreakdown[]>("get_agent_usage_breakdown", { query }),
+  modelUsageBreakdown: (query: InsightsQuery = {}) => invoke<ModelUsageBreakdown[]>("get_model_usage_breakdown", { query }),
+  workspaceUsageBreakdown: (query: InsightsQuery = {}) => invoke<WorkspaceUsageBreakdown[]>("get_workspace_usage_breakdown", { query }),
+  repositoryCommitBreakdown: (query: InsightsQuery = {}) => invoke<RepositoryCommitBreakdown[]>("get_repository_commit_breakdown", { query }),
+  achievements: () => invoke<Achievement[]>("list_achievements"),
+  insightsStatus: () => invoke<InsightsStatus>("get_insights_status"),
+  gitIdentities: () => invoke<GitIdentitySummary[]>("list_git_identities"),
+  addGitIdentityAlias: (email: string) => invoke<GitIdentitySummary>("add_git_identity_alias", { email }),
+  setGitIdentityEnabled: (id: string, enabled: boolean) => invoke<void>("set_git_identity_enabled", { id, enabled }),
 };

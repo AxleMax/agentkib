@@ -1,19 +1,21 @@
 [package]
-name = "agenthub-discovery"
+name = "agentkib-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-agenthub-core.workspace = true
+agentkib-core.workspace = true
+agentkib-insights.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 dirs.workspace = true
-json5.workspace = true
+hex.workspace = true
 rusqlite.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-serde_yaml.workspace = true
-walkdir.workspace = true
+sha2.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

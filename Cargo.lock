@@ -9,10 +9,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agenthub-adapters"
+name = "agentkib-adapters"
 version = "0.1.0"
 dependencies = [
- "agenthub-core",
+ "agentkib-core",
  "anyhow",
  "chrono",
  "dirs",
@@ -25,19 +25,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "agenthub-cli"
+name = "agentkib-cli"
 version = "0.1.0"
 dependencies = [
- "agenthub-adapters",
- "agenthub-core",
- "agenthub-store",
+ "agentkib-adapters",
+ "agentkib-core",
+ "agentkib-store",
  "anyhow",
  "serde_json",
  "serde_yaml",
 ]
 
 [[package]]
-name = "agenthub-core"
+name = "agentkib-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -55,13 +55,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "agenthub-desktop"
+name = "agentkib-desktop"
 version = "0.1.0"
 dependencies = [
- "agenthub-adapters",
- "agenthub-core",
- "agenthub-discovery",
- "agenthub-store",
+ "agentkib-adapters",
+ "agentkib-core",
+ "agentkib-discovery",
+ "agentkib-insights",
+ "agentkib-store",
  "anyhow",
  "chrono",
  "dirs",
@@ -74,10 +75,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "agenthub-discovery"
+name = "agentkib-discovery"
 version = "0.1.0"
 dependencies = [
- "agenthub-core",
+ "agentkib-core",
  "anyhow",
  "chrono",
  "dirs",
@@ -90,11 +91,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "agenthub-mcp"
+name = "agentkib-insights"
 version = "0.1.0"
 dependencies = [
- "agenthub-core",
- "agenthub-store",
+ "agentkib-core",
+ "anyhow",
+ "chrono",
+ "dirs",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
+name = "agentkib-mcp"
+version = "0.1.0"
+dependencies = [
+ "agentkib-core",
+ "agentkib-store",
  "anyhow",
  "serde",
  "serde_json",
@@ -102,16 +119,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "agenthub-store"
+name = "agentkib-store"
 version = "0.1.0"
 dependencies = [
- "agenthub-core",
+ "agentkib-core",
+ "agentkib-insights",
  "anyhow",
  "chrono",
  "dirs",
+ "hex",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "uuid",
 ]

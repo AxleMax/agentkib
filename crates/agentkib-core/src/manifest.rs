@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use crate::{ConnectionTransport, Manifest};
 
 pub fn manifest_path(project: &Path) -> PathBuf {
-    project.join(".agenthub/manifest.yaml")
+    project.join(".agentkib/manifest.yaml")
 }
 
 pub fn load_manifest(project: &Path) -> Result<Manifest> {

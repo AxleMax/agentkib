@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use agenthub_core::{
+use agentkib_core::{
     AgentInstallation, AgentKind, AssetKind, CatalogAsset, CatalogScope, DiscoveryCandidate,
     DiscoveryEvidence, hash_content,
 };
@@ -575,7 +575,7 @@ fn normalize_workspace(path: &Path, explicit: bool) -> Option<PathBuf> {
 
 fn has_project_marker(path: &Path) -> bool {
     [
-        ".agenthub",
+        ".agentkib",
         ".git",
         "AGENTS.md",
         "CLAUDE.md",

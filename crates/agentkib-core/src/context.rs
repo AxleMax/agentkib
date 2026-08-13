@@ -69,7 +69,7 @@ pub fn resolve_context(
                 warnings.push("平台覆盖将在原生项目指令之后生效，请检查是否存在语义冲突".into());
             }
             sections.push(ContextSection {
-                source: root.join(".agenthub/manifest.yaml"),
+                source: root.join(".agentkib/manifest.yaml"),
                 scope: "platform-override".into(),
                 content: override_text.clone(),
                 precedence: sections.len(),

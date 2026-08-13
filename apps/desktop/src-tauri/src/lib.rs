@@ -5,8 +5,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use agenthub_adapters::{HomeTargets, default_manifest, plan_workspace_changes};
-use agenthub_core::{
+use agentkib_adapters::{HomeTargets, default_manifest, plan_workspace_changes};
+use agentkib_core::{
     ActivityRecord, AgentInstallation, AgentKind, ApplyOptions, CatalogAsset, ChangeSet,
     ContextPreview, DiscoveryReport, ExcludedWorkspace, Manifest, MemoryProposal, MemoryRecord,
     MemoryStatus, ScanRoot, WorkspaceScan, WorkspaceSummary,
@@ -14,8 +14,13 @@ use agenthub_core::{
     resolve_context as resolve_core_context, scan_workspace as scan_core_workspace,
     validate_workspace as validate_core_workspace,
 };
-use agenthub_discovery::discover as discover_local_workspaces;
-use agenthub_store::{Store, default_backup_dir, default_data_dir};
+use agentkib_discovery::discover as discover_local_workspaces;
+use agentkib_insights::{
+    Achievement, AgentUsageBreakdown, GitIdentitySummary, HeatmapPoint, InsightsQuery,
+    InsightsStatus, InsightsSummary, ModelUsageBreakdown, RepositoryCommitBreakdown,
+    WorkspaceUsageBreakdown, collect_git, collect_usage,
+};
+use agentkib_store::{Store, default_backup_dir, default_data_dir};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
@@ -45,6 +50,11 @@ struct LifecycleState {
 struct DiscoveryRuntime {
     running: AtomicBool,
     last_report: Mutex<Option<DiscoveryReport>>,
+}
+
+#[derive(Debug, Default)]
+struct InsightsRuntime {
+    running: AtomicBool,
 }
 
 impl LifecycleState {
@@ -84,7 +94,7 @@ fn scan_workspace(project: String) -> CommandResult<WorkspaceScan> {
 #[tauri::command]
 fn prepare_manifest(project: String) -> CommandResult<Manifest> {
     let path = Path::new(&project);
-    if agenthub_core::manifest_path(path).is_file() {
+    if agentkib_core::manifest_path(path).is_file() {
         load_manifest(path).map_err(format_error)
     } else {
         default_manifest(path).map_err(format_error)
@@ -92,7 +102,7 @@ fn prepare_manifest(project: String) -> CommandResult<Manifest> {
 }
 
 #[tauri::command]
-fn validate_workspace(project: String) -> CommandResult<agenthub_core::WorkspaceValidation> {
+fn validate_workspace(project: String) -> CommandResult<agentkib_core::WorkspaceValidation> {
     validate_core_workspace(Path::new(&project)).map_err(format_error)
 }
 
@@ -210,12 +220,103 @@ fn list_activity(limit: usize) -> CommandResult<Vec<ActivityRecord>> {
 }
 
 #[tauri::command]
+fn refresh_insights(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<InsightsRuntime>>,
+) -> CommandResult<InsightsSummary> {
+    perform_insights(&app, state.inner())
+}
+
+#[tauri::command]
+fn get_insights_summary(query: InsightsQuery) -> CommandResult<InsightsSummary> {
+    Store::open_default()
+        .and_then(|store| store.insights_summary(&query))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_insights_heatmap(query: InsightsQuery) -> CommandResult<Vec<HeatmapPoint>> {
+    Store::open_default()
+        .and_then(|store| store.insights_heatmap(&query))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_agent_usage_breakdown(query: InsightsQuery) -> CommandResult<Vec<AgentUsageBreakdown>> {
+    Store::open_default()
+        .and_then(|store| store.agent_usage_breakdown(&query))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_model_usage_breakdown(query: InsightsQuery) -> CommandResult<Vec<ModelUsageBreakdown>> {
+    Store::open_default()
+        .and_then(|store| store.model_usage_breakdown(&query))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_workspace_usage_breakdown(
+    query: InsightsQuery,
+) -> CommandResult<Vec<WorkspaceUsageBreakdown>> {
+    Store::open_default()
+        .and_then(|store| store.workspace_usage_breakdown(&query))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_repository_commit_breakdown(
+    query: InsightsQuery,
+) -> CommandResult<Vec<RepositoryCommitBreakdown>> {
+    Store::open_default()
+        .and_then(|store| store.repository_commit_breakdown(&query))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn list_achievements() -> CommandResult<Vec<Achievement>> {
+    Store::open_default()
+        .and_then(|store| store.list_achievements())
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_insights_status(
+    state: tauri::State<'_, Arc<InsightsRuntime>>,
+) -> CommandResult<InsightsStatus> {
+    Store::open_default()
+        .and_then(|store| store.insights_status(state.running.load(Ordering::SeqCst)))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn list_git_identities() -> CommandResult<Vec<GitIdentitySummary>> {
+    Store::open_default()
+        .and_then(|store| store.list_git_identities())
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn add_git_identity_alias(email: String) -> CommandResult<GitIdentitySummary> {
+    Store::open_default()
+        .and_then(|store| store.add_git_identity_alias(&email))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn set_git_identity_enabled(id: String, enabled: bool) -> CommandResult<()> {
+    Store::open_default()
+        .and_then(|store| store.set_git_identity_enabled(&id, enabled))
+        .map_err(format_error)
+}
+
+#[tauri::command]
 fn plan_changes(
     project: String,
     mut manifest: Manifest,
     include_home: bool,
 ) -> CommandResult<ChangeSet> {
-    ensure_agenthub_connection(Path::new(&project), &mut manifest).map_err(format_error)?;
+    ensure_agentkib_connection(Path::new(&project), &mut manifest).map_err(format_error)?;
     let home = if include_home {
         default_home_targets()
     } else {
@@ -228,7 +329,7 @@ fn plan_changes(
 fn apply_changes(
     change_set: ChangeSet,
     approve_home: bool,
-) -> CommandResult<agenthub_core::ApplyReport> {
+) -> CommandResult<agentkib_core::ApplyReport> {
     let project_id = load_manifest(&change_set.project_root)
         .ok()
         .map(|manifest| manifest.workspace.id);
@@ -332,9 +433,9 @@ fn review_memory(
 #[tauri::command]
 fn runtime_info(state: tauri::State<'_, Arc<LifecycleState>>) -> CommandResult<RuntimeInfo> {
     let data_dir = default_data_dir().map_err(format_error)?;
-    let mcp_install_path = data_dir.join("bin/agenthub-mcp");
+    let mcp_install_path = data_dir.join("bin/agentkib-mcp");
     Ok(RuntimeInfo {
-        database_path: data_dir.join("agenthub.db"),
+        database_path: data_dir.join("agentkib.db"),
         data_dir,
         mcp_installed: mcp_install_path.is_file(),
         mcp_install_path,
@@ -357,10 +458,10 @@ fn set_close_behavior(
 #[tauri::command]
 fn install_mcp(app: AppHandle) -> CommandResult<PathBuf> {
     let source = locate_mcp_binary(&app)
-        .ok_or_else(|| "找不到随应用构建的 agenthub-mcp，请先运行 build:mcp".to_string())?;
+        .ok_or_else(|| "找不到随应用构建的 agentkib-mcp，请先运行 build:mcp".to_string())?;
     let target = default_data_dir()
         .map_err(format_error)?
-        .join("bin/agenthub-mcp");
+        .join("bin/agentkib-mcp");
     fs::create_dir_all(target.parent().expect("MCP 安装路径必须有父目录")).map_err(format_error)?;
     let temp = target.with_extension("tmp");
     fs::copy(source, &temp).map_err(format_error)?;
@@ -373,11 +474,11 @@ fn install_mcp(app: AppHandle) -> CommandResult<PathBuf> {
     Ok(target)
 }
 
-fn ensure_agenthub_connection(project: &Path, manifest: &mut Manifest) -> anyhow::Result<()> {
-    let binary = default_data_dir()?.join("bin/agenthub-mcp");
-    let definition = agenthub_core::ConnectionDefinition {
-        name: "agenthub".into(),
-        transport: agenthub_core::ConnectionTransport::Stdio {
+fn ensure_agentkib_connection(project: &Path, manifest: &mut Manifest) -> anyhow::Result<()> {
+    let binary = default_data_dir()?.join("bin/agentkib-mcp");
+    let definition = agentkib_core::ConnectionDefinition {
+        name: "agentkib".into(),
+        transport: agentkib_core::ConnectionTransport::Stdio {
             command: binary.display().to_string(),
             args: vec![
                 "--project".into(),
@@ -391,7 +492,7 @@ fn ensure_agenthub_connection(project: &Path, manifest: &mut Manifest) -> anyhow
     if let Some(existing) = manifest
         .connections
         .iter_mut()
-        .find(|value| value.name == "agenthub")
+        .find(|value| value.name == "agentkib")
     {
         *existing = definition;
     } else {
@@ -413,8 +514,8 @@ fn default_home_targets() -> HomeTargets {
 fn locate_mcp_binary(app: &AppHandle) -> Option<PathBuf> {
     let executable_dir = app.path().executable_dir().ok()?;
     [
-        executable_dir.join("agenthub-mcp"),
-        executable_dir.join("../Resources/agenthub-mcp"),
+        executable_dir.join("agentkib-mcp"),
+        executable_dir.join("../Resources/agentkib-mcp"),
     ]
     .into_iter()
     .find(|path| path.is_file())
@@ -502,12 +603,12 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         return;
     }
     app.dialog()
-        .message("AgentHub 可以隐藏到菜单栏并继续在后台运行。以后可在 Settings 中修改此行为。")
-        .title("关闭 AgentHub")
+        .message("AgentKib 可以隐藏到菜单栏并继续在后台运行。以后可在 Settings 中修改此行为。")
+        .title("关闭 AgentKib")
         .parent(window)
         .buttons(MessageDialogButtons::YesNoCancelCustom(
             "最小化到菜单栏".into(),
-            "退出 AgentHub".into(),
+            "退出 AgentKib".into(),
             "取消".into(),
         ))
         .show_with_result(move |result| {
@@ -518,7 +619,7 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
                     let _ = save_close_behavior(Some(CloseBehavior::MinimizeToTray));
                     hide_to_tray(&app);
                 }
-                MessageDialogResult::Custom(label) if label == "退出 AgentHub" => {
+                MessageDialogResult::Custom(label) if label == "退出 AgentKib" => {
                     lifecycle.set_close_behavior(Some(CloseBehavior::Quit));
                     let _ = save_close_behavior(Some(CloseBehavior::Quit));
                     request_real_exit(&app, &lifecycle);
@@ -533,15 +634,15 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::tray::TrayIconBuilder;
 
     let menu = MenuBuilder::new(app)
-        .text("show", "打开 AgentHub")
+        .text("show", "打开 AgentKib")
         .text("status", "正在发现工作区…")
         .text("refresh", "立即刷新")
         .separator()
-        .text("quit", "退出 AgentHub")
+        .text("quit", "退出 AgentKib")
         .build()?;
-    let mut tray = TrayIconBuilder::with_id("agenthub-status")
+    let mut tray = TrayIconBuilder::with_id("agentkib-status")
         .menu(&menu)
-        .tooltip("AgentHub · 本地 Agent 资产")
+        .tooltip("AgentKib · 本地 Agent 资产")
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
@@ -550,6 +651,8 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 std::thread::spawn(move || {
                     let state = app.state::<Arc<DiscoveryRuntime>>();
                     let _ = perform_discovery(&app, state.inner());
+                    let insights = app.state::<Arc<InsightsRuntime>>();
+                    let _ = perform_insights(&app, insights.inner());
                 });
             }
             "quit" => {
@@ -596,7 +699,7 @@ fn perform_discovery(app: &AppHandle, state: &DiscoveryRuntime) -> CommandResult
     match result {
         Ok(report) => {
             *state.last_report.lock().expect("发现状态锁已损坏") = Some(report.clone());
-            let _ = app.emit("agenthub:discovery-updated", &report);
+            let _ = app.emit("agentkib:discovery-updated", &report);
             let _ = refresh_tray_status(app);
             Ok(report)
         }
@@ -611,22 +714,47 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .unwrap_or_default();
     let attention = workspaces
         .iter()
-        .filter(|workspace| !matches!(workspace.status, agenthub_core::WorkspaceStatus::Healthy))
+        .filter(|workspace| !matches!(workspace.status, agentkib_core::WorkspaceStatus::Healthy))
         .count();
     let menu = MenuBuilder::new(app)
-        .text("show", "打开 AgentHub")
+        .text("show", "打开 AgentKib")
         .text(
             "status",
             format!("{} 个工作区 · {} 项待处理", workspaces.len(), attention),
         )
         .text("refresh", "立即刷新")
         .separator()
-        .text("quit", "退出 AgentHub")
+        .text("quit", "退出 AgentKib")
         .build()?;
-    if let Some(tray) = app.tray_by_id("agenthub-status") {
+    if let Some(tray) = app.tray_by_id("agentkib-status") {
         tray.set_menu(Some(menu))?;
     }
     Ok(())
+}
+
+fn perform_insights(app: &AppHandle, state: &InsightsRuntime) -> CommandResult<InsightsSummary> {
+    if state.running.swap(true, Ordering::SeqCst) {
+        return Err("成就统计正在刷新".to_string());
+    }
+    let result = (|| -> anyhow::Result<InsightsSummary> {
+        let store = Store::open_default()?;
+        let workspaces = store.list_workspaces()?;
+        let fingerprints = store.insight_git_fingerprints()?;
+        let usage_cursors = store.insight_usage_cursors()?;
+        // 文件、Agent CLI 和 Git 读取均发生在数据库事务之外，避免后台刷新长期占锁。
+        let usage = collect_usage(&usage_cursors);
+        let repositories = collect_git(&workspaces, &fingerprints);
+        store.sync_insights(&usage, &repositories)?;
+        store.insights_summary(&InsightsQuery::default())
+    })();
+    state.running.store(false, Ordering::SeqCst);
+    match result {
+        Ok(summary) => {
+            let _ = app.emit("agentkib:insights-updated", &summary);
+            Ok(summary)
+        }
+        Err(error) => Err(format_error(error)),
+    }
 }
 
 fn start_discovery_scheduler(app: AppHandle) {
@@ -634,6 +762,8 @@ fn start_discovery_scheduler(app: AppHandle) {
         loop {
             let state = app.state::<Arc<DiscoveryRuntime>>();
             let _ = perform_discovery(&app, state.inner());
+            let insights = app.state::<Arc<InsightsRuntime>>();
+            let _ = perform_insights(&app, insights.inner());
             std::thread::sleep(std::time::Duration::from_secs(15 * 60));
         }
     });
@@ -647,9 +777,11 @@ fn format_error(error: impl std::fmt::Display) -> String {
 pub fn run() {
     let lifecycle = Arc::new(LifecycleState::new(load_close_behavior()));
     let discovery = Arc::new(DiscoveryRuntime::default());
+    let insights = Arc::new(InsightsRuntime::default());
     let app = tauri::Builder::default()
         .manage(lifecycle)
         .manage(discovery)
+        .manage(insights)
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             setup_tray(app)?;
@@ -682,6 +814,18 @@ pub fn run() {
             search_catalog_assets,
             list_global_memories,
             list_activity,
+            refresh_insights,
+            get_insights_summary,
+            get_insights_heatmap,
+            get_agent_usage_breakdown,
+            get_model_usage_breakdown,
+            get_workspace_usage_breakdown,
+            get_repository_commit_breakdown,
+            list_achievements,
+            get_insights_status,
+            list_git_identities,
+            add_git_identity_alias,
+            set_git_identity_enabled,
             plan_changes,
             apply_changes,
             resolve_context,
@@ -694,7 +838,7 @@ pub fn run() {
             install_mcp
         ])
         .build(tauri::generate_context!())
-        .expect("构建 AgentHub 失败");
+        .expect("构建 AgentKib 失败");
     app.run(|app, event| match event {
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             let lifecycle = app.state::<Arc<LifecycleState>>();
