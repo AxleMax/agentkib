@@ -1231,7 +1231,9 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .separator()
         .text("quit", translate(locale, "tray.quit", &[]))
         .build()?;
-    let mut tray = TrayIconBuilder::with_id("agentkib-status")
+    let tray = TrayIconBuilder::with_id("agentkib-status")
+        .icon(tauri::include_image!("icons/tray-icon.png"))
+        .icon_as_template(true)
         .menu(&menu)
         .tooltip(translate(locale, "tray.tooltip", &[]))
         .show_menu_on_left_click(true)
@@ -1252,9 +1254,6 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
             }
             _ => {}
         });
-    if let Some(icon) = app.default_window_icon().cloned() {
-        tray = tray.icon(icon);
-    }
     tray.build(app)?;
     Ok(())
 }
