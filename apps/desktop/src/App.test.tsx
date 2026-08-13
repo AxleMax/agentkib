@@ -89,13 +89,14 @@ describe("AgentKib desktop", () => {
       "Assets",
       "Agents",
       "Achievements",
-      "Settings",
     ]);
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(navigation.queryByRole("button", { name: "Memory Inbox" })).not.toBeInTheDocument();
     expect(navigation.queryByRole("button", { name: "Activity" })).not.toBeInTheDocument();
 
     fireEvent.click(navigation.getByRole("button", { name: "Assets" }));
-    expect(await screen.findByRole("button", { name: "Catalog" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Instructions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skills" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Memory" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "MCP" })).toBeInTheDocument();
   });
@@ -113,17 +114,37 @@ describe("AgentKib desktop", () => {
     render(<App />);
     const project = await screen.findByRole("button", { name: /Project \/tmp\/project/ });
     fireEvent.click(project);
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Overview" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Project" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Overview" })).toBeInTheDocument();
     const navigation = within(screen.getByRole("navigation", { name: "Primary navigation" }));
-    expect(navigation.getAllByRole("button")).toHaveLength(6);
+    expect(navigation.getAllByRole("button")).toHaveLength(5);
     expect(screen.getByRole("button", { name: "Review changes" })).toBeDisabled();
+  });
+
+  it("returns from the dedicated Settings shell to the active workspace", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project",
+      path: "/tmp/project",
+      name: "Project",
+      status: "healthy",
+      asset_count: 0,
+      warning_count: 0,
+      sources: [{ agent: "codex", evidence: "session-cwd", session_count: 1 }],
+    }]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Project" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { name: "General" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to AgentKib" }));
+    expect(await screen.findByRole("heading", { name: "Project" })).toBeInTheDocument();
   });
 
   it("shows token and commit achievements without a cloud account", async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByText(/120K Token/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Achievements" }));
-    await waitFor(() => expect(screen.getByText("Your Agent Collaboration Journey")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Overview" })).toBeInTheDocument());
     expect(screen.getByText("Activity Heatmap")).toBeInTheDocument();
     expect(screen.getAllByText("My Commits")).toHaveLength(2);
   });
@@ -145,7 +166,7 @@ describe("AgentKib desktop", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Language" }), { target: { value: "zh-CN" } });
-    await waitFor(() => expect(screen.getByRole("heading", { name: "设置" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "常规" })).toBeInTheDocument());
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
@@ -153,8 +174,23 @@ describe("AgentKib desktop", () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
     expect(await screen.findByRole("heading", { name: "Obsidian" })).toBeInTheDocument();
     expect(screen.getByText("Not installed")).toBeInTheDocument();
     expect(screen.getByText("CLI not enabled (optional)")).toBeInTheDocument();
+  });
+
+  it("collapses the sidebar completely and restores the preference", async () => {
+    const first = render(<App />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
+    expect(collapse.closest(".window-toolbar")).toBeInTheDocument();
+    expect(collapse.closest(".brand")).toBeNull();
+    fireEvent.click(collapse);
+    expect(storage.get("agentkib.sidebar.collapsed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Expand sidebar" }).closest(".window-toolbar")).toBeInTheDocument();
+    first.unmount();
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument());
   });
 });

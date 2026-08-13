@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Sparkles } from "lucide-react";
+import { Settings, Sparkles } from "lucide-react";
 import { tr } from "../i18n";
 
 export interface SidebarEntry<T extends string> {
@@ -12,19 +12,21 @@ export interface SidebarEntry<T extends string> {
 export function AppSidebar<T extends string>({
   active,
   entries,
-  workspaceCount,
   onNavigate,
+  onSettings,
+  collapsed = false,
 }: {
   active: T;
   entries: SidebarEntry<T>[];
-  workspaceCount: number;
   onNavigate: (page: T) => void;
+  onSettings: () => void;
+  collapsed?: boolean;
 }) {
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-hidden={collapsed} inert={collapsed ? true : undefined}>
       <div className="brand">
         <div className="brand-mark"><Sparkles size={17} /></div>
-        <div><strong>AgentKib</strong><span>{tr("common.assetControlPlane")}</span></div>
+        <strong>AgentKib</strong>
       </div>
       <nav aria-label={tr("common.primaryNavigation")}>
         {entries.map(({ id, label, icon: Icon, badge }) => (
@@ -34,7 +36,9 @@ export function AppSidebar<T extends string>({
           </button>
         ))}
       </nav>
-      <div className="sidebar-foot"><div className="status-dot" />{tr("common.localOnly")} · {workspaceCount} {tr("common.workspaces")}</div>
+      <button className="sidebar-settings" type="button" onClick={onSettings}>
+        <Settings size={17} />{tr("nav.settings")}
+      </button>
     </aside>
   );
 }

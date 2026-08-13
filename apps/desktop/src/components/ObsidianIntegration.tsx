@@ -58,7 +58,7 @@ export function ObsidianSettingsCard() {
       <div className="panel-head">
         <div className="obsidian-heading">
           <div className="setting-icon"><Link2 /></div>
-          <div><h2>{tr("obsidian.title")}</h2><p>{tr("obsidian.description")}</p></div>
+          <h2>{tr("obsidian.title")}</h2>
         </div>
         <div className="header-actions">
           {integration?.installation.installed && <button className="ghost" onClick={() => void openApp()}><ExternalLink size={15} />{tr("obsidian.open")}</button>}
@@ -136,7 +136,7 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
   return (
     <div className="panel obsidian-card workspace-obsidian-card">
       <div className="panel-head">
-        <div><h2>{tr("obsidian.workspaceTitle")}</h2><p>{tr("obsidian.workspaceDescription")}</p></div>
+        <h2>{tr("obsidian.workspaceTitle")}</h2>
         {link && <button className="ghost" onClick={() => void openLinkedTarget()}><ExternalLink size={15} />{tr("obsidian.open")}</button>}
       </div>
       {error && <div className="alert">{error}</div>}
