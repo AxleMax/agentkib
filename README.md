@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="apps/desktop/src-tauri/icons/128x128@2x.png" width="128" alt="AgentKib app icon" />
+  <img src="apps/desktop/src-tauri/assets/app-icon-source.png" width="128" alt="AgentKib app icon" />
 </p>
 
 <h1 align="center">AgentKib</h1>
