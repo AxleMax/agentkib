@@ -1,4 +1,4 @@
-export type AgentKind = "codex" | "claude-code" | "open-claw" | "hermes";
+export type AgentKind = "codex" | "claude-code" | "cursor" | "open-claw" | "hermes";
 export type MemoryStatus = "pending" | "approved" | "rejected" | "invalidated";
 export type MemoryType = "user_preference" | "project_fact" | "decision" | "constraint" | "failed_attempt" | "open_loop" | "task_state" | "agent_observation";
 

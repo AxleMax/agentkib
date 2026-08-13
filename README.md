@@ -29,7 +29,7 @@
 
 AgentKib is a local-first, Git-native control plane for agent assets. **KIB** stands for **Knowledge & Instruction Base**.
 
-Coding agents usually keep their project instructions, Skills, MCP connections, histories, and reusable knowledge in different formats and locations. AgentKib discovers those workspaces, catalogs what already exists, and lets Codex, Claude Code, OpenClaw, and Hermes work from one governed source of truth—without introducing an account, cloud database, or model API.
+Coding agents usually keep their project instructions, Skills, MCP connections, histories, and reusable knowledge in different formats and locations. AgentKib discovers those workspaces, catalogs what already exists, and lets Codex, Claude Code, Cursor, OpenClaw, and Hermes work from one governed source of truth—without introducing an account, cloud database, or model API.
 
 The core workflow is deliberately reviewable:
 
@@ -67,7 +67,7 @@ Existing native agents/profiles, hooks, and private-memory assets are cataloged 
 
 ```mermaid
 flowchart LR
-  Agents["Codex · Claude Code · OpenClaw · Hermes"]
+  Agents["Codex · Claude Code · Cursor · OpenClaw · Hermes"]
   Discovery["Read-only discovery providers"]
   Desktop["AgentKib desktop"]
   Core["Rust core and adapters"]
@@ -119,7 +119,7 @@ To try AgentKib now, build it from source using the shared [development instruct
 
 AgentKib 是一个本地优先、Git 原生的 Agent 资产控制台。**KIB** 代表 **Knowledge & Instruction Base（知识与指令底座）**。
 
-不同编码 Agent 往往用不同格式、不同路径保存项目指令、Skills、MCP 连接、历史记录和可复用知识。AgentKib 会发现这些工作区、盘点已有资产，并让 Codex、Claude Code、OpenClaw 与 Hermes 围绕一套受治理的公共资产工作，而不引入账号、云端数据库或模型 API。
+不同编码 Agent 往往用不同格式、不同路径保存项目指令、Skills、MCP 连接、历史记录和可复用知识。AgentKib 会发现这些工作区、盘点已有资产，并让 Codex、Claude Code、Cursor、OpenClaw 与 Hermes 围绕一套受治理的公共资产工作，而不引入账号、云端数据库或模型 API。
 
 核心流程保持透明、可审查：
 
@@ -131,7 +131,7 @@ AgentKib 是一个本地优先、Git 原生的 Agent 资产控制台。**KIB** �
 
 ### 核心能力
 
-- **全局工作区发现**：聚合四类 Agent 已使用的工作区，并补充用户明确授权的扫描目录；不会扫描整块磁盘。
+- **全局工作区发现**：聚合五类 Agent 已使用的工作区，并补充用户明确授权的扫描目录；不会扫描整块磁盘。
 - **Obsidian 工作区联动**：检测本机 Obsidian 和已知 Vault，将工作区显式关联到 Vault 路径并一键打开；不读取笔记正文，也不修改 Vault 文件。
 - **跨工作区资产目录**：检索项目和 Agent Home 中的指令、Skills、MCP、Hooks、Profiles、配置及记忆归属元数据。
 - **Git 原生公共资产**：`.agentkib/manifest.yaml` 是可进入版本控制的真相源，统一描述共享指令、目录规则、Skills、连接、记忆策略和适配器状态。
@@ -241,11 +241,11 @@ cargo run -p agentkib-cli -- manifest /path/to/project
 
 ## MCP tools / MCP 工具
 
-The desktop app listens on `127.0.0.1:47653` by default. Reviewed ChangeSets configure Codex, Claude Code, OpenClaw, and Hermes to connect to the workspace-and-Agent-specific Streamable HTTP URL. Third-party tools use the `{server}__{tool}` namespace.
+The desktop app listens on `127.0.0.1:47653` by default. Reviewed ChangeSets configure Codex, Claude Code, Cursor, OpenClaw, and Hermes to connect to the workspace-and-Agent-specific Streamable HTTP URL. Third-party tools use the `{server}__{tool}` namespace.
 
 Downstream servers are merged from global and project `mcp.json` / `mcp.local.json` layers. The Hub can install pinned npm or PyPI packages from the official Registry, connect to remote Streamable HTTP servers, and complete MCP OAuth in the system browser. Local files hold environment values, headers, and OAuth credentials with mode `0600`; those values are masked in the UI and never stored in SQLite.
 
-桌面应用默认监听 `127.0.0.1:47653`。经审查的 ChangeSet 会让 Codex、Claude Code、OpenClaw 与 Hermes 连接包含工作区和 Agent 身份的 Streamable HTTP URL；第三方工具使用 `{server}__{tool}` 命名空间。
+桌面应用默认监听 `127.0.0.1:47653`。经审查的 ChangeSet 会让 Codex、Claude Code、Cursor、OpenClaw 与 Hermes 连接包含工作区和 Agent 身份的 Streamable HTTP URL；第三方工具使用 `{server}__{tool}` 命名空间。
 
 下游 Server 配置由全局和项目级 `mcp.json` / `mcp.local.json` 四层合并。Hub 可从官方 Registry 安装固定版本的 npm 或 PyPI 包、连接远程 Streamable HTTP Server，并在系统浏览器中完成 MCP OAuth。环境变量、Header 和 OAuth 凭据只写入权限为 `0600` 的本地配置，在界面中始终脱敏，也不会进入 SQLite。
 

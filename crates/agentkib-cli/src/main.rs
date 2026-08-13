@@ -85,6 +85,7 @@ fn parse_agent(value: &str) -> Result<AgentKind> {
     match value {
         "codex" => Ok(AgentKind::Codex),
         "claude" | "claude-code" => Ok(AgentKind::ClaudeCode),
+        "cursor" => Ok(AgentKind::Cursor),
         "openclaw" => Ok(AgentKind::OpenClaw),
         "hermes" => Ok(AgentKind::Hermes),
         _ => bail!("Unknown Agent: {value}"),
@@ -92,6 +93,6 @@ fn parse_agent(value: &str) -> Result<AgentKind> {
 }
 fn print_help() {
     println!(
-        "agentkib scan <project>\nagentkib context <project> <codex|claude-code|openclaw|hermes> [cwd]\nagentkib plan <project>\nagentkib validate <project>\nagentkib manifest <project>"
+        "agentkib scan <project>\nagentkib context <project> <codex|claude-code|cursor|openclaw|hermes> [cwd]\nagentkib plan <project>\nagentkib validate <project>\nagentkib manifest <project>"
     );
 }

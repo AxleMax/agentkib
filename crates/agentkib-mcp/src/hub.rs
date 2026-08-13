@@ -513,6 +513,7 @@ fn parse_agent(value: &str) -> Result<AgentKind> {
     match value {
         "codex" => Ok(AgentKind::Codex),
         "claude-code" => Ok(AgentKind::ClaudeCode),
+        "cursor" => Ok(AgentKind::Cursor),
         "openclaw" | "open-claw" => Ok(AgentKind::OpenClaw),
         "hermes" => Ok(AgentKind::Hermes),
         _ => anyhow::bail!("Unknown Agent: {value}"),

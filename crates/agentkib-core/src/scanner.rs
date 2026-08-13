@@ -39,6 +39,7 @@ pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
                                         || name.ends_with(".toml")
                                         || name.ends_with(".json")
                                         || name.ends_with(".md")
+                                        || name.ends_with(".mdc")
                                 });
                         if is_asset {
                             assets.push(record(agent, kind, entry_path, summary)?);
@@ -152,6 +153,26 @@ fn candidates(agent: AgentKind) -> Vec<(&'static str, AssetKind, &'static str)> 
             ),
             (".mcp.json", AssetKind::Connection, "Claude Code MCP"),
         ],
+        AgentKind::Cursor => vec![
+            (
+                "AGENTS.md",
+                AssetKind::Instruction,
+                "Cursor project instructions",
+            ),
+            (
+                ".cursor/rules",
+                AssetKind::Instruction,
+                "Cursor project rules",
+            ),
+            (
+                ".cursor/commands",
+                AssetKind::Instruction,
+                "Cursor commands",
+            ),
+            (".cursor/skills", AssetKind::Skill, "Cursor Skills"),
+            (".cursor/hooks.json", AssetKind::Hook, "Cursor Hooks"),
+            (".cursor/mcp.json", AssetKind::Connection, "Cursor MCP"),
+        ],
         AgentKind::OpenClaw => vec![
             (
                 "AGENTS.md",
@@ -219,6 +240,8 @@ fn summary_translation_key(summary: &str) -> Option<&'static str> {
         Some("assets.summary.openClawInstructions")
     } else if summary.contains("Hermes") && summary.contains("instruction") {
         Some("assets.summary.hermesInstructions")
+    } else if summary.contains("Cursor") && summary.contains("instruction") {
+        Some("assets.summary.cursorInstructions")
     } else if summary.contains("Skill") {
         Some("assets.summary.skillDirectory")
     } else if summary.contains("MCP") {
@@ -253,5 +276,29 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn scans_cursor_rules_commands_hooks_and_mcp() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
+        fs::create_dir_all(dir.path().join(".cursor/commands")).unwrap();
+        fs::write(
+            dir.path().join(".cursor/rules/project.mdc"),
+            "---\nalwaysApply: true\n---\nRule",
+        )
+        .unwrap();
+        fs::write(dir.path().join(".cursor/commands/review.md"), "Review").unwrap();
+        fs::write(dir.path().join(".cursor/hooks.json"), "{}").unwrap();
+        fs::write(dir.path().join(".cursor/mcp.json"), "{}").unwrap();
+
+        let scan = scan_workspace(dir.path()).unwrap();
+        let cursor = scan
+            .agents
+            .iter()
+            .find(|agent| agent.agent == AgentKind::Cursor)
+            .unwrap();
+        assert!(cursor.detected);
+        assert_eq!(cursor.asset_count, 4);
     }
 }

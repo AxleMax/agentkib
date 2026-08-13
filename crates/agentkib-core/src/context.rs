@@ -33,6 +33,7 @@ pub fn resolve_context(
     let sources = match agent {
         AgentKind::Codex => codex_sources(&dirs),
         AgentKind::ClaudeCode => claude_sources(&dirs),
+        AgentKind::Cursor => cursor_sources(&dirs),
         AgentKind::OpenClaw => openclaw_sources(&root),
         AgentKind::Hermes => hermes_sources(&dirs),
     };
@@ -154,6 +155,44 @@ fn claude_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
         }
     }
     result
+}
+
+fn cursor_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    if let Some(root) = dirs.first() {
+        let agents = root.join("AGENTS.md");
+        if agents.is_file() {
+            result.push(agents);
+        }
+    }
+    for dir in dirs {
+        let rules = dir.join(".cursor/rules");
+        let Ok(entries) = fs::read_dir(rules) else {
+            continue;
+        };
+        let mut files: Vec<_> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "mdc"))
+            .collect();
+        files.sort();
+        result.extend(files.into_iter().filter(|path| cursor_rule_is_always(path)));
+    }
+    result
+}
+
+fn cursor_rule_is_always(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|content| {
+        let mut lines = content.lines();
+        if lines.next().map(str::trim) != Some("---") {
+            return false;
+        }
+        lines.take_while(|line| line.trim() != "---").any(|line| {
+            line.split_once(':').is_some_and(|(key, value)| {
+                key.trim() == "alwaysApply" && value.trim().eq_ignore_ascii_case("true")
+            })
+        })
+    })
 }
 
 fn openclaw_sources(root: &Path) -> Vec<PathBuf> {
@@ -295,6 +334,29 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("Imported file is missing"))
         );
+    }
+
+    #[test]
+    fn cursor_context_uses_agents_and_only_always_rules() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "shared").unwrap();
+        fs::write(
+            dir.path().join(".cursor/rules/always.mdc"),
+            "---\nalwaysApply: true\n---\ncursor override",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".cursor/rules/manual.mdc"),
+            "---\nalwaysApply: false\n---\nmanual rule",
+        )
+        .unwrap();
+
+        let preview =
+            resolve_context(dir.path(), dir.path(), AgentKind::Cursor, None, vec![]).unwrap();
+        assert_eq!(preview.sections.len(), 2);
+        assert_eq!(preview.sections[0].content.trim(), "shared");
+        assert!(preview.sections[1].content.contains("cursor override"));
     }
 
     #[test]

@@ -9,17 +9,25 @@ use serde::{Deserialize, Serialize};
 pub enum AgentKind {
     Codex,
     ClaudeCode,
+    Cursor,
     OpenClaw,
     Hermes,
 }
 
 impl AgentKind {
-    pub const ALL: [Self; 4] = [Self::Codex, Self::ClaudeCode, Self::OpenClaw, Self::Hermes];
+    pub const ALL: [Self; 5] = [
+        Self::Codex,
+        Self::ClaudeCode,
+        Self::Cursor,
+        Self::OpenClaw,
+        Self::Hermes,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude-code",
+            Self::Cursor => "cursor",
             Self::OpenClaw => "openclaw",
             Self::Hermes => "hermes",
         }

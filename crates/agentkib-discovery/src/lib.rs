@@ -31,6 +31,7 @@ pub fn discover(scan_roots: &[(PathBuf, usize)]) -> DiscoverySnapshot {
     let providers: Vec<Box<dyn WorkspaceDiscoveryProvider>> = vec![
         Box::new(CodexProvider::default()),
         Box::new(ClaudeProvider::default()),
+        Box::new(CursorProvider::default()),
         Box::new(OpenClawProvider::default()),
         Box::new(HermesProvider::default()),
     ];
@@ -282,6 +283,119 @@ impl WorkspaceDiscoveryProvider for ClaudeProvider {
             .transpose()?
             .unwrap_or_default())
     }
+}
+
+#[derive(Default)]
+struct CursorProvider {
+    home: Option<PathBuf>,
+    data_home: Option<PathBuf>,
+}
+
+impl CursorProvider {
+    fn home(&self) -> Option<PathBuf> {
+        self.home
+            .clone()
+            .or_else(|| dirs::home_dir().map(|path| path.join(".cursor")))
+    }
+
+    fn data_home(&self) -> Option<PathBuf> {
+        self.data_home.clone().or_else(|| {
+            env::var_os("CURSOR_DATA_DIR")
+                .map(PathBuf::from)
+                .or_else(|| dirs::config_dir().map(|path| path.join("Cursor")))
+        })
+    }
+}
+
+impl WorkspaceDiscoveryProvider for CursorProvider {
+    fn installation(&self) -> AgentInstallation {
+        let home = self.home();
+        let mut value = installation(AgentKind::Cursor, home.clone());
+        if !value.installed {
+            value.installed = self.data_home().is_some_and(|path| path.is_dir());
+            value.configured = home.is_some_and(|path| path.is_dir());
+        }
+        value
+    }
+
+    fn discover(&self) -> Result<Vec<DiscoveryCandidate>> {
+        let Some(data_home) = self.data_home().filter(|path| path.is_dir()) else {
+            return Ok(Vec::new());
+        };
+        let storage = data_home.join("User/workspaceStorage");
+        if !storage.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut output = Vec::new();
+        for entry in WalkDir::new(storage)
+            .min_depth(2)
+            .max_depth(2)
+            .follow_links(false)
+        {
+            let entry = entry?;
+            if !entry.file_type().is_file() || entry.file_name() != "workspace.json" {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<JsonValue>(&fs::read_to_string(entry.path())?)
+            else {
+                continue;
+            };
+            let Some(path) = cursor_workspace_path(&value) else {
+                continue;
+            };
+            output.push(candidate(
+                path,
+                Some(AgentKind::Cursor),
+                DiscoveryEvidence::ConfiguredWorkspace,
+                modified_at(entry.path()).ok(),
+                0,
+                false,
+            ));
+        }
+        Ok(output)
+    }
+
+    fn scan_home_assets(&self) -> Result<Vec<CatalogAsset>> {
+        Ok(self
+            .home()
+            .filter(|path| path.is_dir())
+            .map(|home| {
+                scan_known_home(
+                    AgentKind::Cursor,
+                    &home,
+                    &["mcp.json", "rules", "commands", "hooks.json", "skills"],
+                )
+            })
+            .transpose()?
+            .unwrap_or_default())
+    }
+}
+
+fn cursor_workspace_path(value: &JsonValue) -> Option<PathBuf> {
+    let value = value
+        .get("folder")
+        .or_else(|| value.get("workspace"))?
+        .as_str()?;
+    file_uri_path(value)
+}
+
+fn file_uri_path(value: &str) -> Option<PathBuf> {
+    let encoded = value.strip_prefix("file://")?;
+    let mut decoded = Vec::with_capacity(encoded.len());
+    let bytes = encoded.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let high = (bytes[index + 1] as char).to_digit(16)?;
+            let low = (bytes[index + 2] as char).to_digit(16)?;
+            decoded.push((high * 16 + low) as u8);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok().map(PathBuf::from)
 }
 
 #[derive(Default)]
@@ -579,6 +693,7 @@ fn has_project_marker(path: &Path) -> bool {
         "CLAUDE.md",
         ".codex",
         ".claude",
+        ".cursor",
     ]
     .into_iter()
     .any(|name| path.join(name).exists())
@@ -695,7 +810,7 @@ fn home_asset_kind(path: &Path) -> AssetKind {
         AssetKind::Skill
     } else if name.eq_ignore_ascii_case("MEMORY.md") || text.contains("/memory/") {
         AssetKind::Memory
-    } else if text.contains("/hooks/") {
+    } else if name.eq_ignore_ascii_case("hooks.json") || text.contains("/hooks/") {
         AssetKind::Hook
     } else if text.contains("/agents/") || text.contains("/profiles/") {
         AssetKind::Agent
@@ -1061,6 +1176,37 @@ mod tests {
         .discover()
         .unwrap();
         assert_eq!(candidates.len(), 2);
+    }
+
+    #[test]
+    fn cursor_discovers_workspace_metadata_without_reading_chat_content() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("project with space");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let cursor_home = dir.path().join("cursor-home");
+        fs::create_dir(&cursor_home).unwrap();
+        let data_home = dir.path().join("Cursor");
+        let storage = data_home.join("User/workspaceStorage/hash");
+        fs::create_dir_all(&storage).unwrap();
+        let uri = format!(
+            "file://{}",
+            workspace.display().to_string().replace(' ', "%20")
+        );
+        fs::write(
+            storage.join("workspace.json"),
+            format!("{{\"folder\":\"{uri}\",\"prompt\":\"must not be retained\"}}"),
+        )
+        .unwrap();
+
+        let candidates = CursorProvider {
+            home: Some(cursor_home),
+            data_home: Some(data_home),
+        }
+        .discover()
+        .unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].path, workspace);
+        assert!(!format!("{candidates:?}").contains("must not be retained"));
     }
 
     #[test]

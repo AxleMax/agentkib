@@ -25,12 +25,26 @@ pub fn scan_native_candidates(project: Option<&Path>) -> Result<Vec<McpMigration
             &["mcpServers"],
             &mut candidates,
         )?;
+        scan_json_servers(
+            &project.join(".cursor/mcp.json"),
+            AgentKind::Cursor,
+            "project",
+            &["mcpServers"],
+            &mut candidates,
+        )?;
     }
     if let Some(home) = dirs::home_dir() {
         scan_codex(&home.join(".codex/config.toml"), "home", &mut candidates)?;
         scan_json_servers(
             &home.join(".claude.json"),
             AgentKind::ClaudeCode,
+            "home",
+            &["mcpServers"],
+            &mut candidates,
+        )?;
+        scan_json_servers(
+            &home.join(".cursor/mcp.json"),
+            AgentKind::Cursor,
             "home",
             &["mcpServers"],
             &mut candidates,
@@ -57,6 +71,7 @@ pub fn migration_server(candidate: &McpMigrationCandidate) -> Result<McpServerCo
     let mut server = match candidate.agent {
         AgentKind::Codex => codex_server(candidate)?,
         AgentKind::ClaudeCode => json_server(candidate, &["mcpServers"], false)?,
+        AgentKind::Cursor => json_server(candidate, &["mcpServers"], false)?,
         AgentKind::OpenClaw => json_server(candidate, &["mcp", "servers"], true)?,
         AgentKind::Hermes => hermes_server(candidate)?,
     };
@@ -529,7 +544,7 @@ fn remove_native_candidates(
             output.push_str("\n# agentkib:managed:end\n");
             Ok(output)
         }
-        AgentKind::ClaudeCode => {
+        AgentKind::ClaudeCode | AgentKind::Cursor => {
             let mut value: Value = serde_json::from_str(content)?;
             remove_json_names(&mut value, &["mcpServers"], &names)?;
             upsert_json_gateway(&mut value, &["mcpServers"], agent, gateway_url)?;
@@ -559,6 +574,7 @@ fn agent_gateway_url(template: &str, agent: AgentKind) -> String {
     let slug = match agent {
         AgentKind::Codex => "codex",
         AgentKind::ClaudeCode => "claude-code",
+        AgentKind::Cursor => "cursor",
         AgentKind::OpenClaw => "open-claw",
         AgentKind::Hermes => "hermes",
     };
@@ -589,7 +605,7 @@ fn upsert_json_gateway(
         AgentKind::OpenClaw => {
             gateway.insert("transport".into(), "streamable-http".into());
         }
-        AgentKind::Codex | AgentKind::Hermes => {}
+        AgentKind::Codex | AgentKind::Cursor | AgentKind::Hermes => {}
     }
     servers.insert("agentkib".into(), Value::Object(gateway));
     Ok(())

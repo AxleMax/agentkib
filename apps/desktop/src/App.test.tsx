@@ -69,9 +69,9 @@ afterEach(() => {
 
 describe("AgentKib desktop", () => {
   it("keeps the supported agent labels stable", () => {
-    const agents = ["Codex", "Claude Code", "OpenClaw", "Hermes"];
-    expect(agents).toHaveLength(4);
-    expect(new Set(agents).size).toBe(4);
+    const agents = ["Codex", "Claude Code", "Cursor", "OpenClaw", "Hermes"];
+    expect(agents).toHaveLength(5);
+    expect(new Set(agents).size).toBe(5);
   });
 
   it("shows both removed and added lines in a changeset diff", () => {

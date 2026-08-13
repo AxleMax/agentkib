@@ -53,6 +53,12 @@ pub fn default_manifest(project: &Path) -> Result<Manifest> {
     {
         platform_overrides.insert(AgentKind::ClaudeCode, override_text);
     }
+    if let Ok(content) = fs::read_to_string(project.join(".cursor/rules/agentkib.mdc"))
+        && let Some(override_text) = managed_content(&content)
+        && !override_text.trim().is_empty()
+    {
+        platform_overrides.insert(AgentKind::Cursor, override_text.to_string());
+    }
     if let Some(content) = [".hermes.md", "HERMES.md"]
         .into_iter()
         .find_map(|name| fs::read_to_string(project.join(name)).ok())
@@ -157,6 +163,12 @@ fn claude_platform_override(content: &str) -> Option<String> {
     Some(remaining.trim().to_string()).filter(|value| !value.is_empty())
 }
 
+fn managed_content(content: &str) -> Option<&str> {
+    let (_, content) = content.split_once(START)?;
+    let (content, _) = content.split_once(END)?;
+    Some(content.trim())
+}
+
 fn discover_shared_skills(project: &Path) -> Result<Vec<agentkib_core::SkillDefinition>> {
     let directory = project.join(".agents/skills");
     if !directory.is_dir() {
@@ -230,9 +242,14 @@ pub fn plan_workspace_changes(
         )?;
     }
 
-    let common_enabled = [AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
-        .into_iter()
-        .any(|agent| adapter_enabled(manifest, agent));
+    let common_enabled = [
+        AgentKind::Codex,
+        AgentKind::Cursor,
+        AgentKind::OpenClaw,
+        AgentKind::Hermes,
+    ]
+    .into_iter()
+    .any(|agent| adapter_enabled(manifest, agent));
     if common_enabled {
         push_change(
             &mut changes,
@@ -316,6 +333,46 @@ pub fn plan_workspace_changes(
             ChangeScope::Project,
             RiskLevel::Medium,
             "toml",
+        )?;
+    }
+    if adapter_enabled(manifest, AgentKind::Cursor) {
+        let platform_override = manifest
+            .instructions
+            .platform_overrides
+            .get(&AgentKind::Cursor)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let rule_path = root.join(".cursor/rules/agentkib.mdc");
+        if !platform_override.trim().is_empty()
+            || rule_path.is_file()
+                && fs::read_to_string(&rule_path)
+                    .unwrap_or_default()
+                    .contains(START)
+        {
+            let rule = cursor_rule(
+                &fs::read_to_string(&rule_path).unwrap_or_default(),
+                platform_override,
+            );
+            push_change(
+                &mut changes,
+                rule_path,
+                rule,
+                ChangeScope::Project,
+                RiskLevel::Medium,
+                "markdown",
+            )?;
+        }
+        push_change(
+            &mut changes,
+            root.join(".cursor/mcp.json"),
+            merge_mcp_json(
+                &root.join(".cursor/mcp.json"),
+                &gateway_connections,
+                AgentKind::Cursor,
+            )?,
+            ChangeScope::Project,
+            RiskLevel::Medium,
+            "json",
         )?;
     }
     if adapter_enabled(manifest, AgentKind::OpenClaw) {
@@ -610,10 +667,17 @@ fn update_generated_hashes(root: &Path, manifest: &mut Manifest, changes: &[File
             &[AgentKind::Hermes]
         } else if path.contains(".codex") {
             &[AgentKind::Codex]
+        } else if path.contains(".cursor") {
+            &[AgentKind::Cursor]
         } else if path.contains(".claude") || name == "CLAUDE.md" || name == ".mcp.json" {
             &[AgentKind::ClaudeCode]
         } else {
-            &[AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
+            &[
+                AgentKind::Codex,
+                AgentKind::Cursor,
+                AgentKind::OpenClaw,
+                AgentKind::Hermes,
+            ]
         };
         for agent in agents {
             if let Some(state) = manifest.adapters.get_mut(agent) {
@@ -664,6 +728,24 @@ fn managed_markdown(existing: &str, generated: &str) -> String {
         END,
         &format!("{START}\n{}\n{END}", generated.trim()),
     )
+}
+
+fn cursor_rule(existing: &str, generated: &str) -> String {
+    let (header, body) = if existing.starts_with("---\n") {
+        existing
+            .split_once("\n---\n")
+            .map(|(header, body)| (format!("{header}\n---\n\n"), body.trim_start()))
+            .unwrap_or_else(|| (String::new(), existing))
+    } else {
+        (String::new(), existing)
+    };
+    let header = if header.is_empty() {
+        "---\ndescription: AgentKib Cursor-specific instructions\nalwaysApply: true\n---\n\n"
+            .to_string()
+    } else {
+        header
+    };
+    format!("{header}{}", managed_markdown(body, generated))
 }
 
 fn replace_managed(existing: &str, start: &str, end: &str, block: &str) -> String {
@@ -777,17 +859,22 @@ fn safe_key(value: &str) -> String {
 }
 
 fn merge_claude_mcp(path: &Path, connections: &[ConnectionDefinition]) -> Result<String> {
+    merge_mcp_json(path, connections, AgentKind::ClaudeCode)
+}
+
+fn merge_mcp_json(
+    path: &Path,
+    connections: &[ConnectionDefinition],
+    agent: AgentKind,
+) -> Result<String> {
     let mut root = read_json_object(path)?;
     let servers = root
         .entry("mcpServers")
         .or_insert_with(|| JsonValue::Object(JsonMap::new()))
         .as_object_mut()
-        .context("mcpServers in .mcp.json must be an object")?;
-    for connection in connections
-        .iter()
-        .filter(|value| targeted(value, AgentKind::ClaudeCode))
-    {
-        merge_json_server(servers, connection, AgentKind::ClaudeCode);
+        .context("mcpServers must be an object")?;
+    for connection in connections.iter().filter(|value| targeted(value, agent)) {
+        merge_json_server(servers, connection, agent);
     }
     Ok(format!("{}\n", serde_json::to_string_pretty(&root)?))
 }
@@ -847,7 +934,7 @@ fn connection_json(connection: &ConnectionDefinition, agent: AgentKind) -> JsonV
                 AgentKind::OpenClaw => {
                     value.insert("transport".into(), "streamable-http".into());
                 }
-                AgentKind::Codex | AgentKind::Hermes => {}
+                AgentKind::Codex | AgentKind::Cursor | AgentKind::Hermes => {}
             }
         }
     }
@@ -867,6 +954,7 @@ fn agent_url(url: &str, agent: AgentKind) -> String {
     let slug = match agent {
         AgentKind::Codex => "codex",
         AgentKind::ClaudeCode => "claude-code",
+        AgentKind::Cursor => "cursor",
         AgentKind::OpenClaw => "open-claw",
         AgentKind::Hermes => "hermes",
     };
@@ -1016,6 +1104,68 @@ mod tests {
         assert!(names.contains(&"CLAUDE.md"));
         assert!(names.contains(&"config.toml"));
         assert!(names.contains(&".mcp.json"));
+        assert!(
+            plan.changes
+                .iter()
+                .any(|change| change.target.ends_with(".cursor/mcp.json"))
+        );
+    }
+
+    #[test]
+    fn cursor_plan_preserves_native_mcp_fields_and_writes_only_platform_override() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+        fs::write(
+            dir.path().join(".cursor/mcp.json"),
+            r#"{"mcpServers":{"agentkib":{"url":"old","cursorOnly":true}},"native":7}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
+        fs::write(
+            dir.path().join(".cursor/rules/agentkib.mdc"),
+            "---\ndescription: Custom label\nalwaysApply: true\nfutureField: keep\n---\n\n<!-- agentkib:managed:start -->\nOld override\n<!-- agentkib:managed:end -->\n",
+        )
+        .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.instructions.shared = "Shared project instructions.".into();
+        manifest
+            .instructions
+            .platform_overrides
+            .insert(AgentKind::Cursor, "Use Cursor browser tools.".into());
+        manifest.connections.push(ConnectionDefinition {
+            name: "agentkib".into(),
+            transport: ConnectionTransport::Http {
+                url: "http://127.0.0.1:47653/mcp/v1/workspaces/ws/agents/{agent}".into(),
+            },
+            env: BTreeMap::new(),
+            allow_tools: vec![],
+            targets: vec![AgentKind::Cursor],
+        });
+
+        let plan = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        let mcp = plan
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with(".cursor/mcp.json"))
+            .unwrap();
+        let value: JsonValue = serde_json::from_str(&mcp.after).unwrap();
+        assert_eq!(value["native"], 7);
+        assert_eq!(value["mcpServers"]["agentkib"]["cursorOnly"], true);
+        assert!(
+            value["mcpServers"]["agentkib"]["url"]
+                .as_str()
+                .unwrap()
+                .ends_with("/cursor")
+        );
+        let rule = plan
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with(".cursor/rules/agentkib.mdc"))
+            .unwrap();
+        assert!(rule.after.contains("alwaysApply: true"));
+        assert!(rule.after.contains("futureField: keep"));
+        assert!(rule.after.contains("Use Cursor browser tools."));
+        assert!(!rule.after.contains(&manifest.instructions.shared));
     }
 
     #[test]
