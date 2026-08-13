@@ -32,7 +32,7 @@ export interface McpMigrationCandidate { id: string; agent: AgentKind; scope: st
 export interface McpOAuthStart { authorization_url: string }
 export interface McpInstallResult { installation: McpInstallation; server: McpServerConfig; tools: McpToolDescriptor[] }
 export interface RuntimeInfo { data_dir: string; database_path: string; mcp_package_root: string; mcp_hub: McpHubStatus; mcp_network: McpNetworkSettings; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale }
-export type WorkspaceStatus = "needs-import" | "healthy" | "attention";
+export type WorkspaceStatus = "healthy" | "attention";
 export type DiscoveryEvidence = "session-cwd" | "configured-workspace" | "scan-marker" | "manual";
 export interface WorkspaceSource { agent?: AgentKind; evidence: DiscoveryEvidence; session_count: number; last_active_at?: string }
 export interface WorkspaceSummary { id: string; path: string; name: string; repository_group_id?: string; manifest_workspace_id?: string; status: WorkspaceStatus; asset_count: number; warning_count: number; last_active_at?: string; last_scanned_at?: string; sources: WorkspaceSource[] }

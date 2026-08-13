@@ -3,7 +3,12 @@ import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUs
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
-  manifest: (project: string) => invoke<Manifest>("prepare_manifest", { project }),
+  manifest: async (project: string) => {
+    const manifest = await invoke<Manifest>("prepare_manifest", { project });
+    // Empty legacy connections are omitted from manifest serialization.
+    // Keep the React model total at the IPC boundary without writing the field back to disk.
+    return { ...manifest, connections: manifest.connections ?? [] };
+  },
   plan: (project: string, manifest: Manifest, includeHome: boolean) => invoke<ChangeSet>("plan_changes", { project, manifest, includeHome }),
   apply: (changeSet: ChangeSet, approveHome: boolean) => invoke("apply_changes", { changeSet, approveHome }),
   context: (project: string, cwd: string, agent: AgentKind) => invoke<ContextPreview>("resolve_context", { project, cwd, agent }),

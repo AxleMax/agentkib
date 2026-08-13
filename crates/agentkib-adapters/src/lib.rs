@@ -37,12 +37,10 @@ pub fn default_manifest(project: &Path) -> Result<Manifest> {
         .or_else(|| {
             claude
                 .as_ref()
-                .filter(|content| {
-                    !content.lines().any(|line| line.trim() == "@AGENTS.md")
-                })
+                .filter(|content| !content.lines().any(|line| line.trim() == "@AGENTS.md"))
                 .cloned()
         })
-        .unwrap_or_else(|| "# Project instructions\n\n- Preserve existing project conventions.\n- Run relevant tests after changes.\n".into());
+        .unwrap_or_default();
     let mut platform_overrides = BTreeMap::new();
     if let Ok(content) = fs::read_to_string(project.join("AGENTS.override.md"))
         && let Some(override_text) = platform_delta(&shared, &content)
@@ -934,6 +932,15 @@ mod tests {
         assert!(second.contains("# User content"));
         assert!(second.contains("Updated"));
         assert!(!second.contains("Shared\n"));
+    }
+
+    #[test]
+    fn default_manifest_does_not_invent_shared_instructions() {
+        let dir = tempdir().unwrap();
+        let manifest = default_manifest(dir.path()).unwrap();
+
+        assert!(manifest.instructions.shared.is_empty());
+        assert!(!agentkib_core::manifest_path(dir.path()).exists());
     }
 
     #[test]

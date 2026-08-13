@@ -353,7 +353,7 @@ impl UsageProvider for CodexProvider {
         {
             return Ok(unchanged_batch(AgentKind::Codex, fingerprint));
         }
-        let mut events = Vec::new();
+        let mut detailed_events = BTreeMap::<CodexAggregateKey, UsageEvent>::new();
         let mut detailed_sessions = BTreeSet::new();
         for path in source_paths
             .iter()
@@ -400,31 +400,35 @@ impl UsageProvider for CodexProvider {
                     .and_then(Value::as_str)
                     .and_then(parse_datetime);
                 let day = occurred_at.map(local_day);
-                events.push(UsageEvent {
-                    source_key: format!("codex:{}:{line_number}", path.display()),
-                    surface_agent: AgentKind::Codex,
-                    workspace_path: workspace.clone(),
-                    occurred_at,
-                    day,
-                    model: value
-                        .pointer("/payload/info/model")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    input_tokens: json_u64(usage, "input_tokens"),
-                    output_tokens: json_u64(usage, "output_tokens"),
-                    cache_read_tokens: json_u64(usage, "cached_input_tokens"),
-                    cache_write_tokens: 0,
-                    reasoning_tokens: json_u64(usage, "reasoning_output_tokens"),
-                    total_tokens: total,
-                    session_key: Some(session_key.clone()),
-                    session_count: u64::from(!session_counted),
-                    date_precision: DatePrecision::Exact,
-                    quality: UsageQuality::Exact,
-                });
+                merge_codex_event(
+                    &mut detailed_events,
+                    UsageEvent {
+                        source_key: format!("codex:{}:{line_number}", path.display()),
+                        surface_agent: AgentKind::Codex,
+                        workspace_path: workspace.clone(),
+                        occurred_at,
+                        day,
+                        model: value
+                            .pointer("/payload/info/model")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        input_tokens: json_u64(usage, "input_tokens"),
+                        output_tokens: json_u64(usage, "output_tokens"),
+                        cache_read_tokens: json_u64(usage, "cached_input_tokens"),
+                        cache_write_tokens: 0,
+                        reasoning_tokens: json_u64(usage, "reasoning_output_tokens"),
+                        total_tokens: total,
+                        session_key: Some(session_key.clone()),
+                        session_count: u64::from(!session_counted),
+                        date_precision: DatePrecision::Exact,
+                        quality: UsageQuality::Exact,
+                    },
+                );
                 session_counted = true;
                 detailed_sessions.insert(path.to_path_buf());
             }
         }
+        let mut events = detailed_events.into_values().collect();
         import_codex_fallbacks(home, &detailed_sessions, &mut events);
         Ok(finish_batch(
             AgentKind::Codex,
@@ -433,6 +437,53 @@ impl UsageProvider for CodexProvider {
             Some(fingerprint),
         ))
     }
+}
+
+type CodexAggregateKey = (String, Option<NaiveDate>, Option<String>, Option<PathBuf>);
+
+fn merge_codex_event(aggregates: &mut BTreeMap<CodexAggregateKey, UsageEvent>, event: UsageEvent) {
+    let session = event.session_key.clone().unwrap_or_default();
+    let key = (
+        session.clone(),
+        event.day,
+        event.model.clone(),
+        event.workspace_path.clone(),
+    );
+    let aggregate = aggregates.entry(key).or_insert_with(|| UsageEvent {
+        source_key: format!(
+            "codex-session:{session}:{}:{}:{}",
+            event.day.map(|day| day.to_string()).unwrap_or_default(),
+            event.model.as_deref().unwrap_or_default(),
+            event
+                .workspace_path
+                .as_deref()
+                .map(Path::display)
+                .map(|path| path.to_string())
+                .unwrap_or_default()
+        ),
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        total_tokens: 0,
+        session_count: 0,
+        ..event.clone()
+    });
+    aggregate.occurred_at = aggregate.occurred_at.max(event.occurred_at);
+    aggregate.input_tokens = aggregate.input_tokens.saturating_add(event.input_tokens);
+    aggregate.output_tokens = aggregate.output_tokens.saturating_add(event.output_tokens);
+    aggregate.cache_read_tokens = aggregate
+        .cache_read_tokens
+        .saturating_add(event.cache_read_tokens);
+    aggregate.cache_write_tokens = aggregate
+        .cache_write_tokens
+        .saturating_add(event.cache_write_tokens);
+    aggregate.reasoning_tokens = aggregate
+        .reasoning_tokens
+        .saturating_add(event.reasoning_tokens);
+    aggregate.total_tokens = aggregate.total_tokens.saturating_add(event.total_tokens);
+    aggregate.session_count = aggregate.session_count.saturating_add(event.session_count);
 }
 
 fn import_codex_fallbacks(
@@ -1162,13 +1213,15 @@ mod tests {
         .unwrap();
         writeln!(file, "{}", serde_json::json!({"type":"response_item","payload":{"content":"private prompt must be ignored"}})).unwrap();
         writeln!(file, "{}", serde_json::json!({"timestamp":"2026-08-13T10:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":70,"output_tokens":30,"cached_input_tokens":10,"reasoning_output_tokens":5,"total_tokens":100},"total_token_usage":{"total_tokens":999}}}})).unwrap();
+        writeln!(file, "{}", serde_json::json!({"timestamp":"2026-08-13T10:05:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":40,"output_tokens":10,"cached_input_tokens":5,"reasoning_output_tokens":2,"total_tokens":50}}}})).unwrap();
         let batch = CodexProvider {
             home: Some(dir.path().to_path_buf()),
         }
         .import(None)
         .unwrap();
         assert_eq!(batch.events.len(), 1);
-        assert_eq!(batch.events[0].total_tokens, 100);
+        assert_eq!(batch.events[0].total_tokens, 150);
+        assert_eq!(batch.events[0].input_tokens, 110);
         assert_eq!(batch.events[0].session_count, 1);
     }
 

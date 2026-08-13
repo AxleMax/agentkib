@@ -299,6 +299,40 @@ impl Store {
                  COMMIT;",
             )?;
         }
+        if current_version.is_none_or(|version| version < 6) {
+            self.connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS workspaces (
+                   id TEXT PRIMARY KEY,
+                   canonical_path TEXT NOT NULL UNIQUE,
+                   name TEXT NOT NULL,
+                   repository_group_id TEXT,
+                   manifest_workspace_id TEXT,
+                   status TEXT NOT NULL,
+                   asset_count INTEGER NOT NULL DEFAULT 0,
+                   warning_count INTEGER NOT NULL DEFAULT 0,
+                   last_active_at TEXT,
+                   last_discovered_at TEXT NOT NULL,
+                   last_scanned_at TEXT
+                 );
+                 UPDATE workspaces SET status = 'healthy' WHERE status = 'needs-import';
+                 INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '6');
+                 COMMIT;",
+            )?;
+        }
+        let has_usage_events: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'usage_events')",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_usage_events {
+            // Detailed Token events replace session-level aggregate fallbacks by session hash.
+            // Without this index a first import performs a full table scan for every event.
+            self.connection.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_usage_events_session_precision
+                 ON usage_events(session_hash, date_precision);",
+            )?;
+        }
         Ok(())
     }
 
@@ -835,6 +869,12 @@ impl Store {
                     now,
                 ],
             )?;
+            if batch.status.available {
+                transaction.execute(
+                    "DELETE FROM usage_events WHERE surface_agent = ?1",
+                    params![provider],
+                )?;
+            }
             for event in &batch.events {
                 let source_key = keyed_hash(&salt, event.source_key.as_bytes());
                 let session_hash = event
@@ -1914,7 +1954,7 @@ fn upsert_workspace(
         .iter()
         .find_map(|value| value.repository_group_id.clone());
     connection.execute(
-        "INSERT INTO workspaces(id, canonical_path, name, repository_group_id, manifest_workspace_id, status, asset_count, warning_count, last_active_at, last_discovered_at, last_scanned_at) VALUES (?1, ?2, ?3, ?4, NULL, 'needs-import', 0, 0, ?5, ?6, NULL) ON CONFLICT(canonical_path) DO UPDATE SET name = excluded.name, repository_group_id = COALESCE(excluded.repository_group_id, workspaces.repository_group_id), last_active_at = CASE WHEN excluded.last_active_at IS NULL THEN workspaces.last_active_at WHEN workspaces.last_active_at IS NULL OR excluded.last_active_at > workspaces.last_active_at THEN excluded.last_active_at ELSE workspaces.last_active_at END, last_discovered_at = excluded.last_discovered_at",
+        "INSERT INTO workspaces(id, canonical_path, name, repository_group_id, manifest_workspace_id, status, asset_count, warning_count, last_active_at, last_discovered_at, last_scanned_at) VALUES (?1, ?2, ?3, ?4, NULL, 'healthy', 0, 0, ?5, ?6, NULL) ON CONFLICT(canonical_path) DO UPDATE SET name = excluded.name, repository_group_id = COALESCE(excluded.repository_group_id, workspaces.repository_group_id), last_active_at = CASE WHEN excluded.last_active_at IS NULL THEN workspaces.last_active_at WHEN workspaces.last_active_at IS NULL OR excluded.last_active_at > workspaces.last_active_at THEN excluded.last_active_at ELSE workspaces.last_active_at END, last_discovered_at = excluded.last_discovered_at",
         params![id, path_text, path.file_name().and_then(|value| value.to_str()).unwrap_or("workspace"), repository_group_id, last_active_at.map(|value| value.to_rfc3339()), Utc::now().to_rfc3339()],
     )?;
     let workspace_id: String = connection.query_row(
@@ -1972,9 +2012,7 @@ fn refresh_workspace_record(connection: &Connection, id: &str, path: &Path) -> R
             }
         }
     }
-    let status = if !scan.manifest_exists {
-        WorkspaceStatus::NeedsImport
-    } else if warning_count == 0 && manifest.is_some() {
+    let status = if warning_count == 0 && (!scan.manifest_exists || manifest.is_some()) {
         WorkspaceStatus::Healthy
     } else {
         WorkspaceStatus::Attention
@@ -2329,6 +2367,24 @@ mod tests {
     }
 
     #[test]
+    fn discovered_workspace_without_manifest_is_healthy() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+
+        store
+            .sync_discovery(&[candidate(&workspace)], &[], &[], Utc::now(), &[])
+            .unwrap();
+
+        let workspaces = store.list_workspaces().unwrap();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].status, WorkspaceStatus::Healthy);
+        assert!(workspaces[0].manifest_workspace_id.is_none());
+        assert!(!workspace.join(".agentkib/manifest.yaml").exists());
+    }
+
+    #[test]
     fn excluded_workspace_stays_hidden_until_restored() {
         let dir = tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -2390,6 +2446,50 @@ mod tests {
         }
         let reopened = Store::open(&database).unwrap();
         assert_eq!(reopened.list_global_memories(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn current_schema_indexes_session_fallback_replacement() {
+        let dir = tempdir().unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let exists: bool = store
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_usage_events_session_precision')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+    }
+
+    #[test]
+    fn version_five_workspace_status_migrates_to_healthy() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO schema_meta(key, value) VALUES ('schema_version', '5');
+                 CREATE TABLE workspaces(
+                   id TEXT PRIMARY KEY, canonical_path TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+                   repository_group_id TEXT, manifest_workspace_id TEXT, status TEXT NOT NULL,
+                   asset_count INTEGER NOT NULL DEFAULT 0, warning_count INTEGER NOT NULL DEFAULT 0,
+                   last_active_at TEXT, last_discovered_at TEXT NOT NULL, last_scanned_at TEXT
+                 );
+                 INSERT INTO workspaces(id, canonical_path, name, status, last_discovered_at)
+                   VALUES ('workspace', '/tmp/workspace', 'workspace', 'needs-import', '2026-08-13T00:00:00Z');",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&database).unwrap();
+        let status: String = store
+            .connection
+            .query_row("SELECT status FROM workspaces", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(status, "healthy");
     }
 
     #[test]
