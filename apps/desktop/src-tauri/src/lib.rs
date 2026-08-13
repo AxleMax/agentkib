@@ -29,7 +29,9 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 
 mod i18n;
+mod obsidian;
 use i18n::{LocalePreference, SupportedLocale, translate};
+use obsidian::{ObsidianIntegration, ObsidianWorkspaceLink};
 
 type CommandResult<T> = Result<T, LocalizedMessage>;
 
@@ -231,6 +233,65 @@ fn list_excluded_workspaces() -> CommandResult<Vec<ExcludedWorkspace>> {
 fn restore_excluded_workspace(path: String) -> CommandResult<()> {
     Store::open_default()
         .and_then(|store| store.restore_excluded_workspace(Path::new(&path)))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_obsidian_integration() -> CommandResult<ObsidianIntegration> {
+    default_data_dir()
+        .and_then(|data_dir| obsidian::integration(&data_dir))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn add_obsidian_vault(path: String) -> CommandResult<ObsidianIntegration> {
+    default_data_dir()
+        .and_then(|data_dir| obsidian::add_vault(&data_dir, Path::new(&path)))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn link_workspace_to_obsidian(
+    workspace_id: String,
+    vault_path: String,
+    relative_target: Option<String>,
+) -> CommandResult<ObsidianWorkspaceLink> {
+    let store = Store::open_default().map_err(format_error)?;
+    if store
+        .get_workspace(&workspace_id)
+        .map_err(format_error)?
+        .is_none()
+    {
+        return Err(LocalizedMessage::new("errors.workspaceNotFound"));
+    }
+    default_data_dir()
+        .and_then(|data_dir| {
+            obsidian::link_workspace(
+                &data_dir,
+                &workspace_id,
+                Path::new(&vault_path),
+                relative_target.as_deref(),
+            )
+        })
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn unlink_workspace_from_obsidian(workspace_id: String) -> CommandResult<()> {
+    default_data_dir()
+        .and_then(|data_dir| obsidian::unlink_workspace(&data_dir, &workspace_id))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn open_obsidian() -> CommandResult<()> {
+    obsidian::open_app().map_err(format_error)
+}
+
+#[tauri::command]
+fn open_workspace_in_obsidian(workspace_id: String) -> CommandResult<()> {
+    default_data_dir()
+        .and_then(|data_dir| obsidian::open_workspace(&data_dir, &workspace_id))
         .map_err(format_error)
 }
 
@@ -1377,6 +1438,12 @@ pub fn run() {
             exclude_workspace,
             list_excluded_workspaces,
             restore_excluded_workspace,
+            get_obsidian_integration,
+            add_obsidian_vault,
+            link_workspace_to_obsidian,
+            unlink_workspace_from_obsidian,
+            open_obsidian,
+            open_workspace_in_obsidian,
             list_scan_roots,
             add_scan_root,
             remove_scan_root,

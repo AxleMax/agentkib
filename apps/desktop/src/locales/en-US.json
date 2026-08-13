@@ -1,4 +1,7 @@
 {
+  "common.loading": "Loading…",
+  "errors.workspaceNotFound": "Workspace not found",
+  "obsidian.title": "Obsidian", "obsidian.description": "Detects the local app and Vault registry. AgentKib links paths only and never reads note contents.", "obsidian.installed": "Installed", "obsidian.notInstalled": "Not installed", "obsidian.version": "Version {{version}}", "obsidian.cliAvailable": "CLI available", "obsidian.cliUnavailable": "CLI not enabled (optional)", "obsidian.open": "Open in Obsidian", "obsidian.addVault": "Add Vault", "obsidian.addVaultDialog": "Select an Obsidian Vault", "obsidian.vaults": "Vaults", "obsidian.noVaults": "No Vault detected. Add one manually if Obsidian uses a non-standard location.", "obsidian.source.discovered": "Detected", "obsidian.source.manual": "Manual", "obsidian.workspaceTitle": "Obsidian Link", "obsidian.workspaceDescription": "Link this workspace to an existing Vault folder or note without copying content.", "obsidian.chooseVault": "Vault", "obsidian.relativeTarget": "Vault-relative path", "obsidian.relativeTargetHint": "Optional, e.g. Projects/AgentKib", "obsidian.link": "Link", "obsidian.unlink": "Unlink", "obsidian.linked": "Linked to Obsidian", "obsidian.addVaultFirst": "Add an Obsidian Vault in Settings before linking this workspace.", "obsidian.notInstalledWorkspace": "Obsidian is not installed. Install it before linking this workspace.",
   "mcp.port": "Port",
   "mcp.authorize": "Authorize",
   "mcp.update": "Update",

@@ -41,6 +41,10 @@ export interface CatalogAsset { id: string; scope: "workspace" | "agent-home"; w
 export interface DiscoveryReport { started_at: string; finished_at: string; discovered_count: number; removed_count: number; errors: string[] }
 export interface ScanRoot { id: string; path: string; enabled: boolean; max_depth: number; created_at: string }
 export interface ExcludedWorkspace { path: string; created_at: string }
+export interface ObsidianInstallation { installed: boolean; app_path?: string; version?: string; cli_available: boolean }
+export interface ObsidianVault { path: string; name: string; source: "discovered" | "manual"; last_opened_at?: number }
+export interface ObsidianWorkspaceLink { workspace_id: string; vault_path: string; target_path: string }
+export interface ObsidianIntegration { installation: ObsidianInstallation; vaults: ObsidianVault[]; workspace_links: ObsidianWorkspaceLink[] }
 export interface ActivityRecord { id: string; project_id?: string; action: string; detail: string; created_at: string }
 export type UsageQuality = "exact" | "estimated" | "incomplete";
 export interface InsightsQuery { from?: string; to?: string; agent?: AgentKind; workspace_id?: string; repository_group_id?: string }

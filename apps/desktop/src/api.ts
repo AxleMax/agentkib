@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -47,6 +47,12 @@ export const api = {
   excludeWorkspace: (id: string) => invoke<void>("exclude_workspace", { id }),
   excludedWorkspaces: () => invoke<ExcludedWorkspace[]>("list_excluded_workspaces"),
   restoreExcludedWorkspace: (path: string) => invoke<void>("restore_excluded_workspace", { path }),
+  obsidianIntegration: () => invoke<ObsidianIntegration>("get_obsidian_integration"),
+  addObsidianVault: (path: string) => invoke<ObsidianIntegration>("add_obsidian_vault", { path }),
+  linkWorkspaceToObsidian: (workspaceId: string, vaultPath: string, relativeTarget?: string) => invoke<ObsidianWorkspaceLink>("link_workspace_to_obsidian", { workspaceId, vaultPath, relativeTarget: relativeTarget?.trim() || null }),
+  unlinkWorkspaceFromObsidian: (workspaceId: string) => invoke<void>("unlink_workspace_from_obsidian", { workspaceId }),
+  openObsidian: () => invoke<void>("open_obsidian"),
+  openWorkspaceInObsidian: (workspaceId: string) => invoke<void>("open_workspace_in_obsidian", { workspaceId }),
   scanRoots: () => invoke<ScanRoot[]>("list_scan_roots"),
   addScanRoot: (path: string, maxDepth = 5) => invoke<ScanRoot>("add_scan_root", { path, maxDepth }),
   removeScanRoot: (id: string) => invoke<void>("remove_scan_root", { id }),

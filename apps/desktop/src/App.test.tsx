@@ -18,6 +18,12 @@ vi.mock("./api", () => ({
     activity: vi.fn().mockResolvedValue([]),
     scanRoots: vi.fn().mockResolvedValue([]),
     excludedWorkspaces: vi.fn().mockResolvedValue([]),
+    obsidianIntegration: vi.fn().mockResolvedValue({ installation: { installed: false, cli_available: false }, vaults: [], workspace_links: [] }),
+    addObsidianVault: vi.fn(),
+    linkWorkspaceToObsidian: vi.fn(),
+    unlinkWorkspaceFromObsidian: vi.fn(),
+    openObsidian: vi.fn(),
+    openWorkspaceInObsidian: vi.fn(),
     runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US" }),
     setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale })),
     discoverWorkspaces: vi.fn().mockResolvedValue({ started_at: new Date().toISOString(), finished_at: new Date().toISOString(), discovered_count: 0, removed_count: 0, errors: [] }),
@@ -141,5 +147,14 @@ describe("AgentKib desktop", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Language" }), { target: { value: "zh-CN" } });
     await waitFor(() => expect(screen.getByRole("heading", { name: "设置" })).toBeInTheDocument());
     expect(document.documentElement.lang).toBe("zh-CN");
+  });
+
+  it("shows Obsidian as a neutral local integration in Settings", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { name: "Obsidian" })).toBeInTheDocument();
+    expect(screen.getByText("Not installed")).toBeInTheDocument();
+    expect(screen.getByText("CLI not enabled (optional)")).toBeInTheDocument();
   });
 });

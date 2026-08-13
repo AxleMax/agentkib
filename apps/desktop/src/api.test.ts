@@ -21,4 +21,16 @@ describe("AgentKib API boundary", () => {
     await expect(api.manifest("/tmp/workspace")).resolves.toMatchObject({ connections: [] });
     expect(invoke).toHaveBeenCalledWith("prepare_manifest", { project: "/tmp/workspace" });
   });
+
+  it("keeps Obsidian linking explicit at the IPC boundary", async () => {
+    vi.mocked(invoke).mockResolvedValue({ workspace_id: "workspace", vault_path: "/Notes", target_path: "/Notes/Projects" });
+
+    await api.linkWorkspaceToObsidian("workspace", "/Notes", "Projects");
+
+    expect(invoke).toHaveBeenCalledWith("link_workspace_to_obsidian", {
+      workspaceId: "workspace",
+      vaultPath: "/Notes",
+      relativeTarget: "Projects",
+    });
+  });
 });

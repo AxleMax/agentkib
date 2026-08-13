@@ -1,4 +1,7 @@
 {
+  "common.loading": "加载中…",
+  "errors.workspaceNotFound": "工作区不存在",
+  "obsidian.title": "Obsidian", "obsidian.description": "检测本机 App 和 Vault 注册信息。AgentKib 只关联路径，不读取笔记正文。", "obsidian.installed": "已安装", "obsidian.notInstalled": "未安装", "obsidian.version": "版本 {{version}}", "obsidian.cliAvailable": "CLI 可用", "obsidian.cliUnavailable": "CLI 未启用（可选）", "obsidian.open": "在 Obsidian 中打开", "obsidian.addVault": "添加 Vault", "obsidian.addVaultDialog": "选择 Obsidian Vault", "obsidian.vaults": "Vault", "obsidian.noVaults": "未检测到 Vault。如果 Obsidian 使用非标准位置，可手动添加。", "obsidian.source.discovered": "自动检测", "obsidian.source.manual": "手动添加", "obsidian.workspaceTitle": "Obsidian 联动", "obsidian.workspaceDescription": "将此工作区关联到现有 Vault 目录或笔记，不复制内容。", "obsidian.chooseVault": "Vault", "obsidian.relativeTarget": "Vault 内相对路径", "obsidian.relativeTargetHint": "可选，例如 Projects/AgentKib", "obsidian.link": "关联", "obsidian.unlink": "解除关联", "obsidian.linked": "已关联 Obsidian", "obsidian.addVaultFirst": "请先在设置中添加 Obsidian Vault，再关联此工作区。", "obsidian.notInstalledWorkspace": "尚未安装 Obsidian，安装后可关联此工作区。",
   "mcp.port": "端口",
   "mcp.authorize": "授权",
   "mcp.update": "更新",

@@ -42,6 +42,7 @@ The core workflow is deliberately reviewable:
 ### Features
 
 - **Global workspace discovery** — aggregates existing workspaces from all supported agents and from scan roots you explicitly authorize. It does not crawl your whole disk.
+- **Obsidian workspace links** — detects the local Obsidian app and known Vaults, then opens an explicitly linked Vault path from a workspace. It does not read note contents or modify Vault files.
 - **Cross-workspace asset catalog** — searches project and Agent Home metadata for instructions, Skills, MCP, hooks, profiles, configurations, and memory ownership.
 - **Git-native shared assets** — `.agentkib/manifest.yaml` is the versionable source of truth for shared instructions, scoped rules, Skills, connections, memory policy, and adapter state.
 - **Effective context preview** — shows load order, source files, directory inheritance, platform overrides, visible Skills/connections/memories, and warnings without pretending to expose a model's hidden system prompt.
@@ -92,6 +93,7 @@ AgentKib is designed to keep governance local and metadata-minimal:
 
 - No account, cloud service, subscription, model API, or remote database is required.
 - Automatic discovery stores workspace paths, agent/evidence type, aggregate session counts, and timestamps—not session IDs, titles, prompts, or message bodies.
+- Obsidian integration reads only the app location and Vault registry paths. Workspace links stay in AgentKib's local data directory; Vault contents are not indexed.
 - Agent Home inventory excludes credentials, `.env` files, tokens, private keys, message databases, and telemetry directories.
 - Git insights do not store commit subjects, diffs, file contents, or plaintext email addresses. Author identities are matched using local hashes.
 - Memory is shared only after approval. MCP cannot approve memory, force configuration writes, disable permissions, or read secrets.
@@ -130,6 +132,7 @@ AgentKib 是一个本地优先、Git 原生的 Agent 资产控制台。**KIB** �
 ### 核心能力
 
 - **全局工作区发现**：聚合四类 Agent 已使用的工作区，并补充用户明确授权的扫描目录；不会扫描整块磁盘。
+- **Obsidian 工作区联动**：检测本机 Obsidian 和已知 Vault，将工作区显式关联到 Vault 路径并一键打开；不读取笔记正文，也不修改 Vault 文件。
 - **跨工作区资产目录**：检索项目和 Agent Home 中的指令、Skills、MCP、Hooks、Profiles、配置及记忆归属元数据。
 - **Git 原生公共资产**：`.agentkib/manifest.yaml` 是可进入版本控制的真相源，统一描述共享指令、目录规则、Skills、连接、记忆策略和适配器状态。
 - **有效上下文预览**：展示加载顺序、来源文件、目录继承、平台覆盖、可见 Skills/连接/记忆及警告，不伪造模型内部系统提示词。
@@ -160,6 +163,7 @@ AgentKib 坚持本地治理和最小化元数据：
 
 - 不需要账号、云服务、订阅、模型 API 或远程数据库。
 - 自动发现只保存工作区路径、Agent/证据类型、聚合会话数量和时间，不保存会话 ID、标题、Prompt 或消息正文。
+- Obsidian 联动只读取 App 位置和 Vault 注册路径；工作区关联保存在 AgentKib 本地数据目录，不索引 Vault 内容。
 - Agent Home 盘点明确排除凭据、`.env`、Token、私钥、消息数据库和遥测目录。
 - Git 统计不保存提交说明、Diff、文件内容或明文邮箱；作者身份通过本地哈希匹配。
 - 记忆只有在批准后才会共享；MCP 不能直接批准记忆、强制写配置、关闭权限或读取密钥。
