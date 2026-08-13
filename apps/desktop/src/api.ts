@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -54,6 +54,10 @@ export const api = {
   unlinkWorkspaceFromObsidian: (workspaceId: string) => invoke<void>("unlink_workspace_from_obsidian", { workspaceId }),
   openObsidian: () => invoke<void>("open_obsidian"),
   openWorkspaceInObsidian: (workspaceId: string) => invoke<void>("open_workspace_in_obsidian", { workspaceId }),
+  remoteGateways: () => invoke<RemoteGatewaySummary[]>("list_remote_gateways"),
+  saveRemoteGateway: (input: RemoteGatewayInput) => invoke<RemoteGatewaySummary>("save_remote_gateway", { input }),
+  refreshRemoteGateway: (id: string) => invoke<RemoteGatewaySummary>("refresh_remote_gateway", { id }),
+  removeRemoteGateway: (id: string) => invoke<void>("remove_remote_gateway", { id }),
   scanRoots: () => invoke<ScanRoot[]>("list_scan_roots"),
   addScanRoot: (path: string, maxDepth = 5) => invoke<ScanRoot>("add_scan_root", { path, maxDepth }),
   removeScanRoot: (id: string) => invoke<void>("remove_scan_root", { id }),

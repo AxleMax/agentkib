@@ -47,6 +47,13 @@ export interface ObsidianInstallation { installed: boolean; app_path?: string; v
 export interface ObsidianVault { path: string; name: string; source: "discovered" | "manual"; last_opened_at?: number }
 export interface ObsidianWorkspaceLink { workspace_id: string; vault_path: string; target_path: string }
 export interface ObsidianIntegration { installation: ObsidianInstallation; vaults: ObsidianVault[]; workspace_links: ObsidianWorkspaceLink[] }
+export type RemoteGatewayKind = "open-claw" | "hermes";
+export type RemoteGatewayAuthKind = "none" | "token" | "password" | "session-token" | "basic";
+export type RemoteGatewayState = "pending" | "connected" | "pairing-required" | "error";
+export interface RemoteGatewayInput { id?: string; kind: RemoteGatewayKind; name: string; url: string; auth_kind: RemoteGatewayAuthKind; username?: string; secret?: string }
+export interface RemoteGatewayWorkspace { id: string; agent_id?: string; name: string; path?: string; session_count: number; last_active_at?: string }
+export interface RemoteGatewayAsset { id: string; agent_id?: string; kind: string; name: string; path: string; size: number }
+export interface RemoteGatewaySummary { id: string; kind: RemoteGatewayKind; name: string; url: string; auth_kind: RemoteGatewayAuthKind; username?: string; has_credentials: boolean; state: RemoteGatewayState; version?: string; capabilities: string[]; session_count: number; workspaces: RemoteGatewayWorkspace[]; assets: RemoteGatewayAsset[]; pairing_request_id?: string; last_connected_at?: string; last_error?: string }
 export interface ActivityRecord { id: string; project_id?: string; action: string; detail: string; created_at: string }
 export type UsageQuality = "exact" | "estimated" | "incomplete";
 export interface InsightsQuery { from?: string; to?: string; agent?: AgentKind; workspace_id?: string; repository_group_id?: string }

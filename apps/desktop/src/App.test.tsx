@@ -28,6 +28,10 @@ vi.mock("./api", () => ({
     unlinkWorkspaceFromObsidian: vi.fn(),
     openObsidian: vi.fn(),
     openWorkspaceInObsidian: vi.fn(),
+    remoteGateways: vi.fn().mockResolvedValue([]),
+    saveRemoteGateway: vi.fn(),
+    refreshRemoteGateway: vi.fn(),
+    removeRemoteGateway: vi.fn(),
     runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark" }),
     setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale, theme_preference: "system", effective_theme: "dark" })),
     setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark" })),
@@ -204,6 +208,7 @@ describe("AgentKib desktop", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
+    expect(await screen.findByRole("heading", { name: "Remote Gateways" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Obsidian" })).toBeInTheDocument();
     expect(screen.getByText("Not installed")).toBeInTheDocument();
     expect(screen.getByText("CLI not enabled (optional)")).toBeInTheDocument();

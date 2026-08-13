@@ -41,4 +41,14 @@ describe("AgentKib API boundary", () => {
 
     expect(invoke).toHaveBeenCalledWith("set_theme_preference", { preference: "light" });
   });
+
+  it("keeps remote gateway credentials inside the native IPC boundary", async () => {
+    vi.mocked(invoke).mockResolvedValue({ id: "gateway", state: "connected" });
+
+    await api.saveRemoteGateway({ kind: "open-claw", name: "Server", url: "wss://gateway.test", auth_kind: "token", secret: "local-only" });
+
+    expect(invoke).toHaveBeenCalledWith("save_remote_gateway", {
+      input: { kind: "open-claw", name: "Server", url: "wss://gateway.test", auth_kind: "token", secret: "local-only" },
+    });
+  });
 });

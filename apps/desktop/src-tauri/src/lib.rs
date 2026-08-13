@@ -17,6 +17,7 @@ use agentkib_core::{
     validate_workspace as validate_core_workspace,
 };
 use agentkib_discovery::discover as discover_local_workspaces;
+use agentkib_gateways::{RemoteGatewayInput, RemoteGatewaySummary};
 use agentkib_insights::{
     Achievement, AgentUsageBreakdown, GitIdentitySummary, HeatmapPoint, InsightsQuery,
     InsightsStatus, InsightsSummary, ModelUsageBreakdown, RepositoryCommitBreakdown,
@@ -360,6 +361,43 @@ fn remove_scan_root(id: String) -> CommandResult<()> {
 fn list_agent_installations() -> CommandResult<Vec<AgentInstallation>> {
     Store::open_default()
         .and_then(|store| store.list_agent_installations())
+        .map_err(format_error)
+}
+
+fn remote_gateway_registry_path() -> anyhow::Result<PathBuf> {
+    Ok(agentkib_gateways::default_registry_path(
+        &default_data_dir()?
+    ))
+}
+
+#[tauri::command]
+fn list_remote_gateways() -> CommandResult<Vec<RemoteGatewaySummary>> {
+    remote_gateway_registry_path()
+        .and_then(|path| agentkib_gateways::list(&path))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn save_remote_gateway(input: RemoteGatewayInput) -> CommandResult<RemoteGatewaySummary> {
+    let path = remote_gateway_registry_path().map_err(format_error)?;
+    agentkib_gateways::save(&path, input)
+        .await
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn refresh_remote_gateway(id: String) -> CommandResult<RemoteGatewaySummary> {
+    let path = remote_gateway_registry_path().map_err(format_error)?;
+    agentkib_gateways::refresh(&path, &id)
+        .await
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn remove_remote_gateway(id: String) -> CommandResult<()> {
+    let path = remote_gateway_registry_path().map_err(format_error)?;
+    agentkib_gateways::remove(&path, &id)
+        .await
         .map_err(format_error)
 }
 
@@ -1462,6 +1500,12 @@ fn start_discovery_scheduler(app: AppHandle) {
             let _ = perform_discovery(&app, state.inner());
             let insights = app.state::<Arc<InsightsRuntime>>();
             let _ = perform_insights(&app, insights.inner());
+            if let Ok(path) = remote_gateway_registry_path()
+                && let Ok(gateways) =
+                    tauri::async_runtime::block_on(agentkib_gateways::refresh_all(&path))
+            {
+                let _ = app.emit("agentkib:remote-gateways-updated", gateways);
+            }
             std::thread::sleep(std::time::Duration::from_secs(15 * 60));
         }
     });
@@ -1528,6 +1572,10 @@ pub fn run() {
             add_scan_root,
             remove_scan_root,
             list_agent_installations,
+            list_remote_gateways,
+            save_remote_gateway,
+            refresh_remote_gateway,
+            remove_remote_gateway,
             search_catalog_assets,
             list_global_memories,
             list_activity,

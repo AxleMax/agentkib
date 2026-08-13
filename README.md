@@ -42,6 +42,7 @@ The core workflow is deliberately reviewable:
 ### Features
 
 - **Global workspace discovery** — aggregates existing workspaces from all supported agents and from scan roots you explicitly authorize. It does not crawl your whole disk.
+- **Read-only remote gateways** — connects to OpenClaw Gateway Protocol v4 and Hermes `hermes serve` to inventory the remote metadata each backend exposes. OpenClaw device pairing remains explicit.
 - **Obsidian workspace links** — detects the local Obsidian app and known Vaults, then opens an explicitly linked Vault path from a workspace. It does not read note contents or modify Vault files.
 - **Cross-workspace asset catalog** — searches project and Agent Home metadata for instructions, Skills, MCP, hooks, profiles, configurations, and memory ownership.
 - **Git-native shared assets** — `.agentkib/manifest.yaml` is the versionable source of truth for shared instructions, scoped rules, Skills, connections, memory policy, and adapter state.
@@ -58,8 +59,8 @@ The core workflow is deliberately reviewable:
 | --- | --- | --- | --- |
 | Codex | `AGENTS.md`, `AGENTS.override.md` | `.agents/skills` | `.codex/config.toml` |
 | Claude Code | thin `CLAUDE.md` importing `@AGENTS.md` | `.claude/skills` | `.mcp.json` |
-| OpenClaw | `AGENTS.md`, optional `TOOLS.md` override | `.agents/skills` | authorized merge into OpenClaw Home config |
-| Hermes | `AGENTS.md`, optional `.hermes.md` override | `.agents/skills` | authorized merge into Hermes Home config |
+| OpenClaw | `AGENTS.md`, optional `TOOLS.md` override | `.agents/skills` | local adapter + read-only remote Gateway |
+| Hermes | `AGENTS.md`, optional `.hermes.md` override | `.agents/skills` | local adapter + read-only remote `hermes serve` |
 
 Existing native agents/profiles, hooks, and private-memory assets are cataloged read-only; AgentKib does not redistribute them across platforms in this preview.
 
@@ -93,6 +94,7 @@ AgentKib is designed to keep governance local and metadata-minimal:
 
 - No account, cloud service, subscription, model API, or remote database is required.
 - Automatic discovery stores workspace paths, agent/evidence type, aggregate session counts, and timestamps—not session IDs, titles, prompts, or message bodies.
+- Remote gateway credentials and device keys stay in a private `0600` local overlay. Public summaries, SQLite, diffs, and logs do not include them, and gateway scans never request transcript or message endpoints.
 - Obsidian integration reads only the app location and Vault registry paths. Workspace links stay in AgentKib's local data directory; Vault contents are not indexed.
 - Agent Home inventory excludes credentials, `.env` files, tokens, private keys, message databases, and telemetry directories.
 - Git insights do not store commit subjects, diffs, file contents, or plaintext email addresses. Author identities are matched using local hashes.
@@ -132,6 +134,7 @@ AgentKib 是一个本地优先、Git 原生的 Agent 资产控制台。**KIB** �
 ### 核心能力
 
 - **全局工作区发现**：聚合五类 Agent 已使用的工作区，并补充用户明确授权的扫描目录；不会扫描整块磁盘。
+- **远程网关只读纳管**：连接 OpenClaw Gateway Protocol v4 和 Hermes `hermes serve`，盘点远端实际暴露的元数据；OpenClaw 设备配对仍需明确确认。
 - **Obsidian 工作区联动**：检测本机 Obsidian 和已知 Vault，将工作区显式关联到 Vault 路径并一键打开；不读取笔记正文，也不修改 Vault 文件。
 - **跨工作区资产目录**：检索项目和 Agent Home 中的指令、Skills、MCP、Hooks、Profiles、配置及记忆归属元数据。
 - **Git 原生公共资产**：`.agentkib/manifest.yaml` 是可进入版本控制的真相源，统一描述共享指令、目录规则、Skills、连接、记忆策略和适配器状态。
@@ -148,8 +151,8 @@ AgentKib 是一个本地优先、Git 原生的 Agent 资产控制台。**KIB** �
 | --- | --- | --- | --- |
 | Codex | `AGENTS.md`、`AGENTS.override.md` | `.agents/skills` | `.codex/config.toml` |
 | Claude Code | 导入 `@AGENTS.md` 的薄 `CLAUDE.md` | `.claude/skills` | `.mcp.json` |
-| OpenClaw | `AGENTS.md`、可选 `TOOLS.md` 平台覆盖 | `.agents/skills` | 经授权合并 OpenClaw Home 配置 |
-| Hermes | `AGENTS.md`、可选 `.hermes.md` 平台覆盖 | `.agents/skills` | 经授权合并 Hermes Home 配置 |
+| OpenClaw | `AGENTS.md`、可选 `TOOLS.md` 平台覆盖 | `.agents/skills` | 本地适配器 + 远程 Gateway 只读连接 |
+| Hermes | `AGENTS.md`、可选 `.hermes.md` 平台覆盖 | `.agents/skills` | 本地适配器 + 远程 `hermes serve` 只读连接 |
 
 现有原生 Agents/Profiles、Hooks 和私有 Memory 资产只做只读盘点；当前预览版不会将它们跨平台分发。
 
@@ -163,6 +166,7 @@ AgentKib 坚持本地治理和最小化元数据：
 
 - 不需要账号、云服务、订阅、模型 API 或远程数据库。
 - 自动发现只保存工作区路径、Agent/证据类型、聚合会话数量和时间，不保存会话 ID、标题、Prompt 或消息正文。
+- 远程网关凭据和设备私钥只保存在权限为 `0600` 的本地覆盖文件中，不进入公开状态、SQLite、Diff 或日志；网关扫描也不会请求对话或消息接口。
 - Obsidian 联动只读取 App 位置和 Vault 注册路径；工作区关联保存在 AgentKib 本地数据目录，不索引 Vault 内容。
 - Agent Home 盘点明确排除凭据、`.env`、Token、私钥、消息数据库和遥测目录。
 - Git 统计不保存提交说明、Diff、文件内容或明文邮箱；作者身份通过本地哈希匹配。
