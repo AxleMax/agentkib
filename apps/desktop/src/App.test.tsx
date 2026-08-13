@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { api } from "./api";
 import { diffLines } from "./diff";
 import { initializeI18n } from "./i18n";
 
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
+const tauriListeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockImplementation((event: string, handler: (event: { payload: unknown }) => void) => {
+  tauriListeners.set(event, handler);
+  return Promise.resolve(() => tauriListeners.delete(event));
+}) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("./api", () => ({
   api: {
@@ -24,8 +28,9 @@ vi.mock("./api", () => ({
     unlinkWorkspaceFromObsidian: vi.fn(),
     openObsidian: vi.fn(),
     openWorkspaceInObsidian: vi.fn(),
-    runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US" }),
-    setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale })),
+    runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark" }),
+    setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale, theme_preference: "system", effective_theme: "dark" })),
+    setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark" })),
     discoverWorkspaces: vi.fn().mockResolvedValue({ started_at: new Date().toISOString(), finished_at: new Date().toISOString(), discovered_count: 0, removed_count: 0, errors: [] }),
     insightsSummary: vi.fn().mockResolvedValue({ total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" }),
     insightsHeatmap: vi.fn().mockResolvedValue([{ date: "2026-08-13", tokens: 120000, my_commits: 8, all_commits: 20, attributed_commits: 3, sessions: 12, quality: "exact" }]),
@@ -44,6 +49,7 @@ vi.mock("./api", () => ({
 const storage = new Map<string, string>();
 beforeEach(async () => {
   storage.clear();
+  tauriListeners.clear();
   Object.defineProperty(window, "localStorage", { configurable: true, value: {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value),
@@ -53,6 +59,8 @@ beforeEach(async () => {
     get length() { return storage.size; },
   } });
   await initializeI18n("en-US");
+  document.documentElement.dataset.theme = "dark";
+  document.documentElement.style.colorScheme = "dark";
 });
 afterEach(() => {
   cleanup();
@@ -168,6 +176,27 @@ describe("AgentKib desktop", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Language" }), { target: { value: "zh-CN" } });
     await waitFor(() => expect(screen.getByRole("heading", { name: "常规" })).toBeInTheDocument());
     expect(document.documentElement.lang).toBe("zh-CN");
+  });
+
+  it("switches appearance immediately without leaving Settings", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Light" }));
+
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
+    expect(document.documentElement.style.colorScheme).toBe("light");
+    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    expect(api.setThemePreference).toHaveBeenCalledWith("light");
+  });
+
+  it("tracks macOS appearance changes only while following the system", async () => {
+    render(<App />);
+    await waitFor(() => expect(tauriListeners.has("tauri://theme-changed")).toBe(true));
+
+    act(() => tauriListeners.get("tauri://theme-changed")?.({ payload: "light" }));
+
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
   });
 
   it("shows Obsidian as a neutral local integration in Settings", async () => {

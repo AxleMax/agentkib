@@ -257,3 +257,221 @@ main { grid-column: 2; grid-row: 2; min-height: 0; }
   .summary-strip, .workspace-summary-bar, .agent-facts { grid-template-columns: 1fr 1fr; }
   .page-header, main > header.page-header, .workspace-tabs, .workspace-meta, .content { padding-right: 18px; padding-left: 18px; }
 }
+
+/* Appearance is driven by the desktop preference; semantic tokens keep both themes aligned. */
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] {
+  color-scheme: light;
+  color: #20232b;
+  background: #f5f5f7;
+  --bg: #f5f5f7;
+  --sidebar: #ececf0;
+  --panel: #ffffff;
+  --panel-2: #f6f6f8;
+  --surface-hover: #eeeef2;
+  --border: #dcdde3;
+  --border-strong: #c7c9d1;
+  --muted: #6f7582;
+  --text: #20232b;
+  --purple: #6f5bd6;
+  --purple-2: #5c48c4;
+  --green: #16845d;
+  --amber: #9a6514;
+  --red: #bd4453;
+  --blue: #287fc2;
+}
+
+.theme-segments { display: inline-flex; flex-shrink: 0; padding: 3px; gap: 2px; background: #0c1017; border: 1px solid #272f3d; border-radius: 8px; }
+.theme-segments button { min-width: 66px; height: 29px; padding: 0 10px; color: #7f899d; background: transparent; border-radius: 6px; font-size: 11px; }
+.theme-segments button:hover { color: #cbd1db; background: #171c25; }
+.theme-segments button.active { color: #eeeaff; background: #373052; box-shadow: inset 0 0 0 1px rgba(145,131,235,.28); }
+.theme-segments button:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+
+:root[data-theme="light"] body { background: var(--bg); }
+:root[data-theme="light"] .window-toolbar { background: #f5f5f7; border-color: #d8d9df; }
+:root[data-theme="light"] .window-toolbar::before,
+:root[data-theme="light"] .sidebar,
+:root[data-theme="light"] .workspace-meta { background: #ececf0; border-color: #d8d9df; }
+:root[data-theme="light"] .page-header,
+:root[data-theme="light"] main > header.page-header,
+:root[data-theme="light"] .workspace-tabs,
+:root[data-theme="light"] .section-tabs { background: rgba(250,250,251,.94); border-color: var(--border); }
+:root[data-theme="light"] .panel,
+:root[data-theme="light"] .attention-panel,
+:root[data-theme="light"] .summary-strip button,
+:root[data-theme="light"] .home-achievement,
+:root[data-theme="light"] .mcp-hero,
+:root[data-theme="light"] .memory-list article,
+:root[data-theme="light"] .achievement-card,
+:root[data-theme="light"] .welcome-card { background: var(--panel); border-color: var(--border); box-shadow: none; }
+:root[data-theme="light"] .metric { background: var(--panel); }
+:root[data-theme="light"] .repository-groups > section > header,
+:root[data-theme="light"] .managed-item,
+:root[data-theme="light"] .apply-bar { background: var(--panel-2); border-color: var(--border); }
+:root[data-theme="light"] .project-switcher { color: var(--text); background: var(--panel); border-color: var(--border); }
+:root[data-theme="light"] .repository-groups > section { border-color: var(--border); }
+:root[data-theme="light"] .workspace-row:hover,
+:root[data-theme="light"] .catalog-row:not(.table-head):not(:disabled):hover,
+:root[data-theme="light"] .agent-master-list > button:hover,
+:root[data-theme="light"] nav button:hover,
+:root[data-theme="light"] .sidebar-settings:hover,
+:root[data-theme="light"] .back-to-app:hover,
+:root[data-theme="light"] .icon-button:hover,
+:root[data-theme="light"] .window-sidebar-toggle:hover,
+:root[data-theme="light"] .row-menu summary:hover { background: var(--surface-hover); color: var(--text); }
+:root[data-theme="light"] nav button.active,
+:root[data-theme="light"] .agent-master-list > button.active,
+:root[data-theme="light"] .catalog-row.selected { color: #5543b6; background: rgba(111,91,214,.10); }
+:root[data-theme="light"] nav button,
+:root[data-theme="light"] .sidebar-settings,
+:root[data-theme="light"] .window-sidebar-toggle,
+:root[data-theme="light"] .icon-button,
+:root[data-theme="light"] .back-to-app,
+:root[data-theme="light"] .workspace-tabs button,
+:root[data-theme="light"] .section-tabs button,
+:root[data-theme="light"] .workspace-meta,
+:root[data-theme="light"] .agent-master-list > button,
+:root[data-theme="light"] .catalog-row,
+:root[data-theme="light"] .workspace-row { color: #646b79; }
+:root[data-theme="light"] .workspace-tabs button:hover,
+:root[data-theme="light"] .section-tabs button:hover,
+:root[data-theme="light"] .workspace-meta button:hover { color: #333741; }
+:root[data-theme="light"] .workspace-tabs button.active,
+:root[data-theme="light"] .section-tabs button.active { color: #5543b6; }
+:root[data-theme="light"] .brand > strong,
+:root[data-theme="light"] h1,
+:root[data-theme="light"] h2,
+:root[data-theme="light"] h3,
+:root[data-theme="light"] .panel-head h2,
+:root[data-theme="light"] .workspace-row strong,
+:root[data-theme="light"] .asset-name strong,
+:root[data-theme="light"] .agent-master-list strong,
+:root[data-theme="light"] .agent-facts strong,
+:root[data-theme="light"] .attention-items strong,
+:root[data-theme="light"] .attention-clear strong,
+:root[data-theme="light"] .summary-strip strong,
+:root[data-theme="light"] .setting-row strong,
+:root[data-theme="light"] .activity-row strong,
+:root[data-theme="light"] .mcp-list strong,
+:root[data-theme="light"] .managed-item,
+:root[data-theme="light"] .file-list button strong,
+:root[data-theme="light"] .memory-list article > p,
+:root[data-theme="light"] .asset-inspector dd { color: #282c34; }
+:root[data-theme="light"] .asset-builders h3,
+:root[data-theme="light"] .detail-section h3,
+:root[data-theme="light"] .empty h3,
+:root[data-theme="light"] .shared-layer-note strong,
+:root[data-theme="light"] .mcp-list strong,
+:root[data-theme="light"] .file-list button strong { color: #4c525e; }
+:root[data-theme="light"] .panel p,
+:root[data-theme="light"] .metric > span,
+:root[data-theme="light"] .metric small,
+:root[data-theme="light"] .workspace-row small,
+:root[data-theme="light"] .workspace-row div > span,
+:root[data-theme="light"] .catalog-row .asset-name small,
+:root[data-theme="light"] .activity-row small,
+:root[data-theme="light"] .activity-row time,
+:root[data-theme="light"] .achievement-metric > span,
+:root[data-theme="light"] .achievement-metric > small,
+:root[data-theme="light"] .agent-usage-list small,
+:root[data-theme="light"] .repository-usage-list small,
+:root[data-theme="light"] .provider-grid small,
+:root[data-theme="light"] .setting-row code,
+:root[data-theme="light"] .setting-row small,
+:root[data-theme="light"] .setting-detail,
+:root[data-theme="light"] .agent-facts span,
+:root[data-theme="light"] .agent-master-list small,
+:root[data-theme="light"] .asset-inspector dt,
+:root[data-theme="light"] .asset-inspector code { color: #737986; }
+:root[data-theme="light"] .instruction-editor,
+:root[data-theme="light"] .config-panel label,
+:root[data-theme="light"] .compose label,
+:root[data-theme="light"] .config-panel h3,
+:root[data-theme="light"] .file-list > button,
+:root[data-theme="light"] .file-list button div span,
+:root[data-theme="light"] .compose small,
+:root[data-theme="light"] .memory-list time,
+:root[data-theme="light"] .memory-list article > small,
+:root[data-theme="light"] .empty,
+:root[data-theme="light"] .empty p,
+:root[data-theme="light"] .privacy-note,
+:root[data-theme="light"] .mcp-hub-address small,
+:root[data-theme="light"] .mcp-editor-grid label,
+:root[data-theme="light"] .mcp-editor-grid small,
+:root[data-theme="light"] .obsidian-status small,
+:root[data-theme="light"] .obsidian-vault-row small,
+:root[data-theme="light"] .obsidian-linked-row small { color: #747a86; }
+:root[data-theme="light"] .panel-head,
+:root[data-theme="light"] .toolbar,
+:root[data-theme="light"] .table-row,
+:root[data-theme="light"] .catalog-row,
+:root[data-theme="light"] .workspace-card,
+:root[data-theme="light"] .activity-row,
+:root[data-theme="light"] .setting-row,
+:root[data-theme="light"] .setting-detail,
+:root[data-theme="light"] .agent-readiness-list > div,
+:root[data-theme="light"] .agent-workspace-list > div,
+:root[data-theme="light"] .agent-detail-head,
+:root[data-theme="light"] .agent-facts,
+:root[data-theme="light"] .agent-home-path,
+:root[data-theme="light"] .asset-inspector dl > div,
+:root[data-theme="light"] .provider-grid > div,
+:root[data-theme="light"] .agent-usage-list > div,
+:root[data-theme="light"] .repository-usage-list > div,
+:root[data-theme="light"] .mcp-list article,
+:root[data-theme="light"] .obsidian-vault-row,
+:root[data-theme="light"] .obsidian-linked-row { border-color: var(--border); }
+:root[data-theme="light"] .search,
+:root[data-theme="light"] .setting-select,
+:root[data-theme="light"] .insights-filters select,
+:root[data-theme="light"] .inline-form input,
+:root[data-theme="light"] .inline-form select,
+:root[data-theme="light"] .config-panel select,
+:root[data-theme="light"] .config-panel input,
+:root[data-theme="light"] .compose select,
+:root[data-theme="light"] .compose textarea,
+:root[data-theme="light"] .memory-edit,
+:root[data-theme="light"] .memory-search input,
+:root[data-theme="light"] .git-identity-form input,
+:root[data-theme="light"] .mcp-network input.mcp-port,
+:root[data-theme="light"] .mcp-search input,
+:root[data-theme="light"] .instruction-editor textarea,
+:root[data-theme="light"] .mcp-editor-grid textarea { color: #252932; background: #fff; border-color: #cfd1d8; }
+:root[data-theme="light"] .search input { color: #252932; }
+:root[data-theme="light"] .ghost { color: #535a68; background: #f4f4f6; border-color: #cfd1d8; }
+:root[data-theme="light"] .ghost:hover { color: #20232b; border-color: #aeb2bd; }
+:root[data-theme="light"] .badge,
+:root[data-theme="light"] .tag,
+:root[data-theme="light"] .risk,
+:root[data-theme="light"] .status { color: #5f6673; background: #f0f0f3; border-color: #d7d8de; }
+:root[data-theme="light"] .timeline pre,
+:root[data-theme="light"] .timeline details pre,
+:root[data-theme="light"] .diff { color: #4b5260; background: #f6f6f8; border-color: #d9dae0; }
+:root[data-theme="light"] .memory-context { background: #f1effc; }
+:root[data-theme="light"] .memory-context p { border-color: #ddd8f5; }
+:root[data-theme="light"] .separator,
+:root[data-theme="light"] .timeline article::before { background: #d7d8de; }
+:root[data-theme="light"] .step { color: #5b48bf; background: #eeeafd; border-color: #c7bdf0; }
+:root[data-theme="light"] .pills span { color: #5b48b6; background: #eeeafd; }
+:root[data-theme="light"] nav em,
+:root[data-theme="light"] .workspace-tabs em,
+:root[data-theme="light"] .section-tabs em { color: #5543ac; background: #e8e3fa; }
+:root[data-theme="light"] .attention-heading em { color: #535966; background: #eeeef1; }
+:root[data-theme="light"] .agent-logo { background: #eff0f3; }
+:root[data-theme="light"] .agent-logo.codex { background: #e9eaed; }
+:root[data-theme="light"] .heatmap-cell { background: #e2e2e7; box-shadow: inset 0 0 0 1px rgba(75,70,90,.05); }
+:root[data-theme="light"] .heatmap-cell.level-1 { background: #ddd7f8; }
+:root[data-theme="light"] .heatmap-cell.level-2 { background: #b3a5ed; }
+:root[data-theme="light"] .heatmap-cell.level-3 { background: #806bdc; }
+:root[data-theme="light"] .heatmap-cell.level-4 { background: #5e48c9; box-shadow: 0 0 0 1px rgba(94,72,201,.16); }
+:root[data-theme="light"] .heatmap-tabs button.active { color: #5543b6; background: #ebe8fa; }
+:root[data-theme="light"] .achievement-card.unlocked { color: #5948b4; background: #f3f0ff; border-color: #c8bff1; }
+:root[data-theme="light"] .achievement-card > div { background: #efeff2; }
+:root[data-theme="light"] .achievement-card.unlocked > div { background: #e3def9; }
+:root[data-theme="light"] .achievement-card > strong { color: #656b77; }
+:root[data-theme="light"] .achievement-card.unlocked > strong { color: #43368c; }
+:root[data-theme="light"] .row-menu > div { background: #fff; box-shadow: 0 12px 30px rgba(30,34,45,.16); }
+:root[data-theme="light"] .theme-segments { background: #e8e8ec; border-color: #d0d1d7; }
+:root[data-theme="light"] .theme-segments button { color: #666c78; }
+:root[data-theme="light"] .theme-segments button:hover { color: #282c34; background: rgba(255,255,255,.55); }
+:root[data-theme="light"] .theme-segments button.active { color: #2b2550; background: #fff; box-shadow: 0 1px 3px rgba(32,35,43,.14), inset 0 0 0 1px rgba(71,61,126,.08); }

@@ -12,7 +12,8 @@ import { WindowToolbar } from "./components/WindowToolbar";
 import { ObsidianSettingsCard, WorkspaceObsidianCard } from "./components/ObsidianIntegration";
 import { diffLines } from "./diff";
 import { changeLocale, formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "./i18n";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, ModelUsageBreakdown, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, UsageQuality, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import { applyTheme } from "./theme";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, ModelUsageBreakdown, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, UsageQuality, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 type Page = "overview" | "assets" | "context" | "changes";
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "insights";
@@ -77,11 +78,18 @@ export function App() {
   };
 
   useEffect(() => {
-    let disposed = false; let unlisten: (() => void) | undefined; let unlistenInsights: (() => void) | undefined;
+    let disposed = false; let unlisten: (() => void) | undefined; let unlistenInsights: (() => void) | undefined; let unlistenTheme: (() => void) | undefined;
     void (async () => {
       try {
         unlisten = await listen<DiscoveryReport>("agentkib:discovery-updated", (event) => { setDiscovery(event.payload); void loadGlobal(); });
         unlistenInsights = await listen<InsightsSummary>("agentkib:insights-updated", (event) => { setInsightsSummary(event.payload); });
+        unlistenTheme = await listen<EffectiveTheme>("tauri://theme-changed", (event) => {
+          setRuntime((current) => {
+            if (!current || current.theme_preference !== "system") return current;
+            applyTheme(event.payload);
+            return { ...current, effective_theme: event.payload };
+          });
+        });
         const legacy = localStorage.getItem("agentkib.project");
         if (legacy) {
           await api.addWorkspace(legacy);
@@ -97,11 +105,11 @@ export function App() {
         }
       } catch (error) { if (!disposed) setMessage(localizeMessage(error)); }
     })();
-    return () => { disposed = true; unlisten?.(); unlistenInsights?.(); };
+    return () => { disposed = true; unlisten?.(); unlistenInsights?.(); unlistenTheme?.(); };
   }, []);
   useEffect(() => { localStorage.setItem("agentkib.sidebar.collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
   useEffect(() => {
-    const refreshRuntime = () => { void api.runtime().then(async (nextRuntime) => { setRuntime(nextRuntime); await changeLocale(nextRuntime.effective_locale); }).catch(() => undefined); };
+    const refreshRuntime = () => { void api.runtime().then(async (nextRuntime) => { setRuntime(nextRuntime); applyTheme(nextRuntime.effective_theme); await changeLocale(nextRuntime.effective_locale); }).catch(() => undefined); };
     window.addEventListener("focus", refreshRuntime);
     return () => window.removeEventListener("focus", refreshRuntime);
   }, []);
@@ -336,7 +344,7 @@ function McpMigrationInventory({ project, onPlanned }: { project?: string; onPla
 }
 
 function GlobalSettings({ section, runtime, discovery, insightsStatus, scanRoots, excluded, activity, onAddRoot, onRemoveRoot, onRestore, onCloseBehaviorChanged, onLocaleChanged }: { section: SettingsSection; runtime?: RuntimeInfo; discovery?: DiscoveryReport; insightsStatus?: InsightsStatus; scanRoots: ScanRoot[]; excluded: ExcludedWorkspace[]; activity: ActivityRecord[]; onAddRoot: () => Promise<void>; onRemoveRoot: (id: string) => Promise<void>; onRestore: (path: string) => Promise<void>; onCloseBehaviorChanged: (behavior?: CloseBehavior) => Promise<void>; onLocaleChanged: (runtime: RuntimeInfo) => void }) {
-  if (section === "general") return <div className="settings-groups"><SettingGroup title={tr("settings.interface")}><LanguageSetting runtime={runtime} onChanged={onLocaleChanged} /><div className="setting-row"><div><strong>{tr("settings.closeBehavior")}</strong></div><CloseBehaviorSelect value={runtime?.close_behavior} onChange={onCloseBehaviorChanged} /></div></SettingGroup></div>;
+  if (section === "general") return <div className="settings-groups"><SettingGroup title={tr("settings.interface")}><ThemeSetting runtime={runtime} onChanged={onLocaleChanged} /><LanguageSetting runtime={runtime} onChanged={onLocaleChanged} /><div className="setting-row"><div><strong>{tr("settings.closeBehavior")}</strong></div><CloseBehaviorSelect value={runtime?.close_behavior} onChange={onCloseBehaviorChanged} /></div></SettingGroup></div>;
   if (section === "discovery") return <div className="settings-groups"><SettingGroup title={tr("settings.discovery")}><div className="setting-row"><div><strong>{tr("settings.discoveryStatus")}</strong></div><span className={discovery?.errors.length ? "status rejected" : "ready"}>{discovery ? tr("settings.workspaceCount", { count: discovery.discovered_count }) : tr("home.discovering")}</span></div>{discovery?.errors.map((error) => <div className="setting-detail error" key={error}>{error}</div>)}</SettingGroup><div className="panel settings-section"><div className="panel-head"><h2>{tr("settings.scanRoots")}</h2><button className="primary" onClick={() => void onAddRoot()}>{tr("settings.addFolder")}</button></div><div className="settings-list">{scanRoots.map((root) => <div key={root.id}><FolderGit2 size={16} /><span><strong>{root.path}</strong><small>{tr("settings.maxDepth", { depth: root.max_depth })}</small></span><button className="icon-danger" onClick={() => void onRemoveRoot(root.id)}><Trash2 size={15} /></button></div>)}{!scanRoots.length && <p>{tr("settings.noScanRoots")}</p>}</div></div><div className="panel settings-section"><div className="panel-head"><h2>{tr("settings.excluded")}</h2></div><div className="settings-list">{excluded.map((item) => <div key={item.path}><X size={16} /><span><strong>{item.path}</strong><small>{formatDateTime(item.created_at)}</small></span><button className="ghost" onClick={() => void onRestore(item.path)}>{tr("common.restore")}</button></div>)}{!excluded.length && <p>{tr("settings.noExcluded")}</p>}</div></div></div>;
   if (section === "integrations") return <div className="settings-groups"><SettingGroup title="AgentKib MCP Hub"><div className="setting-row"><div><strong>{tr("mcp.network")}</strong><code>{runtime?.mcp_hub ? runtime.mcp_hub.accessible_addresses.join(" · ") : "—"}</code></div><span className={runtime?.mcp_hub?.running ? "ready" : "status neutral"}>{tr(runtime?.mcp_hub?.running ? "mcp.running" : "mcp.stopped")}</span></div></SettingGroup><ObsidianSettingsCard /></div>;
   if (section === "privacy") return <div className="settings-groups"><SettingGroup title={tr("settings.localData")}><div className="setting-row"><div><strong>{tr("settings.dataLocation")}</strong><code>{runtime?.data_dir ?? "—"}</code></div><span className="ready"><Check size={14} />{tr("common.localOnly")}</span></div></SettingGroup><GitIdentitySettings /></div>;
@@ -352,6 +360,15 @@ function LanguageSetting({ runtime, onChanged }: { runtime?: RuntimeInfo; onChan
     onChanged(nextRuntime);
   };
   return <div className="setting-row"><div><strong>{tr("settings.language")}</strong></div><select aria-label={tr("settings.language")} className="setting-select" value={runtime?.locale_preference ?? "system"} onChange={(event) => void update(event.target.value as LocalePreference)}>{(["system", "zh-CN", "zh-TW", "ja-JP", "en-US"] as LocalePreference[]).map((locale) => <option key={locale} value={locale}>{tr(`settings.language.${locale}`)}</option>)}</select></div>;
+}
+
+function ThemeSetting({ runtime, onChanged }: { runtime?: RuntimeInfo; onChanged: (runtime: RuntimeInfo) => void }) {
+  const update = async (preference: ThemePreference) => {
+    const nextRuntime = await api.setThemePreference(preference);
+    applyTheme(nextRuntime.effective_theme);
+    onChanged(nextRuntime);
+  };
+  return <div className="setting-row"><div><strong>{tr("settings.theme")}</strong></div><div className="theme-segments" role="group" aria-label={tr("settings.theme")}>{(["light", "dark", "system"] as ThemePreference[]).map((theme) => <button key={theme} type="button" className={(runtime?.theme_preference ?? "system") === theme ? "active" : ""} aria-pressed={(runtime?.theme_preference ?? "system") === theme} onClick={() => void update(theme)}>{tr(`settings.theme.${theme}`)}</button>)}</div></div>;
 }
 
 function CloseBehaviorSelect({ value, onChange }: { value?: CloseBehavior; onChange: (behavior?: CloseBehavior) => Promise<void> }) {

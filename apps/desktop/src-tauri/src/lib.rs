@@ -25,7 +25,7 @@ use agentkib_insights::{
 use agentkib_mcp::{HubController, config as mcp_config, installation_root};
 use agentkib_store::{Store, default_backup_dir, default_data_dir};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, Theme, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 
 mod i18n;
@@ -68,12 +68,40 @@ enum CloseBehavior {
     Quit,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ThemePreference {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    fn native(self) -> Option<Theme> {
+        match self {
+            Self::System => None,
+            Self::Light => Some(Theme::Light),
+            Self::Dark => Some(Theme::Dark),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum EffectiveTheme {
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct DesktopPreferences {
     #[serde(default)]
     close_behavior: Option<CloseBehavior>,
     #[serde(default)]
     locale_preference: LocalePreference,
+    #[serde(default)]
+    theme_preference: ThemePreference,
     #[serde(default)]
     mcp_network: McpNetworkSettings,
 }
@@ -83,6 +111,7 @@ struct LifecycleState {
     close_behavior: Mutex<Option<CloseBehavior>>,
     locale_preference: Mutex<LocalePreference>,
     effective_locale: Mutex<SupportedLocale>,
+    theme_preference: Mutex<ThemePreference>,
     close_prompt_open: AtomicBool,
     quitting: AtomicBool,
 }
@@ -105,6 +134,7 @@ impl LifecycleState {
             close_behavior: Mutex::new(preferences.close_behavior),
             locale_preference: Mutex::new(preferences.locale_preference),
             effective_locale: Mutex::new(effective_locale),
+            theme_preference: Mutex::new(preferences.theme_preference),
             close_prompt_open: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
         }
@@ -136,6 +166,14 @@ impl LifecycleState {
         *self.locale_preference.lock().expect("locale state lock") = preference;
         *self.effective_locale.lock().expect("locale state lock") = effective;
     }
+
+    fn theme_preference(&self) -> ThemePreference {
+        *self.theme_preference.lock().expect("theme state lock")
+    }
+
+    fn set_theme_preference(&self, preference: ThemePreference) {
+        *self.theme_preference.lock().expect("theme state lock") = preference;
+    }
 }
 
 #[derive(Serialize)]
@@ -150,6 +188,8 @@ struct RuntimeInfo {
     close_behavior: Option<CloseBehavior>,
     locale_preference: LocalePreference,
     effective_locale: SupportedLocale,
+    theme_preference: ThemePreference,
+    effective_theme: EffectiveTheme,
 }
 
 #[derive(Serialize)]
@@ -578,6 +618,7 @@ fn runtime_info(
     hub: tauri::State<'_, Arc<HubController>>,
 ) -> CommandResult<RuntimeInfo> {
     refresh_system_locale(&app, state.inner());
+    let theme_preference = state.theme_preference();
     let data_dir = default_data_dir().map_err(format_error)?;
     Ok(RuntimeInfo {
         database_path: data_dir.join("agentkib.db"),
@@ -590,6 +631,8 @@ fn runtime_info(
         close_behavior: state.close_behavior(),
         locale_preference: state.locale_preference(),
         effective_locale: state.effective_locale(),
+        theme_preference,
+        effective_theme: effective_theme(&app, theme_preference),
     })
 }
 
@@ -615,6 +658,20 @@ fn set_locale(
         .map_err(format_error)?;
     state.set_locale(preference, preference.effective());
     refresh_tray_status(&app).map_err(format_error)?;
+    runtime_info(app, state, hub)
+}
+
+#[tauri::command]
+fn set_theme_preference(
+    preference: ThemePreference,
+    app: AppHandle,
+    state: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    update_preferences(|preferences| preferences.theme_preference = preference)
+        .map_err(format_error)?;
+    apply_native_theme(&app, preference).map_err(format_error)?;
+    state.set_theme_preference(preference);
     runtime_info(app, state, hub)
 }
 
@@ -1128,6 +1185,28 @@ fn refresh_system_locale(app: &AppHandle, lifecycle: &LifecycleState) {
     }
 }
 
+fn apply_native_theme(app: &AppHandle, preference: ThemePreference) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_theme(preference.native())?;
+    }
+    Ok(())
+}
+
+fn effective_theme(app: &AppHandle, preference: ThemePreference) -> EffectiveTheme {
+    match preference {
+        ThemePreference::Light => EffectiveTheme::Light,
+        ThemePreference::Dark => EffectiveTheme::Dark,
+        ThemePreference::System => match app
+            .get_webview_window("main")
+            .and_then(|window| window.theme().ok())
+        {
+            Some(Theme::Light) => EffectiveTheme::Light,
+            Some(Theme::Dark) => EffectiveTheme::Dark,
+            _ => EffectiveTheme::Dark,
+        },
+    }
+}
+
 fn save_preferences(path: &Path, preferences: &DesktopPreferences) -> anyhow::Result<()> {
     let parent = path
         .parent()
@@ -1413,6 +1492,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let theme = app.state::<Arc<LifecycleState>>().theme_preference();
+            apply_native_theme(app.handle(), theme)?;
             setup_tray(app)?;
             app.state::<Arc<HubController>>().start()?;
             start_discovery_scheduler(app.handle().clone());
@@ -1472,6 +1553,7 @@ pub fn run() {
             runtime_info,
             set_close_behavior,
             set_locale,
+            set_theme_preference,
             get_mcp_network_settings,
             update_mcp_network_settings,
             get_mcp_hub_status,
@@ -1523,6 +1605,7 @@ mod tests {
             &DesktopPreferences {
                 close_behavior: Some(CloseBehavior::MinimizeToTray),
                 locale_preference: LocalePreference::JaJp,
+                theme_preference: ThemePreference::Light,
                 mcp_network: McpNetworkSettings::default(),
             },
         )
@@ -1534,6 +1617,10 @@ mod tests {
         assert_eq!(
             load_preferences(&path).unwrap().locale_preference,
             LocalePreference::JaJp
+        );
+        assert_eq!(
+            load_preferences(&path).unwrap().theme_preference,
+            ThemePreference::Light
         );
     }
 
@@ -1549,12 +1636,20 @@ mod tests {
     }
 
     #[test]
-    fn old_preferences_default_to_system_locale() {
+    fn old_preferences_default_to_system_locale_and_theme() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("preferences.json");
         fs::write(&path, r#"{"close_behavior":"quit"}"#).unwrap();
         let preferences = load_preferences(&path).unwrap();
         assert_eq!(preferences.close_behavior, Some(CloseBehavior::Quit));
         assert_eq!(preferences.locale_preference, LocalePreference::System);
+        assert_eq!(preferences.theme_preference, ThemePreference::System);
+    }
+
+    #[test]
+    fn theme_preferences_map_to_native_themes() {
+        assert_eq!(ThemePreference::System.native(), None);
+        assert_eq!(ThemePreference::Light.native(), Some(Theme::Light));
+        assert_eq!(ThemePreference::Dark.native(), Some(Theme::Dark));
     }
 }

@@ -33,4 +33,12 @@ describe("AgentKib API boundary", () => {
       relativeTarget: "Projects",
     });
   });
+
+  it("sends theme preferences through the desktop preference boundary", async () => {
+    vi.mocked(invoke).mockResolvedValue({ theme_preference: "light", effective_theme: "light" });
+
+    await api.setThemePreference("light");
+
+    expect(invoke).toHaveBeenCalledWith("set_theme_preference", { preference: "light" });
+  });
 });
