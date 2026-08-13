@@ -47,7 +47,7 @@ The core workflow is deliberately reviewable:
 - **Effective context preview** — shows load order, source files, directory inheritance, platform overrides, visible Skills/connections/memories, and warnings without pretending to expose a model's hidden system prompt.
 - **Safe generation** — every generated configuration write goes through a ChangeSet with a full diff, original-file hashes, atomic replacement, validation, and local backups. OpenClaw and Hermes Home changes require separate approval.
 - **Governed shared memory** — agents may propose memory through MCP, but only user-approved records are searchable by other agents.
-- **Independent MCP sidecar** — `agentkib-mcp` keeps working over stdio when the desktop window is closed.
+- **Unified MCP Hub** — every Agent connects to one local Streamable HTTP endpoint while AgentKib lazily starts and reuses downstream stdio or HTTP servers.
 - **Local insights and achievements** — aggregates available Token/session metadata and Git activity into agent breakdowns, a 52-week contribution heatmap, streaks, and milestone badges.
 - **macOS background lifecycle** — the menu-bar app refreshes discovery and insights every 15 minutes; hiding the window removes the Dock icon without stopping the process.
 
@@ -74,7 +74,8 @@ flowchart LR
   Changes["ChangeSet · diff · hash validation"]
   Project["Project files and .agentkib manifest"]
   Homes["Agent Home configuration"]
-  MCP["agentkib-mcp stdio sidecar"]
+  MCP["Embedded Streamable HTTP MCP Hub"]
+  Downstream["Managed stdio and HTTP MCP servers"]
 
   Agents --> Discovery --> Core
   Desktop <--> Core
@@ -82,6 +83,7 @@ flowchart LR
   Core --> Changes --> Project
   Changes -. "separate approval" .-> Homes
   Agents <--> MCP <--> Core
+  MCP <--> Downstream
 ```
 
 ### Privacy and boundaries
@@ -133,7 +135,7 @@ AgentKib 是一个本地优先、Git 原生的 Agent 资产控制台。**KIB** �
 - **有效上下文预览**：展示加载顺序、来源文件、目录继承、平台覆盖、可见 Skills/连接/记忆及警告，不伪造模型内部系统提示词。
 - **安全生成配置**：所有生成配置写入均经过完整 Diff、原始文件哈希、原子替换、写后验证和本地备份；OpenClaw/Hermes Home 修改需要单独授权。
 - **受治理的共享记忆**：Agent 可以通过 MCP 提交记忆提议，但只有用户批准后的记录才能被其他 Agent 检索。
-- **独立 MCP Sidecar**：`agentkib-mcp` 使用标准 stdio，即使桌面窗口关闭仍可工作。
+- **统一 MCP Hub**：所有 Agent 只连接一个本地 Streamable HTTP 入口；AgentKib 按需启动并复用下游 stdio 或 HTTP Server。
 - **本地统计与成就**：汇总可获得的 Token、会话和 Git 活动，提供 Agent 占比、近 52 周贡献热力图、连续活跃与里程碑徽章。
 - **macOS 后台常驻**：菜单栏应用每 15 分钟刷新发现和统计；隐藏窗口后 Dock 图标消失，但后台进程继续运行。
 
@@ -150,7 +152,7 @@ AgentKib 是一个本地优先、Git 原生的 Agent 资产控制台。**KIB** �
 
 ### 系统关系
 
-上方 [How it fits together](#how-it-fits-together) 的架构图展示了桌面端、Rust Core、SQLite、ChangeSet、项目文件、Agent Home 与独立 MCP Sidecar 之间的关系。
+上方 [How it fits together](#how-it-fits-together) 的架构图展示了桌面端、Rust Core、SQLite、ChangeSet、项目文件、Agent Home、统一 MCP Hub 与托管下游 Server 之间的关系。
 
 ### 隐私与边界
 
@@ -198,9 +200,9 @@ pnpm install
 pnpm dev
 ```
 
-The development command builds the matching `agentkib-mcp` sidecar before launching Tauri. It may take longer on the first run.
+The MCP Hub is embedded in the Tauri process and starts with the desktop app. The first Rust build may take longer.
 
-开发命令会先构建当前平台对应的 `agentkib-mcp` Sidecar，再启动 Tauri；首次编译可能需要较长时间。
+MCP Hub 嵌入 Tauri 进程并随桌面应用启动；首次 Rust 编译可能需要较长时间。
 
 ### Build an application bundle / 构建应用安装包
 
@@ -235,9 +237,13 @@ cargo run -p agentkib-cli -- manifest /path/to/project
 
 ## MCP tools / MCP 工具
 
-The desktop app installs `agentkib-mcp` to a stable local path and generates per-project stdio configuration through a reviewed ChangeSet.
+The desktop app listens on `127.0.0.1:47653` by default. Reviewed ChangeSets configure Codex, Claude Code, OpenClaw, and Hermes to connect to the workspace-and-Agent-specific Streamable HTTP URL. Third-party tools use the `{server}__{tool}` namespace.
 
-桌面应用会将 `agentkib-mcp` 安装到稳定的本地路径，并通过经审查的 ChangeSet 为每个项目生成 stdio 配置。
+Downstream servers are merged from global and project `mcp.json` / `mcp.local.json` layers. The Hub can install pinned npm or PyPI packages from the official Registry, connect to remote Streamable HTTP servers, and complete MCP OAuth in the system browser. Local files hold environment values, headers, and OAuth credentials with mode `0600`; those values are masked in the UI and never stored in SQLite.
+
+桌面应用默认监听 `127.0.0.1:47653`。经审查的 ChangeSet 会让 Codex、Claude Code、OpenClaw 与 Hermes 连接包含工作区和 Agent 身份的 Streamable HTTP URL；第三方工具使用 `{server}__{tool}` 命名空间。
+
+下游 Server 配置由全局和项目级 `mcp.json` / `mcp.local.json` 四层合并。Hub 可从官方 Registry 安装固定版本的 npm 或 PyPI 包、连接远程 Streamable HTTP Server，并在系统浏览器中完成 MCP OAuth。环境变量、Header 和 OAuth 凭据只写入权限为 `0600` 的本地配置，在界面中始终脱敏，也不会进入 SQLite。
 
 | Tool | Purpose / 用途 |
 | --- | --- |
@@ -251,7 +257,7 @@ The desktop app installs `agentkib-mcp` to a stable local path and generates per
 ## Manifest example / Manifest 示例
 
 ```yaml
-schema_version: 1
+schema_version: 2
 workspace:
   id: your-project-id
   name: your-project
@@ -263,7 +269,8 @@ instructions:
       content: Use the API package conventions.
   platform_overrides: {}
 skills: []
-connections: []
+mcp:
+  config: mcp.json
 memories:
   require_approval: true
 adapters:

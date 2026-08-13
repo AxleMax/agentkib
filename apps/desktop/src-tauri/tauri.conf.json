@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.agentkib.desktop",
   "build": {
-    "beforeDevCommand": "pnpm build:mcp:dev && pnpm dev:web",
+    "beforeDevCommand": "pnpm dev:web",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build:mcp && pnpm build:web",
+    "beforeBuildCommand": "pnpm build:web",
     "frontendDist": "../dist"
   },
   "app": {
@@ -22,7 +22,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "externalBin": ["binaries/agentkib-mcp"]
+    ]
   }
 }

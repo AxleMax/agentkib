@@ -9,7 +9,7 @@ export interface SkillDefinition { name: string; path: string; targets: AgentKin
 export type ConnectionDefinition =
   | { name: string; transport: "stdio"; command: string; args: string[]; env: Record<string, string>; allow_tools: string[]; targets: AgentKind[] }
   | { name: string; transport: "http"; url: string; env: Record<string, string>; allow_tools: string[]; targets: AgentKind[] };
-export interface Manifest { schema_version: number; workspace: { id: string; name: string }; instructions: { shared: string; scoped: Array<{ path: string; content: string }>; platform_overrides: Partial<Record<AgentKind, string>> }; skills: SkillDefinition[]; connections: ConnectionDefinition[]; memories: { require_approval: boolean }; adapters: Partial<Record<AgentKind, { enabled: boolean; generated_hashes: Record<string, string> }>> }
+export interface Manifest { schema_version: number; workspace: { id: string; name: string }; instructions: { shared: string; scoped: Array<{ path: string; content: string }>; platform_overrides: Partial<Record<AgentKind, string>> }; skills: SkillDefinition[]; mcp: { config: string }; connections: ConnectionDefinition[]; memories: { require_approval: boolean }; adapters: Partial<Record<AgentKind, { enabled: boolean; generated_hashes: Record<string, string> }>> }
 export interface ContextPreview { agent: AgentKind; project: string; cwd: string; sections: Array<{ source: string; scope: string; content: string; precedence: number }>; visible_skills: string[]; visible_connections: string[]; approved_memories: string[]; warnings: string[] }
 export interface FileChange { target: string; scope: "project" | "agent-home"; original_hash?: string; before: string; after: string; risk: "low" | "medium" | "high"; validator: string }
 export interface ChangeSet { id: string; project_root: string; created_at: string; changes: FileChange[]; requires_home_approval: boolean }
@@ -18,7 +18,20 @@ export type CloseBehavior = "minimize-to-tray" | "quit";
 export type SupportedLocale = "zh-CN" | "zh-TW" | "ja-JP" | "en-US";
 export type LocalePreference = "system" | SupportedLocale;
 export interface LocalizedMessage { key: string; params?: Record<string, string | number>; detail?: string }
-export interface RuntimeInfo { data_dir: string; database_path: string; mcp_install_path: string; mcp_installed: boolean; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale }
+export interface McpNetworkSettings { port: number; lan_enabled: boolean; lan_risk_accepted: boolean }
+export interface McpHubStatus { running: boolean; bind_address: string; port: number; lan_enabled: boolean; accessible_addresses: string[]; runtime_count: number; error_count: number; last_error?: string }
+export type McpRuntimeState = "stopped" | "starting" | "running" | "error";
+export interface McpRuntimeStatus { server_id: string; server_name: string; config_hash: string; state: McpRuntimeState; started_at?: string; last_used_at?: string; error?: string }
+export type McpPackageKind = "npm" | "pypi" | "remote" | "local";
+export type McpServerTransport = { transport: "stdio"; command: string; args: string[]; cwd?: string } | { transport: "streamable-http"; url: string } | { transport: "sse"; url: string };
+export type McpServerConfig = { id: string; name: string; enabled: boolean; env: Record<string, string>; headers: Record<string, string>; targets: AgentKind[]; allow_tools: string[]; lan_allow_tools: string[]; supports_parallel_tool_calls: boolean; package?: { kind: McpPackageKind; identifier: string; version?: string } } & McpServerTransport;
+export interface McpToolDescriptor { server_id: string; name: string; description?: string; input_schema: unknown; read_only: boolean }
+export interface McpRegistryEntry { name: string; description: string; version: string; package_kind: McpPackageKind; identifier: string; runtime_hint?: string; url?: string; required_env: string[]; runtime_arguments: string[]; package_arguments: string[] }
+export interface McpInstallation { id: string; name: string; package_kind: McpPackageKind; identifier: string; version?: string; install_path?: string; status: string; installed_at: string; updated_at: string }
+export interface McpMigrationCandidate { id: string; agent: AgentKind; scope: string; name: string; source_path: string; transport: string; endpoint: string; has_secret_values: boolean; supported: boolean; warnings: string[] }
+export interface McpOAuthStart { authorization_url: string }
+export interface McpInstallResult { installation: McpInstallation; server: McpServerConfig; tools: McpToolDescriptor[] }
+export interface RuntimeInfo { data_dir: string; database_path: string; mcp_package_root: string; mcp_hub: McpHubStatus; mcp_network: McpNetworkSettings; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale }
 export type WorkspaceStatus = "needs-import" | "healthy" | "attention";
 export type DiscoveryEvidence = "session-cwd" | "configured-workspace" | "scan-marker" | "manual";
 export interface WorkspaceSource { agent?: AgentKind; evidence: DiscoveryEvidence; session_count: number; last_active_at?: string }

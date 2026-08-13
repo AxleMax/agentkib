@@ -88,6 +88,24 @@ pub struct MemoryPolicy {
     pub require_approval: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestMcpConfig {
+    #[serde(default = "default_mcp_config_path")]
+    pub config: String,
+}
+
+impl Default for ManifestMcpConfig {
+    fn default() -> Self {
+        Self {
+            config: default_mcp_config_path(),
+        }
+    }
+}
+
+fn default_mcp_config_path() -> String {
+    "mcp.json".into()
+}
+
 impl Default for MemoryPolicy {
     fn default() -> Self {
         Self {
@@ -117,11 +135,220 @@ pub struct Manifest {
     #[serde(default)]
     pub skills: Vec<SkillDefinition>,
     #[serde(default)]
+    pub mcp: ManifestMcpConfig,
+    /// Legacy schema v1 connections. They are imported into `.agentkib/mcp.json`
+    /// when the user applies the migration ChangeSet.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub connections: Vec<ConnectionDefinition>,
     #[serde(default)]
     pub memories: MemoryPolicy,
     #[serde(default)]
     pub adapters: BTreeMap<AgentKind, AdapterState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpPackageKind {
+    Npm,
+    Pypi,
+    Remote,
+    Local,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "transport", rename_all = "kebab-case")]
+pub enum McpServerTransport {
+    Stdio {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<PathBuf>,
+    },
+    StreamableHttp {
+        url: String,
+    },
+    /// Accepted only for importing older native configurations.
+    Sse {
+        url: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub transport: McpServerTransport,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_credentials: Option<serde_json::Value>,
+    #[serde(skip)]
+    pub local_config_path: Option<PathBuf>,
+    #[serde(default)]
+    pub targets: Vec<AgentKind>,
+    #[serde(default)]
+    pub allow_tools: Vec<String>,
+    #[serde(default)]
+    pub lan_allow_tools: Vec<String>,
+    #[serde(default)]
+    pub supports_parallel_tool_calls: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<McpPackageReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPackageReference {
+    pub kind: McpPackageKind,
+    pub identifier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfigDocument {
+    #[serde(default = "default_mcp_document_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub servers: Vec<McpServerConfig>,
+}
+
+impl Default for McpConfigDocument {
+    fn default() -> Self {
+        Self {
+            schema_version: default_mcp_document_version(),
+            servers: Vec::new(),
+        }
+    }
+}
+
+fn default_mcp_document_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpRuntimeState {
+    Stopped,
+    Starting,
+    Running,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpNetworkSettings {
+    pub port: u16,
+    pub lan_enabled: bool,
+    #[serde(default)]
+    pub lan_risk_accepted: bool,
+}
+
+impl Default for McpNetworkSettings {
+    fn default() -> Self {
+        Self {
+            port: 47_653,
+            lan_enabled: false,
+            lan_risk_accepted: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpHubStatus {
+    pub running: bool,
+    pub bind_address: String,
+    pub port: u16,
+    pub lan_enabled: bool,
+    #[serde(default)]
+    pub accessible_addresses: Vec<String>,
+    pub runtime_count: usize,
+    pub error_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpRuntimeStatus {
+    pub server_id: String,
+    pub server_name: String,
+    pub config_hash: String,
+    pub state: McpRuntimeState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpInstallation {
+    pub id: String,
+    pub name: String,
+    pub package_kind: McpPackageKind,
+    pub identifier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install_path: Option<PathBuf>,
+    pub status: String,
+    pub installed_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpRegistryEntry {
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub package_kind: McpPackageKind,
+    pub identifier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub required_env: Vec<String>,
+    #[serde(default)]
+    pub runtime_arguments: Vec<String>,
+    #[serde(default)]
+    pub package_arguments: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolDescriptor {
+    pub server_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub input_schema: serde_json::Value,
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpMigrationCandidate {
+    pub id: String,
+    pub agent: AgentKind,
+    pub scope: String,
+    pub name: String,
+    pub source_path: PathBuf,
+    pub transport: String,
+    pub endpoint: String,
+    pub has_secret_values: bool,
+    pub supported: bool,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpOAuthStart {
+    pub authorization_url: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

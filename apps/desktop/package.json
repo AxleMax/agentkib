@@ -8,8 +8,6 @@
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "build:web": "tsc -b && vite build",
-    "build:mcp": "node scripts/build-mcp.mjs",
-    "build:mcp:dev": "node scripts/build-mcp.mjs --debug",
     "test": "vitest run",
     "typecheck": "tsc -b --pretty false",
     "tauri": "tauri"
@@ -17,6 +15,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2.5.0",
     "i18next": "^25.5.2",
     "lucide-react": "^0.468.0",
     "react": "^19.1.0",

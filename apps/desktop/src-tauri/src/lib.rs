@@ -9,9 +9,10 @@ use std::sync::{
 use agentkib_adapters::{HomeTargets, default_manifest, plan_workspace_changes};
 use agentkib_core::{
     ActivityRecord, AgentInstallation, AgentKind, ApplyOptions, CatalogAsset, ChangeSet,
-    ContextPreview, DiscoveryReport, ExcludedWorkspace, Manifest, MemoryProposal, MemoryRecord,
-    MemoryStatus, ScanRoot, WorkspaceScan, WorkspaceSummary,
-    apply_changeset as apply_core_changeset, load_manifest,
+    ContextPreview, DiscoveryReport, ExcludedWorkspace, Manifest, McpHubStatus, McpInstallation,
+    McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus,
+    McpServerConfig, McpToolDescriptor, MemoryProposal, MemoryRecord, MemoryStatus, ScanRoot,
+    WorkspaceScan, WorkspaceSummary, apply_changeset as apply_core_changeset, load_manifest,
     resolve_context as resolve_core_context, scan_workspace as scan_core_workspace,
     validate_workspace as validate_core_workspace,
 };
@@ -21,6 +22,7 @@ use agentkib_insights::{
     InsightsStatus, InsightsSummary, ModelUsageBreakdown, RepositoryCommitBreakdown,
     WorkspaceUsageBreakdown, collect_git, collect_usage,
 };
+use agentkib_mcp::{HubController, config as mcp_config, installation_root};
 use agentkib_store::{Store, default_backup_dir, default_data_dir};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
@@ -70,6 +72,8 @@ struct DesktopPreferences {
     close_behavior: Option<CloseBehavior>,
     #[serde(default)]
     locale_preference: LocalePreference,
+    #[serde(default)]
+    mcp_network: McpNetworkSettings,
 }
 
 #[derive(Debug)]
@@ -136,13 +140,21 @@ impl LifecycleState {
 struct RuntimeInfo {
     data_dir: PathBuf,
     database_path: PathBuf,
-    mcp_install_path: PathBuf,
-    mcp_installed: bool,
+    mcp_package_root: PathBuf,
+    mcp_hub: McpHubStatus,
+    mcp_network: McpNetworkSettings,
     openclaw_config: Option<PathBuf>,
     hermes_config: Option<PathBuf>,
     close_behavior: Option<CloseBehavior>,
     locale_preference: LocalePreference,
     effective_locale: SupportedLocale,
+}
+
+#[derive(Serialize)]
+struct McpInstallResult {
+    installation: McpInstallation,
+    server: McpServerConfig,
+    tools: Vec<McpToolDescriptor>,
 }
 
 #[tauri::command]
@@ -374,8 +386,9 @@ fn plan_changes(
     project: String,
     mut manifest: Manifest,
     include_home: bool,
+    hub: tauri::State<'_, Arc<HubController>>,
 ) -> CommandResult<ChangeSet> {
-    ensure_agentkib_connection(Path::new(&project), &mut manifest).map_err(format_error)?;
+    ensure_agentkib_connection(&mut manifest, hub.settings().port);
     let home = if include_home {
         default_home_targets()
     } else {
@@ -393,10 +406,11 @@ fn apply_changes(
         .ok()
         .map(|manifest| manifest.workspace.id);
     let known_home = default_home_targets();
-    let approved_home_files: Vec<_> = [known_home.openclaw_config, known_home.hermes_config]
+    let mut approved_home_files: Vec<_> = [known_home.openclaw_config, known_home.hermes_config]
         .into_iter()
         .flatten()
         .collect();
+    approved_home_files.extend(native_mcp_home_files());
     let options = ApplyOptions {
         approved_home_files,
         home_approval: approve_home,
@@ -436,14 +450,21 @@ fn resolve_context(
     } else {
         Vec::new()
     };
-    resolve_core_context(
+    let mut preview = resolve_core_context(
         Path::new(&project),
         Path::new(&cwd),
         agent,
         manifest.as_ref(),
         memories,
     )
-    .map_err(format_error)
+    .map_err(format_error)?;
+    preview.visible_connections =
+        mcp_config::load_visible_servers(Some(Path::new(&project)), agent)
+            .map_err(format_error)?
+            .into_iter()
+            .map(|server| server.name)
+            .collect();
+    Ok(preview)
 }
 
 #[tauri::command]
@@ -493,15 +514,16 @@ fn review_memory(
 fn runtime_info(
     app: AppHandle,
     state: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
 ) -> CommandResult<RuntimeInfo> {
     refresh_system_locale(&app, state.inner());
     let data_dir = default_data_dir().map_err(format_error)?;
-    let mcp_install_path = data_dir.join("bin/agentkib-mcp");
     Ok(RuntimeInfo {
         database_path: data_dir.join("agentkib.db"),
         data_dir,
-        mcp_installed: mcp_install_path.is_file(),
-        mcp_install_path,
+        mcp_package_root: installation_root().map_err(format_error)?,
+        mcp_hub: hub.status(),
+        mcp_network: hub.settings(),
         openclaw_config: default_home_targets().openclaw_config,
         hermes_config: default_home_targets().hermes_config,
         close_behavior: state.close_behavior(),
@@ -526,48 +548,451 @@ fn set_locale(
     preference: LocalePreference,
     app: AppHandle,
     state: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
 ) -> CommandResult<RuntimeInfo> {
     update_preferences(|preferences| preferences.locale_preference = preference)
         .map_err(format_error)?;
     state.set_locale(preference, preference.effective());
     refresh_tray_status(&app).map_err(format_error)?;
-    runtime_info(app, state)
+    runtime_info(app, state, hub)
 }
 
 #[tauri::command]
-fn install_mcp(app: AppHandle) -> CommandResult<PathBuf> {
-    let source = locate_mcp_binary(&app)
-        .ok_or_else(|| LocalizedMessage::with_detail("errors.mcpMissing", "run build:mcp"))?;
-    let target = default_data_dir()
-        .map_err(format_error)?
-        .join("bin/agentkib-mcp");
-    fs::create_dir_all(
-        target
-            .parent()
-            .expect("MCP installation path must have a parent directory"),
-    )
-    .map_err(format_error)?;
-    let temp = target.with_extension("tmp");
-    fs::copy(source, &temp).map_err(format_error)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o755)).map_err(format_error)?;
-    }
-    fs::rename(temp, &target).map_err(format_error)?;
-    Ok(target)
+fn get_mcp_network_settings(hub: tauri::State<'_, Arc<HubController>>) -> McpNetworkSettings {
+    hub.settings()
 }
 
-fn ensure_agentkib_connection(project: &Path, manifest: &mut Manifest) -> anyhow::Result<()> {
-    let binary = default_data_dir()?.join("bin/agentkib-mcp");
+#[tauri::command]
+fn update_mcp_network_settings(
+    settings: McpNetworkSettings,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<McpHubStatus> {
+    if settings.port == 0 {
+        return Err(LocalizedMessage::with_detail(
+            "errors.generic",
+            "MCP Hub port must be between 1 and 65535",
+        ));
+    }
+    let previous = hub.settings();
+    hub.restart(settings.clone()).map_err(format_error)?;
+    if let Err(error) = update_preferences(|preferences| preferences.mcp_network = settings) {
+        let _ = hub.restart(previous);
+        return Err(format_error(error));
+    }
+    Ok(hub.status())
+}
+
+#[tauri::command]
+fn get_mcp_hub_status(hub: tauri::State<'_, Arc<HubController>>) -> McpHubStatus {
+    let status = hub.status();
+    persist_mcp_runtime_snapshots(hub.inner());
+    status
+}
+
+#[tauri::command]
+fn list_mcp_servers(project: Option<String>) -> CommandResult<Vec<McpServerConfig>> {
+    let project = registered_project_path(project.as_deref()).map_err(format_error)?;
+    mcp_config::load_effective_config(project.as_deref())
+        .map(|document| {
+            document
+                .servers
+                .into_iter()
+                .map(mcp_config::masked_server)
+                .collect()
+        })
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_mcp_server(
+    project: Option<String>,
+    server_id: String,
+) -> CommandResult<Option<McpServerConfig>> {
+    Ok(list_mcp_servers(project)?
+        .into_iter()
+        .find(|server| server.id == server_id))
+}
+
+#[tauri::command]
+fn save_mcp_server(
+    project: Option<String>,
+    mut server: McpServerConfig,
+) -> CommandResult<McpServerConfig> {
+    if matches!(
+        server.transport,
+        agentkib_core::McpServerTransport::Sse { .. }
+    ) {
+        return Err(LocalizedMessage::with_detail(
+            "errors.generic",
+            "Legacy SSE is import-only; new MCP servers must use Streamable HTTP",
+        ));
+    }
+    let project = registered_project_path(project.as_deref()).map_err(format_error)?;
+    server.env.clear();
+    server.headers.clear();
+    let path = mcp_config_target(project.as_deref(), false).map_err(format_error)?;
+    mcp_config::save_server(&path, server.clone(), false).map_err(format_error)?;
+    Ok(mcp_config::masked_server(server))
+}
+
+#[tauri::command]
+fn save_mcp_local_values(
+    project: Option<String>,
+    server_id: String,
+    env: BTreeMap<String, String>,
+    headers: BTreeMap<String, String>,
+) -> CommandResult<()> {
+    let project = registered_project_path(project.as_deref()).map_err(format_error)?;
+    let mut server = mcp_config::load_effective_config(project.as_deref())
+        .map_err(format_error)?
+        .servers
+        .into_iter()
+        .find(|server| server.id == server_id)
+        .ok_or_else(|| LocalizedMessage::with_detail("errors.generic", "Unknown MCP server"))?;
+    server.env = env;
+    server.headers = headers;
+    let path = mcp_config_target(project.as_deref(), true).map_err(format_error)?;
+    mcp_config::save_server(&path, server, true).map_err(format_error)
+}
+
+#[tauri::command]
+fn remove_mcp_server(project: Option<String>, server_id: String) -> CommandResult<()> {
+    let project = registered_project_path(project.as_deref()).map_err(format_error)?;
+    for private in [false, true] {
+        let path = mcp_config_target(project.as_deref(), private).map_err(format_error)?;
+        mcp_config::remove_server(&path, &server_id, private).map_err(format_error)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn probe_mcp_runtime(
+    project: Option<String>,
+    server_id: String,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<Vec<McpToolDescriptor>> {
+    let project = registered_project_path(project.as_deref()).map_err(format_error)?;
+    let server = mcp_config::load_effective_config(project.as_deref())
+        .map_err(format_error)?
+        .servers
+        .into_iter()
+        .find(|server| server.id == server_id)
+        .ok_or_else(|| LocalizedMessage::with_detail("errors.generic", "Unknown MCP server"))?;
+    hub.probe(&server).map_err(format_error)
+}
+
+#[tauri::command]
+fn start_mcp_oauth(
+    project: Option<String>,
+    server_id: String,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<McpOAuthStart> {
+    let project = registered_project_path(project.as_deref()).map_err(format_error)?;
+    let server = mcp_config::load_effective_config(project.as_deref())
+        .map_err(format_error)?
+        .servers
+        .into_iter()
+        .find(|server| server.id == server_id)
+        .ok_or_else(|| LocalizedMessage::with_detail("errors.generic", "Unknown MCP server"))?;
+    hub.start_oauth(&server)
+        .map(|authorization_url| McpOAuthStart { authorization_url })
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn list_mcp_runtimes(hub: tauri::State<'_, Arc<HubController>>) -> Vec<McpRuntimeStatus> {
+    let statuses = hub.runtime_statuses();
+    if let Ok(store) = Store::open_default() {
+        let _ = store.save_mcp_runtime_snapshots(&statuses);
+    }
+    statuses
+}
+
+fn persist_mcp_runtime_snapshots(hub: &HubController) {
+    if let Ok(store) = Store::open_default() {
+        let _ = store.save_mcp_runtime_snapshots(&hub.runtime_statuses());
+    }
+}
+
+#[tauri::command]
+fn restart_mcp_runtime(
+    project: Option<String>,
+    server_id: String,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<Vec<McpToolDescriptor>> {
+    hub.stop_runtime(Some(&server_id));
+    probe_mcp_runtime(project, server_id, hub)
+}
+
+#[tauri::command]
+fn stop_mcp_runtime(server_id: Option<String>, hub: tauri::State<'_, Arc<HubController>>) {
+    hub.stop_runtime(server_id.as_deref());
+}
+
+#[tauri::command]
+fn scan_native_mcp_candidates(
+    project: Option<String>,
+) -> CommandResult<Vec<McpMigrationCandidate>> {
+    let project = registered_project_path(project.as_deref()).map_err(format_error)?;
+    agentkib_mcp::native::scan_native_candidates(project.as_deref()).map_err(format_error)
+}
+
+#[tauri::command]
+fn plan_mcp_migration(
+    project: String,
+    candidate_ids: Vec<String>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<ChangeSet> {
+    let project = registered_project_path(Some(&project))
+        .map_err(format_error)?
+        .ok_or_else(|| LocalizedMessage::with_detail("errors.generic", "Project is required"))?;
+    if candidate_ids.is_empty() {
+        return Err(LocalizedMessage::with_detail(
+            "errors.generic",
+            "Select at least one native MCP candidate",
+        ));
+    }
+    let candidates =
+        agentkib_mcp::native::scan_native_candidates(Some(&project)).map_err(format_error)?;
+    let manifest = load_manifest(&project).map_err(format_error)?;
+    let gateway_url = format!(
+        "http://127.0.0.1:{}/mcp/v1/workspaces/{}/agents/{{agent}}",
+        hub.settings().port,
+        manifest.workspace.id
+    );
+    let effective = mcp_config::load_effective_config(Some(&project)).map_err(format_error)?;
+    let mut servers = Vec::new();
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate_ids.contains(&candidate.id))
+    {
+        let imported = agentkib_mcp::native::migration_server(candidate).map_err(format_error)?;
+        let server = if candidate.has_secret_values {
+            effective
+                .servers
+                .iter()
+                .find(|server| {
+                    server.name == candidate.name
+                        && (!server.env.is_empty()
+                            || !server.headers.is_empty()
+                            || server.oauth_credentials.is_some())
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    LocalizedMessage::with_detail(
+                        "errors.generic",
+                        format!(
+                            "Re-enter local secret values and probe `{}` before removing its native configuration",
+                            candidate.name
+                        ),
+                    )
+                })?
+        } else {
+            imported
+        };
+        if matches!(
+            &server.transport,
+            agentkib_core::McpServerTransport::Sse { .. }
+        ) {
+            return Err(LocalizedMessage::with_detail(
+                "errors.generic",
+                format!(
+                    "Legacy SSE server `{}` must be converted to Streamable HTTP before migration",
+                    candidate.name
+                ),
+            ));
+        }
+        hub.probe(&server).map_err(format_error)?;
+        servers.push(server);
+    }
+    if servers.len() != candidate_ids.len() {
+        return Err(LocalizedMessage::with_detail(
+            "errors.generic",
+            "Native MCP candidates changed; scan again",
+        ));
+    }
+    agentkib_mcp::native::plan_migration(&project, &candidate_ids, &servers, &gateway_url)
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn search_mcp_registry(query: String) -> CommandResult<Vec<McpRegistryEntry>> {
+    match agentkib_mcp::registry::search_registry(&query).await {
+        Ok(entries) => {
+            Store::open_default()
+                .and_then(|store| store.replace_mcp_registry_cache(&entries))
+                .map_err(format_error)?;
+            Ok(entries)
+        }
+        Err(error) => Store::open_default()
+            .and_then(|store| store.search_mcp_registry_cache(&query))
+            .map_err(|cache_error| {
+                format_error(format!(
+                    "Registry request failed: {error}; cached lookup failed: {cache_error}"
+                ))
+            }),
+    }
+}
+
+#[tauri::command]
+async fn refresh_mcp_registry(query: String) -> CommandResult<Vec<McpRegistryEntry>> {
+    let entries = agentkib_mcp::registry::search_registry(&query)
+        .await
+        .map_err(format_error)?;
+    Store::open_default()
+        .and_then(|store| store.replace_mcp_registry_cache(&entries))
+        .map_err(format_error)?;
+    Ok(entries)
+}
+
+#[tauri::command]
+async fn install_mcp(
+    entry: McpRegistryEntry,
+    project: Option<String>,
+    confirmed: bool,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<McpInstallResult> {
+    if !confirmed {
+        return Err(LocalizedMessage::with_detail(
+            "errors.generic",
+            "MCP installation requires explicit confirmation",
+        ));
+    }
+    let project_path = registered_project_path(project.as_deref()).map_err(format_error)?;
+    let (installation, server) =
+        tokio::task::spawn_blocking(move || agentkib_mcp::registry::install_registry_entry(&entry))
+            .await
+            .map_err(format_error)?
+            .map_err(format_error)?;
+    Store::open_default()
+        .and_then(|store| store.save_mcp_installation(&installation))
+        .map_err(format_error)?;
+    let path = mcp_config_target(project_path.as_deref(), false).map_err(format_error)?;
+    mcp_config::save_server(&path, server.clone(), false).map_err(format_error)?;
+    let tools = if server.env.is_empty() && server.headers.is_empty() {
+        hub.probe(&server).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    Ok(McpInstallResult {
+        installation,
+        server: mcp_config::masked_server(server),
+        tools,
+    })
+}
+
+#[tauri::command]
+async fn update_mcp(
+    installation_id: String,
+    entry: McpRegistryEntry,
+    project: Option<String>,
+    confirmed: bool,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<McpInstallResult> {
+    if !confirmed {
+        return Err(LocalizedMessage::with_detail(
+            "errors.generic",
+            "MCP update requires explicit confirmation",
+        ));
+    }
+    let store = Store::open_default().map_err(format_error)?;
+    let previous = store
+        .list_mcp_installations()
+        .map_err(format_error)?
+        .into_iter()
+        .find(|value| value.id == installation_id)
+        .ok_or_else(|| {
+            LocalizedMessage::with_detail("errors.generic", "Unknown MCP installation")
+        })?;
+    let result = install_mcp(entry, project.clone(), true, hub.clone()).await?;
+    if result.installation.id != previous.id {
+        hub.stop_runtime(Some(&previous.id));
+        remove_mcp_server(project, previous.id.clone())?;
+        agentkib_mcp::registry::uninstall_package(&previous).map_err(format_error)?;
+        store
+            .remove_mcp_installation(&previous.id)
+            .map_err(format_error)?;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn list_mcp_installations() -> CommandResult<Vec<McpInstallation>> {
+    Store::open_default()
+        .and_then(|store| store.list_mcp_installations())
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn uninstall_mcp(
+    installation_id: String,
+    confirmed: bool,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<()> {
+    if !confirmed {
+        return Err(LocalizedMessage::with_detail(
+            "errors.generic",
+            "MCP uninstall requires explicit confirmation",
+        ));
+    }
+    let store = Store::open_default().map_err(format_error)?;
+    let installation = store
+        .list_mcp_installations()
+        .map_err(format_error)?
+        .into_iter()
+        .find(|value| value.id == installation_id)
+        .ok_or_else(|| {
+            LocalizedMessage::with_detail("errors.generic", "Unknown MCP installation")
+        })?;
+    hub.stop_runtime(Some(&installation.id));
+    agentkib_mcp::registry::uninstall_package(&installation).map_err(format_error)?;
+    let mut config_paths = mcp_config::config_paths(None).map_err(format_error)?;
+    for workspace in store.list_workspaces().map_err(format_error)? {
+        config_paths.extend(mcp_config::config_paths(Some(&workspace.path)).map_err(format_error)?);
+    }
+    for path in config_paths.into_iter().filter(|path| path.is_file()) {
+        let private = path.file_name().and_then(|value| value.to_str())
+            == Some(mcp_config::LOCAL_CONFIG_NAME);
+        mcp_config::remove_server(&path, &installation.id, private).map_err(format_error)?;
+    }
+    store
+        .remove_mcp_installation(&installation.id)
+        .map_err(format_error)
+}
+
+fn registered_project_path(project: Option<&str>) -> anyhow::Result<Option<PathBuf>> {
+    let Some(project) = project else {
+        return Ok(None);
+    };
+    let canonical = Path::new(project).canonicalize()?;
+    let registered = Store::open_default()?
+        .list_workspaces()?
+        .into_iter()
+        .any(|workspace| workspace.path == canonical);
+    if !registered {
+        anyhow::bail!("MCP project scope must be a registered AgentKib workspace");
+    }
+    Ok(Some(canonical))
+}
+
+fn mcp_config_target(project: Option<&Path>, private: bool) -> anyhow::Result<PathBuf> {
+    let paths = mcp_config::config_paths(project)?;
+    Ok(match (project.is_some(), private) {
+        (false, false) => paths[0].clone(),
+        (false, true) => paths[1].clone(),
+        (true, false) => paths[2].clone(),
+        (true, true) => paths[3].clone(),
+    })
+}
+
+fn ensure_agentkib_connection(manifest: &mut Manifest, port: u16) {
     let definition = agentkib_core::ConnectionDefinition {
         name: "agentkib".into(),
-        transport: agentkib_core::ConnectionTransport::Stdio {
-            command: binary.display().to_string(),
-            args: vec![
-                "--project".into(),
-                project.canonicalize()?.display().to_string(),
-            ],
+        transport: agentkib_core::ConnectionTransport::Http {
+            url: format!(
+                "http://127.0.0.1:{port}/mcp/v1/workspaces/{}/agents/{{agent}}",
+                manifest.workspace.id
+            ),
         },
         env: Default::default(),
         allow_tools: vec![],
@@ -582,7 +1007,6 @@ fn ensure_agentkib_connection(project: &Path, manifest: &mut Manifest) -> anyhow
     } else {
         manifest.connections.push(definition);
     }
-    Ok(())
 }
 
 fn default_home_targets() -> HomeTargets {
@@ -595,14 +1019,16 @@ fn default_home_targets() -> HomeTargets {
     }
 }
 
-fn locate_mcp_binary(app: &AppHandle) -> Option<PathBuf> {
-    let executable_dir = app.path().executable_dir().ok()?;
-    [
-        executable_dir.join("agentkib-mcp"),
-        executable_dir.join("../Resources/agentkib-mcp"),
+fn native_mcp_home_files() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    vec![
+        home.join(".codex/config.toml"),
+        home.join(".claude.json"),
+        home.join(".openclaw/openclaw.json"),
+        home.join(".hermes/config.yaml"),
     ]
-    .into_iter()
-    .find(|path| path.is_file())
 }
 
 fn preferences_path() -> anyhow::Result<PathBuf> {
@@ -675,6 +1101,7 @@ fn show_main_window(app: &AppHandle) {
 
 fn request_real_exit(app: &AppHandle, lifecycle: &LifecycleState) {
     lifecycle.quitting.store(true, Ordering::SeqCst);
+    app.state::<Arc<HubController>>().shutdown();
     app.exit(0);
 }
 
@@ -738,6 +1165,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
         .text("show", translate(locale, "tray.open", &[]))
         .text("status", translate(locale, "tray.refreshing", &[]))
+        .text("mcp_status", "MCP Hub · starting")
         .text("refresh", translate(locale, "tray.refresh", &[]))
         .separator()
         .text("quit", translate(locale, "tray.quit", &[]))
@@ -822,6 +1250,7 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .filter(|workspace| !matches!(workspace.status, agentkib_core::WorkspaceStatus::Healthy))
         .count();
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
+    let hub_status = app.state::<Arc<HubController>>().status();
     let menu = MenuBuilder::new(app)
         .text("show", translate(locale, "tray.open", &[]))
         .text(
@@ -833,6 +1262,22 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
                     ("workspaces", workspaces.len().to_string()),
                     ("attention", attention.to_string()),
                 ],
+            ),
+        )
+        .text(
+            "mcp_status",
+            format!(
+                "MCP Hub · {} · {}",
+                translate(
+                    locale,
+                    if hub_status.running {
+                        "mcp.running"
+                    } else {
+                        "mcp.stopped"
+                    },
+                    &[]
+                ),
+                hub_status.runtime_count
             ),
         )
         .text("refresh", translate(locale, "tray.refresh", &[]))
@@ -891,15 +1336,25 @@ fn format_error(error: impl std::fmt::Display) -> LocalizedMessage {
 pub fn run() {
     let preferences = load_desktop_preferences();
     let lifecycle = Arc::new(LifecycleState::new(&preferences));
+    let hub = Arc::new(
+        HubController::new(preferences.mcp_network.clone())
+            .expect("Failed to initialize AgentKib MCP Hub runtime"),
+    );
     let discovery = Arc::new(DiscoveryRuntime::default());
     let insights = Arc::new(InsightsRuntime::default());
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .manage(lifecycle)
+        .manage(hub)
         .manage(discovery)
         .manage(insights)
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             setup_tray(app)?;
+            app.state::<Arc<HubController>>().start()?;
             start_discovery_scheduler(app.handle().clone());
             Ok(())
         })
@@ -951,7 +1406,27 @@ pub fn run() {
             runtime_info,
             set_close_behavior,
             set_locale,
-            install_mcp
+            get_mcp_network_settings,
+            update_mcp_network_settings,
+            get_mcp_hub_status,
+            list_mcp_servers,
+            get_mcp_server,
+            save_mcp_server,
+            save_mcp_local_values,
+            remove_mcp_server,
+            probe_mcp_runtime,
+            start_mcp_oauth,
+            list_mcp_runtimes,
+            restart_mcp_runtime,
+            stop_mcp_runtime,
+            scan_native_mcp_candidates,
+            plan_mcp_migration,
+            search_mcp_registry,
+            refresh_mcp_registry,
+            install_mcp,
+            update_mcp,
+            list_mcp_installations,
+            uninstall_mcp
         ])
         .build(tauri::generate_context!())
         .expect("Failed to build AgentKib");
@@ -982,6 +1457,7 @@ mod tests {
             &DesktopPreferences {
                 close_behavior: Some(CloseBehavior::MinimizeToTray),
                 locale_preference: LocalePreference::JaJp,
+                mcp_network: McpNetworkSettings::default(),
             },
         )
         .unwrap();

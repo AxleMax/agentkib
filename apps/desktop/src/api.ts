@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -14,7 +14,26 @@ export const api = {
   runtime: () => invoke<RuntimeInfo>("runtime_info"),
   setCloseBehavior: (behavior?: CloseBehavior) => invoke<void>("set_close_behavior", { behavior: behavior ?? null }),
   setLocale: (preference: LocalePreference) => invoke<RuntimeInfo>("set_locale", { preference }),
-  installMcp: () => invoke<string>("install_mcp"),
+  mcpHubStatus: () => invoke<McpHubStatus>("get_mcp_hub_status"),
+  updateMcpNetwork: (settings: McpNetworkSettings) => invoke<McpHubStatus>("update_mcp_network_settings", { settings }),
+  mcpServers: (project?: string) => invoke<McpServerConfig[]>("list_mcp_servers", { project }),
+  mcpServer: (serverId: string, project?: string) => invoke<McpServerConfig | undefined>("get_mcp_server", { serverId, project }),
+  saveMcpServer: (server: McpServerConfig, project?: string) => invoke<McpServerConfig>("save_mcp_server", { server, project }),
+  saveMcpLocalValues: (serverId: string, env: Record<string, string>, headers: Record<string, string>, project?: string) => invoke<void>("save_mcp_local_values", { serverId, env, headers, project }),
+  removeMcpServer: (serverId: string, project?: string) => invoke<void>("remove_mcp_server", { serverId, project }),
+  probeMcpRuntime: (serverId: string, project?: string) => invoke<McpToolDescriptor[]>("probe_mcp_runtime", { serverId, project }),
+  startMcpOAuth: (serverId: string, project?: string) => invoke<McpOAuthStart>("start_mcp_oauth", { serverId, project }),
+  mcpRuntimes: () => invoke<McpRuntimeStatus[]>("list_mcp_runtimes"),
+  restartMcpRuntime: (serverId: string, project?: string) => invoke<McpToolDescriptor[]>("restart_mcp_runtime", { serverId, project }),
+  stopMcpRuntime: (serverId?: string) => invoke<void>("stop_mcp_runtime", { serverId }),
+  searchMcpRegistry: (query: string) => invoke<McpRegistryEntry[]>("search_mcp_registry", { query }),
+  refreshMcpRegistry: (query: string) => invoke<McpRegistryEntry[]>("refresh_mcp_registry", { query }),
+  installMcp: (entry: McpRegistryEntry, project?: string) => invoke<McpInstallResult>("install_mcp", { entry, project, confirmed: true }),
+  updateMcp: (installationId: string, entry: McpRegistryEntry, project?: string) => invoke<McpInstallResult>("update_mcp", { installationId, entry, project, confirmed: true }),
+  mcpInstallations: () => invoke<McpInstallation[]>("list_mcp_installations"),
+  uninstallMcp: (installationId: string) => invoke<void>("uninstall_mcp", { installationId, confirmed: true }),
+  nativeMcpCandidates: (project?: string) => invoke<McpMigrationCandidate[]>("scan_native_mcp_candidates", { project }),
+  planMcpMigration: (project: string, candidateIds: string[]) => invoke<ChangeSet>("plan_mcp_migration", { project, candidateIds }),
   discoverWorkspaces: () => invoke<DiscoveryReport>("discover_workspaces"),
   workspaces: () => invoke<WorkspaceSummary[]>("list_workspaces"),
   workspace: (id: string) => invoke<WorkspaceSummary | undefined>("get_workspace", { id }),

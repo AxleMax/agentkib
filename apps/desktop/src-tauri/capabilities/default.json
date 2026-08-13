@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "AgentKib 主窗口最小权限",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "opener:allow-open-url",
+    "opener:allow-default-urls"
+  ]
 }

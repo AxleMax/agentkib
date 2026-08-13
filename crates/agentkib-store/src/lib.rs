@@ -5,9 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentkib_core::{
     ActivityRecord, AgentInstallation, AgentKind, AssetKind, CatalogAsset, CatalogScope,
-    DiscoveryCandidate, DiscoveryEvidence, DiscoveryReport, ExcludedWorkspace, MemoryProposal,
-    MemoryRecord, MemoryStatus, ScanRoot, WorkspaceSource, WorkspaceStatus, WorkspaceSummary,
-    hash_content, load_manifest, scan_workspace,
+    DiscoveryCandidate, DiscoveryEvidence, DiscoveryReport, ExcludedWorkspace, McpInstallation,
+    McpRegistryEntry, McpRuntimeStatus, McpToolDescriptor, MemoryProposal, MemoryRecord,
+    MemoryStatus, ScanRoot, WorkspaceSource, WorkspaceStatus, WorkspaceSummary, hash_content,
+    load_manifest, scan_workspace,
 };
 use agentkib_insights::{
     Achievement, AgentUsageBreakdown, GitIdentitySummary, GitRepositorySnapshot, HeatmapPoint,
@@ -260,6 +261,197 @@ impl Store {
                  COMMIT;",
             )?;
         }
+        if current_version.is_none_or(|version| version < 5) {
+            self.connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS mcp_installations (
+                   id TEXT PRIMARY KEY,
+                   name TEXT NOT NULL,
+                   package_kind TEXT NOT NULL,
+                   identifier TEXT NOT NULL,
+                   version TEXT,
+                   install_path TEXT,
+                   status TEXT NOT NULL,
+                   installed_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS mcp_registry_cache (
+                   name TEXT PRIMARY KEY,
+                   entry_json TEXT NOT NULL,
+                   schema_version TEXT NOT NULL,
+                   etag TEXT,
+                   cached_at TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS mcp_tool_cache (
+                   server_id TEXT NOT NULL,
+                   tool_name TEXT NOT NULL,
+                   descriptor_json TEXT NOT NULL,
+                   probed_at TEXT NOT NULL,
+                   PRIMARY KEY(server_id, tool_name)
+                 );
+                 CREATE TABLE IF NOT EXISTS mcp_runtime_snapshots (
+                   config_hash TEXT PRIMARY KEY,
+                   server_id TEXT NOT NULL,
+                   snapshot_json TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+                 );
+                 INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '5');
+                 COMMIT;",
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn replace_mcp_tool_cache(
+        &self,
+        server_id: &str,
+        tools: &[McpToolDescriptor],
+    ) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM mcp_tool_cache WHERE server_id = ?1",
+            [server_id],
+        )?;
+        let probed_at = Utc::now().to_rfc3339();
+        for tool in tools {
+            transaction.execute(
+                "INSERT INTO mcp_tool_cache(server_id, tool_name, descriptor_json, probed_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    server_id,
+                    tool.name,
+                    serde_json::to_string(tool)?,
+                    probed_at
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn cached_mcp_tools(&self, server_id: &str) -> Result<Vec<McpToolDescriptor>> {
+        let mut statement = self.connection.prepare(
+            "SELECT descriptor_json FROM mcp_tool_cache
+             WHERE server_id = ?1 ORDER BY tool_name",
+        )?;
+        let rows = statement.query_map([server_id], |row| row.get::<_, String>(0))?;
+        rows.map(|row| {
+            let json = row?;
+            Ok(serde_json::from_str(&json)?)
+        })
+        .collect()
+    }
+
+    pub fn save_mcp_installation(&self, installation: &McpInstallation) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO mcp_installations(
+               id, name, package_kind, identifier, version, install_path, status,
+               installed_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               package_kind = excluded.package_kind,
+               identifier = excluded.identifier,
+               version = excluded.version,
+               install_path = excluded.install_path,
+               status = excluded.status,
+               updated_at = excluded.updated_at",
+            params![
+                installation.id,
+                installation.name,
+                enum_string(installation.package_kind)?,
+                installation.identifier,
+                installation.version,
+                installation
+                    .install_path
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
+                installation.status,
+                installation.installed_at.to_rfc3339(),
+                installation.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_mcp_installations(&self) -> Result<Vec<McpInstallation>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, name, package_kind, identifier, version, install_path, status,
+                    installed_at, updated_at
+             FROM mcp_installations ORDER BY name",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok(McpInstallation {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    package_kind: parse_enum(&row.get::<_, String>(2)?).map_err(sql_error)?,
+                    identifier: row.get(3)?,
+                    version: row.get(4)?,
+                    install_path: row.get::<_, Option<String>>(5)?.map(PathBuf::from),
+                    status: row.get(6)?,
+                    installed_at: parse_time(&row.get::<_, String>(7)?).map_err(sql_error)?,
+                    updated_at: parse_time(&row.get::<_, String>(8)?).map_err(sql_error)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn remove_mcp_installation(&self, id: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM mcp_installations WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn replace_mcp_registry_cache(&self, entries: &[McpRegistryEntry]) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute("DELETE FROM mcp_registry_cache", [])?;
+        let cached_at = Utc::now().to_rfc3339();
+        for entry in entries {
+            transaction.execute(
+                "INSERT INTO mcp_registry_cache(name, entry_json, schema_version, cached_at)
+                 VALUES (?1, ?2, 'v0.1', ?3)",
+                params![entry.name, serde_json::to_string(entry)?, cached_at],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn search_mcp_registry_cache(&self, query: &str) -> Result<Vec<McpRegistryEntry>> {
+        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+        let mut statement = self.connection.prepare(
+            "SELECT entry_json FROM mcp_registry_cache
+             WHERE name LIKE ?1 ESCAPE '\\' OR entry_json LIKE ?1 ESCAPE '\\'
+             ORDER BY name LIMIT 100",
+        )?;
+        let rows = statement.query_map([pattern], |row| row.get::<_, String>(0))?;
+        rows.map(|row| {
+            let json = row?;
+            Ok(serde_json::from_str(&json)?)
+        })
+        .collect()
+    }
+
+    pub fn save_mcp_runtime_snapshots(&self, statuses: &[McpRuntimeStatus]) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        for status in statuses {
+            transaction.execute(
+                "INSERT INTO mcp_runtime_snapshots(config_hash, server_id, snapshot_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(config_hash) DO UPDATE SET
+                   snapshot_json = excluded.snapshot_json,
+                   updated_at = excluded.updated_at",
+                params![
+                    status.config_hash,
+                    status.server_id,
+                    serde_json::to_string(status)?,
+                    Utc::now().to_rfc3339(),
+                ],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -381,7 +573,7 @@ impl Store {
     pub fn workspace_path(&self, id: &str) -> Result<PathBuf> {
         self.connection
             .query_row(
-                "SELECT canonical_path FROM workspaces WHERE id = ?1",
+                "SELECT canonical_path FROM workspaces WHERE id = ?1 OR manifest_workspace_id = ?1 LIMIT 1",
                 params![id],
                 |row| row.get::<_, String>(0),
             )

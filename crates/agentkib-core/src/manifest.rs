@@ -20,8 +20,8 @@ pub fn load_manifest(project: &Path) -> Result<Manifest> {
 }
 
 pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
-    if manifest.schema_version != 1 {
-        bail!("Only schema_version: 1 is supported");
+    if !matches!(manifest.schema_version, 1 | 2) {
+        bail!("Only schema_version 1 or 2 is supported");
     }
     if manifest.workspace.id.trim().is_empty() || manifest.workspace.name.trim().is_empty() {
         bail!("workspace.id and workspace.name cannot be empty");
@@ -38,6 +38,9 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
     }
     for scoped in &manifest.instructions.scoped {
         validate_relative_path(&scoped.path, "Scoped instruction path")?;
+    }
+    if manifest.schema_version >= 2 {
+        validate_relative_path(&manifest.mcp.config, "MCP config")?;
     }
     let mut connection_names = BTreeSet::new();
     for connection in &manifest.connections {
@@ -104,6 +107,7 @@ mod tests {
             },
             instructions: InstructionSet::default(),
             skills: vec![],
+            mcp: Default::default(),
             connections: vec![],
             memories: MemoryPolicy::default(),
             adapters: BTreeMap::<_, AdapterState>::new(),

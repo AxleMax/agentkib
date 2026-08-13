@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use agentkib_core::{
     AdapterState, AgentKind, ChangeScope, ChangeSet, ConnectionDefinition, ConnectionTransport,
-    FileChange, Manifest, RiskLevel, hash_content, manifest_path,
+    FileChange, Manifest, McpConfigDocument, McpServerConfig, McpServerTransport, RiskLevel,
+    hash_content, manifest_path,
 };
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -76,7 +77,7 @@ pub fn default_manifest(project: &Path) -> Result<Manifest> {
     let skills = discover_shared_skills(project)?;
     let scoped = discover_scoped_instructions(project)?;
     Ok(Manifest {
-        schema_version: 1,
+        schema_version: 2,
         workspace: agentkib_core::WorkspaceIdentity {
             id: Uuid::new_v4().to_string(),
             name,
@@ -87,6 +88,7 @@ pub fn default_manifest(project: &Path) -> Result<Manifest> {
             platform_overrides,
         },
         skills,
+        mcp: Default::default(),
         connections: Vec::new(),
         memories: Default::default(),
         adapters,
@@ -188,6 +190,47 @@ pub fn plan_workspace_changes(
     agentkib_core::validate_manifest(manifest)?;
     let root = agentkib_core::canonical_project(project)?;
     let mut changes = Vec::new();
+    let gateway_connections: Vec<_> = manifest
+        .connections
+        .iter()
+        .filter(|connection| connection.name == "agentkib")
+        .cloned()
+        .collect();
+    let legacy_connections: Vec<_> = manifest
+        .connections
+        .iter()
+        .filter(|connection| connection.name != "agentkib")
+        .collect();
+    if !legacy_connections.is_empty() {
+        let target = root.join(".agentkib").join(&manifest.mcp.config);
+        let mut document: McpConfigDocument = fs::read_to_string(&target)
+            .ok()
+            .and_then(|content| serde_json::from_str(&content).ok())
+            .unwrap_or_default();
+        for connection in legacy_connections {
+            let server = legacy_connection_server(connection);
+            if let Some(existing) = document
+                .servers
+                .iter_mut()
+                .find(|value| value.id == server.id)
+            {
+                *existing = server;
+            } else {
+                document.servers.push(server);
+            }
+        }
+        document
+            .servers
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        push_change(
+            &mut changes,
+            target,
+            format!("{}\n", serde_json::to_string_pretty(&document)?),
+            ChangeScope::Project,
+            RiskLevel::Medium,
+            "json",
+        )?;
+    }
 
     let common_enabled = [AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
         .into_iter()
@@ -232,7 +275,7 @@ pub fn plan_workspace_changes(
         push_change(
             &mut changes,
             root.join(".mcp.json"),
-            merge_claude_mcp(&root.join(".mcp.json"), &manifest.connections)?,
+            merge_claude_mcp(&root.join(".mcp.json"), &gateway_connections)?,
             ChangeScope::Project,
             RiskLevel::Medium,
             "json",
@@ -271,7 +314,7 @@ pub fn plan_workspace_changes(
         push_change(
             &mut changes,
             root.join(".codex/config.toml"),
-            merge_codex_config(&root.join(".codex/config.toml"), &manifest.connections)?,
+            merge_codex_config(&root.join(".codex/config.toml"), &gateway_connections)?,
             ChangeScope::Project,
             RiskLevel::Medium,
             "toml",
@@ -415,7 +458,7 @@ pub fn plan_workspace_changes(
         push_change(
             &mut changes,
             path.clone(),
-            merge_openclaw(path, &manifest.connections)?,
+            merge_openclaw(path, &gateway_connections)?,
             ChangeScope::AgentHome,
             RiskLevel::High,
             "json",
@@ -427,7 +470,7 @@ pub fn plan_workspace_changes(
         push_change(
             &mut changes,
             path.clone(),
-            merge_hermes(path, &root, manifest)?,
+            merge_hermes(path, &root, &gateway_connections)?,
             ChangeScope::AgentHome,
             RiskLevel::High,
             "yaml",
@@ -435,6 +478,8 @@ pub fn plan_workspace_changes(
     }
     changes.retain(|change| change.before != change.after);
     let mut persisted_manifest = manifest.clone();
+    persisted_manifest.schema_version = 2;
+    persisted_manifest.connections.clear();
     update_generated_hashes(&root, &mut persisted_manifest, &changes);
     let manifest_target = manifest_path(&root);
     let manifest_after = serde_yaml::to_string(&persisted_manifest)?;
@@ -639,6 +684,35 @@ fn targeted(connection: &ConnectionDefinition, agent: AgentKind) -> bool {
     connection.targets.is_empty() || connection.targets.contains(&agent)
 }
 
+fn legacy_connection_server(connection: &ConnectionDefinition) -> McpServerConfig {
+    let transport = match &connection.transport {
+        ConnectionTransport::Stdio { command, args } => McpServerTransport::Stdio {
+            command: command.clone(),
+            args: args.clone(),
+            cwd: None,
+        },
+        ConnectionTransport::Http { url } => {
+            McpServerTransport::StreamableHttp { url: url.clone() }
+        }
+    };
+    McpServerConfig {
+        id: safe_key(&connection.name),
+        name: connection.name.clone(),
+        enabled: true,
+        transport,
+        // Values belong in mcp.local.json and must never enter a reviewed public Diff.
+        env: Default::default(),
+        headers: Default::default(),
+        oauth_credentials: None,
+        local_config_path: None,
+        targets: connection.targets.clone(),
+        allow_tools: connection.allow_tools.clone(),
+        lan_allow_tools: Vec::new(),
+        supports_parallel_tool_calls: false,
+        package: None,
+    }
+}
+
 fn merge_codex_config(path: &Path, connections: &[ConnectionDefinition]) -> Result<String> {
     let existing = fs::read_to_string(path).unwrap_or_default();
     if !existing.contains(TOML_START) {
@@ -671,9 +745,10 @@ fn merge_codex_config(path: &Path, connections: &[ConnectionDefinition]) -> Resu
                     serde_json::to_string(args).unwrap_or_else(|_| "[]".into())
                 ));
             }
-            ConnectionTransport::Http { url } => {
-                block.push_str(&format!("url = {}\n", toml_string(url)))
-            }
+            ConnectionTransport::Http { url } => block.push_str(&format!(
+                "url = {}\n",
+                toml_string(&agent_url(url, AgentKind::Codex))
+            )),
         }
         if !connection.allow_tools.is_empty() {
             block.push_str(&format!(
@@ -714,7 +789,7 @@ fn merge_claude_mcp(path: &Path, connections: &[ConnectionDefinition]) -> Result
         .iter()
         .filter(|value| targeted(value, AgentKind::ClaudeCode))
     {
-        merge_json_server(servers, connection);
+        merge_json_server(servers, connection, AgentKind::ClaudeCode);
     }
     Ok(format!("{}\n", serde_json::to_string_pretty(&root)?))
 }
@@ -735,13 +810,17 @@ fn merge_openclaw(path: &Path, connections: &[ConnectionDefinition]) -> Result<S
         .iter()
         .filter(|value| targeted(value, AgentKind::OpenClaw))
     {
-        merge_json_server(servers, connection);
+        merge_json_server(servers, connection, AgentKind::OpenClaw);
     }
     Ok(format!("{}\n", serde_json::to_string_pretty(&root)?))
 }
 
-fn merge_json_server(servers: &mut JsonMap<String, JsonValue>, connection: &ConnectionDefinition) {
-    let generated = connection_json(connection);
+fn merge_json_server(
+    servers: &mut JsonMap<String, JsonValue>,
+    connection: &ConnectionDefinition,
+    agent: AgentKind,
+) {
+    let generated = connection_json(connection, agent);
     let existing = servers
         .entry(connection.name.clone())
         .or_insert_with(|| JsonValue::Object(JsonMap::new()));
@@ -754,7 +833,7 @@ fn merge_json_server(servers: &mut JsonMap<String, JsonValue>, connection: &Conn
     }
 }
 
-fn connection_json(connection: &ConnectionDefinition) -> JsonValue {
+fn connection_json(connection: &ConnectionDefinition, agent: AgentKind) -> JsonValue {
     let mut value = JsonMap::new();
     match &connection.transport {
         ConnectionTransport::Stdio { command, args } => {
@@ -762,7 +841,16 @@ fn connection_json(connection: &ConnectionDefinition) -> JsonValue {
             value.insert("args".into(), serde_json::json!(args));
         }
         ConnectionTransport::Http { url } => {
-            value.insert("url".into(), url.clone().into());
+            value.insert("url".into(), agent_url(url, agent).into());
+            match agent {
+                AgentKind::ClaudeCode => {
+                    value.insert("type".into(), "http".into());
+                }
+                AgentKind::OpenClaw => {
+                    value.insert("transport".into(), "streamable-http".into());
+                }
+                AgentKind::Codex | AgentKind::Hermes => {}
+            }
         }
     }
     if !connection.env.is_empty() {
@@ -777,6 +865,16 @@ fn connection_json(connection: &ConnectionDefinition) -> JsonValue {
     JsonValue::Object(value)
 }
 
+fn agent_url(url: &str, agent: AgentKind) -> String {
+    let slug = match agent {
+        AgentKind::Codex => "codex",
+        AgentKind::ClaudeCode => "claude-code",
+        AgentKind::OpenClaw => "open-claw",
+        AgentKind::Hermes => "hermes",
+    };
+    url.replace("{agent}", slug)
+}
+
 fn read_json_object(path: &Path) -> Result<JsonMap<String, JsonValue>> {
     let content = fs::read_to_string(path).unwrap_or_else(|_| "{}".into());
     let value: JsonValue = serde_json::from_str(&content)
@@ -787,7 +885,11 @@ fn read_json_object(path: &Path) -> Result<JsonMap<String, JsonValue>> {
         .context("JSON root must be an object")
 }
 
-fn merge_hermes(path: &Path, project: &Path, manifest: &Manifest) -> Result<String> {
+fn merge_hermes(
+    path: &Path,
+    project: &Path,
+    connections: &[ConnectionDefinition],
+) -> Result<String> {
     let content = fs::read_to_string(path).unwrap_or_else(|_| "{}".into());
     let mut root: serde_yaml::Mapping = serde_yaml::from_str(&content)
         .with_context(|| format!("Invalid YAML: {}", path.display()))?;
@@ -797,14 +899,13 @@ fn merge_hermes(path: &Path, project: &Path, manifest: &Manifest) -> Result<Stri
         .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
         .as_mapping_mut()
         .context("Hermes mcp_servers must be an object")?;
-    for connection in manifest
-        .connections
+    for connection in connections
         .iter()
         .filter(|value| targeted(value, AgentKind::Hermes))
     {
         servers.insert(
             serde_yaml::Value::String(connection.name.clone()),
-            serde_yaml::to_value(connection_json(connection))?,
+            serde_yaml::to_value(connection_json(connection, AgentKind::Hermes))?,
         );
     }
     let skills_key = serde_yaml::Value::String("external_skill_dirs".into());
@@ -926,7 +1027,7 @@ mod tests {
             allow_tools: vec![],
             targets: vec![AgentKind::Hermes],
         });
-        let merged = merge_hermes(&config, dir.path(), &manifest).unwrap();
+        let merged = merge_hermes(&config, dir.path(), &manifest.connections).unwrap();
         assert!(merged.contains("theme: dark"));
         assert!(merged.contains("custom:"));
         assert!(merged.contains("/existing/skills"));
@@ -983,6 +1084,110 @@ mod tests {
         assert_eq!(value["theme"], "dark");
         assert_eq!(value["mcp"]["servers"]["agentkib"]["platformOnly"], true);
         assert_eq!(value["mcp"]["servers"]["agentkib"]["command"], "/new");
+    }
+
+    #[test]
+    fn hub_http_connection_uses_each_platform_native_shape() {
+        let dir = tempdir().unwrap();
+        let connection = ConnectionDefinition {
+            name: "agentkib".into(),
+            transport: ConnectionTransport::Http {
+                url: "http://127.0.0.1:47653/mcp/v1/workspaces/ws/agents/{agent}".into(),
+            },
+            env: BTreeMap::new(),
+            allow_tools: vec![],
+            targets: AgentKind::ALL.into_iter().collect(),
+        };
+        let claude: JsonValue = serde_json::from_str(
+            &merge_claude_mcp(
+                &dir.path().join(".mcp.json"),
+                std::slice::from_ref(&connection),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(claude["mcpServers"]["agentkib"]["type"], "http");
+        assert!(
+            claude["mcpServers"]["agentkib"]["url"]
+                .as_str()
+                .unwrap()
+                .ends_with("/claude-code")
+        );
+
+        let openclaw: JsonValue = serde_json::from_str(
+            &merge_openclaw(
+                &dir.path().join("openclaw.json"),
+                std::slice::from_ref(&connection),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            openclaw["mcp"]["servers"]["agentkib"]["transport"],
+            "streamable-http"
+        );
+        assert!(
+            openclaw["mcp"]["servers"]["agentkib"]["url"]
+                .as_str()
+                .unwrap()
+                .ends_with("/open-claw")
+        );
+
+        let codex = merge_codex_config(
+            &dir.path().join("config.toml"),
+            std::slice::from_ref(&connection),
+        )
+        .unwrap();
+        assert!(codex.contains("/agents/codex"));
+
+        let hermes = merge_hermes(
+            &dir.path().join("hermes.yaml"),
+            dir.path(),
+            std::slice::from_ref(&connection),
+        )
+        .unwrap();
+        assert!(hermes.contains("/agents/hermes"));
+    }
+
+    #[test]
+    fn legacy_connections_are_migrated_to_v2_hub_config() {
+        let dir = tempdir().unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.schema_version = 1;
+        manifest.connections.push(ConnectionDefinition {
+            name: "filesystem".into(),
+            transport: ConnectionTransport::Stdio {
+                command: "node".into(),
+                args: vec!["server.js".into()],
+            },
+            env: BTreeMap::new(),
+            allow_tools: vec!["read_file".into()],
+            targets: vec![AgentKind::Codex],
+        });
+        manifest.connections.push(ConnectionDefinition {
+            name: "agentkib".into(),
+            transport: ConnectionTransport::Http {
+                url: "http://127.0.0.1:47653/mcp/v1/workspaces/ws/agents/{agent}".into(),
+            },
+            env: BTreeMap::new(),
+            allow_tools: vec![],
+            targets: AgentKind::ALL.into_iter().collect(),
+        });
+        let plan = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        let mcp = plan
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with(".agentkib/mcp.json"))
+            .unwrap();
+        assert!(mcp.after.contains("filesystem"));
+        let persisted = plan
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with(".agentkib/manifest.yaml"))
+            .unwrap();
+        let persisted: Manifest = serde_yaml::from_str(&persisted.after).unwrap();
+        assert_eq!(persisted.schema_version, 2);
+        assert!(persisted.connections.is_empty());
     }
 
     #[test]
