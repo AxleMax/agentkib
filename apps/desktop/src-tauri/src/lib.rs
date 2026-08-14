@@ -5,6 +5,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::{Duration, Instant};
 
 use agentkib_adapters::{HomeTargets, default_manifest, plan_workspace_changes};
 use agentkib_core::{
@@ -21,20 +22,41 @@ use agentkib_gateways::{RemoteGatewayInput, RemoteGatewaySummary};
 use agentkib_insights::{
     Achievement, AgentUsageBreakdown, GitIdentitySummary, HeatmapPoint, InsightsQuery,
     InsightsStatus, InsightsSummary, ModelUsageBreakdown, RepositoryCommitBreakdown,
-    WorkspaceUsageBreakdown, collect_git, collect_usage,
+    WorkspaceUsageBreakdown, collect_git, collect_usage, shutdown_external_commands,
 };
 use agentkib_mcp::{HubController, config as mcp_config, installation_root};
+use agentkib_quota::{
+    CollectorCapabilities, DashboardCliCollector, QuotaBackend, QuotaCollector,
+    QuotaCollectorStatus, QuotaCommandOutput, QuotaCommandRunner, QuotaSnapshot,
+    resolve_codexbar_config, sanitize_diagnostic, write_managed_config,
+};
 use agentkib_store::{Store, default_backup_dir, default_data_dir};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Theme, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
 mod i18n;
 mod obsidian;
+mod refresh;
 use i18n::{LocalePreference, SupportedLocale, translate};
 use obsidian::{ObsidianIntegration, ObsidianWorkspaceLink};
+use refresh::{RefreshCoordinator, RefreshJobStatus, RefreshKind, RefreshReceipt};
 
 type CommandResult<T> = Result<T, LocalizedMessage>;
+
+#[derive(Debug, Serialize)]
+struct InsightsView {
+    summary: InsightsSummary,
+    heatmap: Vec<HeatmapPoint>,
+    agents: Vec<AgentUsageBreakdown>,
+    models: Vec<ModelUsageBreakdown>,
+    workspaces: Vec<WorkspaceUsageBreakdown>,
+    repositories: Vec<RepositoryCommitBreakdown>,
+    achievements: Vec<Achievement>,
+    status: InsightsStatus,
+}
 
 #[derive(Debug, Clone, Serialize)]
 struct LocalizedMessage {
@@ -125,6 +147,11 @@ struct DiscoveryRuntime {
 
 #[derive(Debug, Default)]
 struct InsightsRuntime {
+    running: AtomicBool,
+}
+
+#[derive(Debug, Default)]
+struct QuotaRuntime {
     running: AtomicBool,
 }
 
@@ -223,9 +250,26 @@ fn validate_workspace(project: String) -> CommandResult<agentkib_core::Workspace
 #[tauri::command]
 fn discover_workspaces(
     app: AppHandle,
-    state: tauri::State<'_, Arc<DiscoveryRuntime>>,
-) -> CommandResult<DiscoveryReport> {
-    perform_discovery(&app, state.inner())
+    coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
+) -> RefreshReceipt {
+    coordinator.request(app, RefreshKind::Discovery, true)
+}
+
+#[tauri::command]
+fn request_refresh(
+    app: AppHandle,
+    coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
+    kind: RefreshKind,
+    force: Option<bool>,
+) -> RefreshReceipt {
+    coordinator.request(app, kind, force.unwrap_or(false))
+}
+
+#[tauri::command]
+fn get_refresh_status(
+    coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
+) -> Vec<RefreshJobStatus> {
+    coordinator.statuses()
 }
 
 #[tauri::command]
@@ -450,9 +494,39 @@ fn list_activity(limit: usize) -> CommandResult<Vec<ActivityRecord>> {
 #[tauri::command]
 fn refresh_insights(
     app: AppHandle,
-    state: tauri::State<'_, Arc<InsightsRuntime>>,
-) -> CommandResult<InsightsSummary> {
-    perform_insights(&app, state.inner())
+    coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
+) -> RefreshReceipt {
+    coordinator.request(app, RefreshKind::Insights, true)
+}
+
+#[tauri::command]
+async fn get_insights_view(
+    query: InsightsQuery,
+    coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
+) -> CommandResult<InsightsView> {
+    let running = coordinator.statuses().iter().any(|status| {
+        status.kind == RefreshKind::Insights
+            && matches!(
+                status.state,
+                refresh::RefreshState::Queued | refresh::RefreshState::Running
+            )
+    });
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<InsightsView> {
+        let store = Store::open_default()?;
+        Ok(InsightsView {
+            summary: store.insights_summary(&query)?,
+            heatmap: store.insights_heatmap(&query)?,
+            agents: store.agent_usage_breakdown(&query)?,
+            models: store.model_usage_breakdown(&query)?,
+            workspaces: store.workspace_usage_breakdown(&query)?,
+            repositories: store.repository_commit_breakdown(&query)?,
+            achievements: store.list_achievements()?,
+            status: store.insights_status(running)?,
+        })
+    })
+    .await
+    .map_err(format_error)?
+    .map_err(format_error)
 }
 
 #[tauri::command]
@@ -514,6 +588,40 @@ fn get_insights_status(
 ) -> CommandResult<InsightsStatus> {
     Store::open_default()
         .and_then(|store| store.insights_status(state.running.load(Ordering::SeqCst)))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_quota_snapshot() -> CommandResult<Option<QuotaSnapshot>> {
+    Store::open_default()
+        .and_then(|store| store.quota_snapshot())
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn refresh_quota(
+    app: AppHandle,
+    coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
+) -> RefreshReceipt {
+    coordinator.request(app, RefreshKind::Quota, true)
+}
+
+#[tauri::command]
+fn get_quota_collector_status(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<QuotaRuntime>>,
+) -> CommandResult<QuotaCollectorStatus> {
+    let context = quota_collection_context(&app).map_err(format_error)?;
+    Store::open_default()
+        .and_then(|store| {
+            store.quota_collector_status(
+                context.backend,
+                context.platform_supported,
+                context.sidecar_available,
+                context.config_source,
+                state.running.load(Ordering::SeqCst),
+            )
+        })
         .map_err(format_error)
 }
 
@@ -1297,6 +1405,8 @@ fn show_main_window(app: &AppHandle) {
 
 fn request_real_exit(app: &AppHandle, lifecycle: &LifecycleState) {
     lifecycle.quitting.store(true, Ordering::SeqCst);
+    app.state::<Arc<RefreshCoordinator>>().shutdown();
+    shutdown_external_commands();
     app.state::<Arc<HubController>>().shutdown();
     app.exit(0);
 }
@@ -1353,6 +1463,282 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         });
 }
 
+const QUOTA_SIDECAR: &str = "agentkib-quota-sidecar";
+const QUOTA_OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
+
+#[derive(Debug)]
+struct QuotaCollectionContext {
+    backend: QuotaBackend,
+    platform_supported: bool,
+    sidecar_available: bool,
+    config_source: String,
+    environment: BTreeMap<String, String>,
+}
+
+#[derive(Clone)]
+struct TauriQuotaRunner {
+    app: AppHandle,
+}
+
+impl QuotaCommandRunner for TauriQuotaRunner {
+    fn run(
+        &self,
+        args: &[String],
+        env: &BTreeMap<String, String>,
+        timeout: Duration,
+    ) -> anyhow::Result<QuotaCommandOutput> {
+        let command = self
+            .app
+            .shell()
+            .sidecar(QUOTA_SIDECAR)?
+            .args(args)
+            .envs(env)
+            .set_raw_out(true);
+        let (mut events, child) = command.spawn()?;
+        let mut child = Some(child);
+        let started = Instant::now();
+        let coordinator = self.app.state::<Arc<RefreshCoordinator>>().inner().clone();
+        tauri::async_runtime::block_on(async move {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let mut exit_code = None;
+            loop {
+                if !coordinator.is_accepting() {
+                    if let Some(child) = child.take() {
+                        let _ = child.kill();
+                    }
+                    anyhow::bail!("quota collector was cancelled because AgentKib is exiting");
+                }
+                let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
+                    if let Some(child) = child.take() {
+                        let _ = child.kill();
+                    }
+                    anyhow::bail!("quota collector timed out");
+                };
+                match tokio::time::timeout(remaining.min(Duration::from_millis(100)), events.recv())
+                    .await
+                {
+                    Ok(Some(CommandEvent::Stdout(bytes))) => {
+                        if stdout.len().saturating_add(bytes.len()) > QUOTA_OUTPUT_LIMIT {
+                            if let Some(child) = child.take() {
+                                let _ = child.kill();
+                            }
+                            anyhow::bail!("quota collector stdout exceeded the size limit");
+                        }
+                        stdout.extend(bytes);
+                    }
+                    Ok(Some(CommandEvent::Stderr(bytes))) => {
+                        if stderr.len().saturating_add(bytes.len()) > QUOTA_OUTPUT_LIMIT {
+                            if let Some(child) = child.take() {
+                                let _ = child.kill();
+                            }
+                            anyhow::bail!("quota collector stderr exceeded the size limit");
+                        }
+                        stderr.extend(bytes);
+                    }
+                    Ok(Some(CommandEvent::Terminated(payload))) => {
+                        exit_code = payload.code;
+                        break;
+                    }
+                    Ok(Some(CommandEvent::Error(error))) => {
+                        if let Some(child) = child.take() {
+                            let _ = child.kill();
+                        }
+                        anyhow::bail!(error)
+                    }
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        if let Some(child) = child.take() {
+                            let _ = child.kill();
+                        }
+                        break;
+                    }
+                    Err(_) => continue,
+                }
+            }
+            Ok(QuotaCommandOutput {
+                stdout,
+                stderr,
+                success: exit_code == Some(0),
+            })
+        })
+    }
+}
+
+fn quota_backend() -> QuotaBackend {
+    #[cfg(target_os = "windows")]
+    {
+        QuotaBackend::WinCodexBar
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        QuotaBackend::CodexBarCli
+    }
+}
+
+fn quota_platform_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows"
+    ))
+}
+
+fn quota_sidecar_available() -> bool {
+    let Ok(executable) = std::env::current_exe() else {
+        return false;
+    };
+    let Some(directory) = executable.parent() else {
+        return false;
+    };
+    #[cfg(target_os = "windows")]
+    let path = directory.join("agentkib-quota-sidecar.exe");
+    #[cfg(not(target_os = "windows"))]
+    let path = directory.join("agentkib-quota-sidecar");
+    path.is_file()
+}
+
+fn quota_collection_context(_app: &AppHandle) -> anyhow::Result<QuotaCollectionContext> {
+    let process_environment = std::env::vars().collect::<BTreeMap<_, _>>();
+    let home = dirs::home_dir().context("Home directory is unavailable")?;
+    let mut environment = BTreeMap::new();
+    let (config_path, config_source) =
+        if let Some(path) = resolve_codexbar_config(&home, &process_environment) {
+            let source = if process_environment.contains_key("CODEXBAR_CONFIG") {
+                "environment"
+            } else {
+                "codexbar"
+            };
+            (path, source.to_string())
+        } else {
+            let path = default_data_dir()?.join("quota/codexbar-config.json");
+            let installations = Store::open_default()?.list_agent_installations()?;
+            let mut providers = Vec::new();
+            if installations
+                .iter()
+                .any(|value| value.installed && value.agent == AgentKind::Codex)
+            {
+                providers.push("codex");
+            }
+            if installations
+                .iter()
+                .any(|value| value.installed && value.agent == AgentKind::ClaudeCode)
+            {
+                providers.push("claude");
+            }
+            if installations
+                .iter()
+                .any(|value| value.installed && value.agent == AgentKind::Cursor)
+            {
+                providers.push("cursor");
+            }
+            if providers.is_empty() {
+                providers.push("codex");
+            }
+            write_managed_config(&path, &providers)?;
+            (path, "agentkib-managed".to_string())
+        };
+    environment.insert(
+        "CODEXBAR_CONFIG".to_string(),
+        config_path.to_string_lossy().into_owned(),
+    );
+    if let Ok(path) = std::env::var("PATH") {
+        environment.insert("PATH".to_string(), path);
+    }
+    Ok(QuotaCollectionContext {
+        backend: quota_backend(),
+        platform_supported: quota_platform_supported(),
+        sidecar_available: quota_sidecar_available(),
+        config_source,
+        environment,
+    })
+}
+
+fn quota_error_key(error: &anyhow::Error, context: &QuotaCollectionContext) -> &'static str {
+    if !context.platform_supported {
+        "errors.quotaUnsupportedPlatform"
+    } else if !context.sidecar_available {
+        "errors.quotaSidecarMissing"
+    } else if error.to_string().contains("schema version") {
+        "errors.quotaSchemaUnsupported"
+    } else if error.to_string().contains("timed out") {
+        "errors.quotaTimeout"
+    } else {
+        "errors.quotaUnavailable"
+    }
+}
+
+fn perform_quota(
+    app: &AppHandle,
+    state: &QuotaRuntime,
+    write_lock: &Mutex<()>,
+) -> CommandResult<QuotaSnapshot> {
+    if state.running.swap(true, Ordering::SeqCst) {
+        return Err(LocalizedMessage::new("errors.quotaRunning"));
+    }
+    let result = (|| -> anyhow::Result<QuotaSnapshot> {
+        let context = quota_collection_context(app)?;
+        let collector = DashboardCliCollector::new(
+            context.backend,
+            TauriQuotaRunner { app: app.clone() },
+            context.environment.clone(),
+            CollectorCapabilities {
+                platform_supported: context.platform_supported,
+                sidecar_available: context.sidecar_available,
+                multi_account: true,
+                credits: true,
+            },
+        );
+        match collector.collect(Duration::from_secs(35)) {
+            Ok(snapshot) => {
+                let _write = write_lock
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("refresh database write lock is poisoned"))?;
+                Store::open_default()?.save_quota_snapshot(&snapshot)?;
+                Ok(snapshot)
+            }
+            Err(error) => {
+                let key = quota_error_key(&error, &context);
+                let detail = sanitize_diagnostic(&error.to_string());
+                let _write = write_lock
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("refresh database write lock is poisoned"))?;
+                Store::open_default()?.record_quota_failure(
+                    context.backend,
+                    key,
+                    (!detail.is_empty()).then_some(detail.as_str()),
+                )?;
+                Err(error)
+            }
+        }
+    })();
+    state.running.store(false, Ordering::SeqCst);
+    match result {
+        Ok(snapshot) => {
+            let _ = app.emit("agentkib:quota-updated", &snapshot);
+            let _ = refresh_tray_status(app);
+            Ok(snapshot)
+        }
+        Err(error) => {
+            let _ = refresh_tray_status(app);
+            Err(LocalizedMessage::with_detail(
+                if !quota_platform_supported() {
+                    "errors.quotaUnsupportedPlatform"
+                } else if !quota_sidecar_available() {
+                    "errors.quotaSidecarMissing"
+                } else if error.to_string().contains("schema version") {
+                    "errors.quotaSchemaUnsupported"
+                } else if error.to_string().contains("timed out") {
+                    "errors.quotaTimeout"
+                } else {
+                    "errors.quotaUnavailable"
+                },
+                sanitize_diagnostic(&error.to_string()),
+            ))
+        }
+    }
+}
+
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::menu::MenuBuilder;
     use tauri::tray::TrayIconBuilder;
@@ -1360,6 +1746,8 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
     let menu = MenuBuilder::new(app)
         .text("show", translate(locale, "tray.open", &[]))
+        .text("quota_all", translate(locale, "tray.quotaLoading", &[]))
+        .separator()
         .text("status", translate(locale, "tray.refreshing", &[]))
         .text("mcp_status", "MCP Hub · starting")
         .text("refresh", translate(locale, "tray.refresh", &[]))
@@ -1375,17 +1763,23 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
             "refresh" => {
-                let app = app.clone();
-                std::thread::spawn(move || {
-                    let state = app.state::<Arc<DiscoveryRuntime>>();
-                    let _ = perform_discovery(&app, state.inner());
-                    let insights = app.state::<Arc<InsightsRuntime>>();
-                    let _ = perform_insights(&app, insights.inner());
-                });
+                let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
+                for kind in [
+                    RefreshKind::Discovery,
+                    RefreshKind::Insights,
+                    RefreshKind::Gateways,
+                    RefreshKind::Quota,
+                ] {
+                    coordinator.request(app.clone(), kind, true);
+                }
             }
+            "quota_all" => show_quota_page(app, None),
             "quit" => {
                 let lifecycle = app.state::<Arc<LifecycleState>>();
                 request_real_exit(app, lifecycle.inner());
+            }
+            id if id.starts_with("quota_provider:") => {
+                show_quota_page(app, id.strip_prefix("quota_provider:").map(str::to_owned));
             }
             _ => {}
         });
@@ -1393,7 +1787,28 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn perform_discovery(app: &AppHandle, state: &DiscoveryRuntime) -> CommandResult<DiscoveryReport> {
+#[derive(Clone, Serialize)]
+struct NavigationRequest {
+    page: &'static str,
+    provider: Option<String>,
+}
+
+fn show_quota_page(app: &AppHandle, provider: Option<String>) {
+    show_main_window(app);
+    let _ = app.emit(
+        "agentkib:navigate",
+        NavigationRequest {
+            page: "quota",
+            provider,
+        },
+    );
+}
+
+fn perform_discovery(
+    app: &AppHandle,
+    state: &DiscoveryRuntime,
+    write_lock: &Mutex<()>,
+) -> CommandResult<DiscoveryReport> {
     if state.running.swap(true, Ordering::SeqCst) {
         return state
             .last_report
@@ -1403,8 +1818,7 @@ fn perform_discovery(app: &AppHandle, state: &DiscoveryRuntime) -> CommandResult
             .ok_or_else(|| LocalizedMessage::new("errors.discoveryRunning"));
     }
     let result = (|| -> anyhow::Result<DiscoveryReport> {
-        let store = Store::open_default()?;
-        let roots: Vec<_> = store
+        let roots: Vec<_> = Store::open_default()?
             .list_scan_roots()?
             .into_iter()
             .filter(|root| root.enabled)
@@ -1412,6 +1826,10 @@ fn perform_discovery(app: &AppHandle, state: &DiscoveryRuntime) -> CommandResult
             .collect();
         let started_at = chrono::Utc::now();
         let snapshot = discover_local_workspaces(&roots);
+        let _write = write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("refresh database write lock is poisoned"))?;
+        let store = Store::open_default()?;
         store.sync_discovery(
             &snapshot.candidates,
             &snapshot.installations,
@@ -1446,18 +1864,77 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .count();
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
     let hub_status = app.state::<Arc<HubController>>().status();
-    let menu = MenuBuilder::new(app)
-        .text("show", translate(locale, "tray.open", &[]))
+    let refreshing = app
+        .state::<Arc<RefreshCoordinator>>()
+        .statuses()
+        .iter()
+        .any(|status| {
+            matches!(
+                status.state,
+                refresh::RefreshState::Queued | refresh::RefreshState::Running
+            )
+        });
+    let quota = Store::open_default()
+        .and_then(|store| store.quota_snapshot())
+        .ok()
+        .flatten();
+    let mut builder = MenuBuilder::new(app).text("show", translate(locale, "tray.open", &[]));
+    if let Some(snapshot) = quota {
+        let mut providers = snapshot
+            .providers
+            .iter()
+            .filter_map(|provider| {
+                provider
+                    .lowest_remaining_percent()
+                    .map(|remaining| (provider, remaining))
+            })
+            .collect::<Vec<_>>();
+        providers.sort_by(|left, right| left.1.total_cmp(&right.1));
+        for (provider, remaining) in providers.into_iter().take(4) {
+            let reset = provider
+                .windows
+                .iter()
+                .chain(
+                    provider
+                        .accounts
+                        .iter()
+                        .flat_map(|account| account.windows.iter()),
+                )
+                .filter_map(|window| window.reset_at)
+                .filter(|reset_at| *reset_at > chrono::Utc::now())
+                .min()
+                .map(format_quota_reset)
+                .unwrap_or_else(|| "—".to_string());
+            builder = builder.text(
+                format!("quota_provider:{}", provider.id),
+                format!(
+                    "{} · {:.0}% · {}",
+                    provider.name,
+                    remaining.clamp(0.0, 100.0),
+                    reset
+                ),
+            );
+        }
+        builder = builder.text("quota_all", translate(locale, "tray.quotaAll", &[]));
+    } else {
+        builder = builder.text("quota_all", translate(locale, "tray.quotaUnavailable", &[]));
+    }
+    let menu = builder
+        .separator()
         .text(
             "status",
-            translate(
-                locale,
-                "tray.status",
-                &[
-                    ("workspaces", workspaces.len().to_string()),
-                    ("attention", attention.to_string()),
-                ],
-            ),
+            if refreshing {
+                translate(locale, "tray.refreshing", &[])
+            } else {
+                translate(
+                    locale,
+                    "tray.status",
+                    &[
+                        ("workspaces", workspaces.len().to_string()),
+                        ("attention", attention.to_string()),
+                    ],
+                )
+            },
         )
         .text(
             "mcp_status",
@@ -1486,7 +1963,22 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn perform_insights(app: &AppHandle, state: &InsightsRuntime) -> CommandResult<InsightsSummary> {
+fn format_quota_reset(reset_at: chrono::DateTime<chrono::Utc>) -> String {
+    let seconds = (reset_at - chrono::Utc::now()).num_seconds().max(0);
+    if seconds < 60 * 60 {
+        format!("{}m", (seconds / 60).max(1))
+    } else if seconds < 24 * 60 * 60 {
+        format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
+    } else {
+        format!("{}d {}h", seconds / 86400, (seconds % 86400) / 3600)
+    }
+}
+
+fn perform_insights(
+    app: &AppHandle,
+    state: &InsightsRuntime,
+    write_lock: &Mutex<()>,
+) -> CommandResult<InsightsSummary> {
     if state.running.swap(true, Ordering::SeqCst) {
         return Err(LocalizedMessage::new("errors.insightsRunning"));
     }
@@ -1498,6 +1990,10 @@ fn perform_insights(app: &AppHandle, state: &InsightsRuntime) -> CommandResult<I
         // 文件、Agent CLI 和 Git 读取均发生在数据库事务之外，避免后台刷新长期占锁。
         let usage = collect_usage(&usage_cursors);
         let repositories = collect_git(&workspaces, &fingerprints);
+        let _write = write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("refresh database write lock is poisoned"))?;
+        let store = Store::open_default()?;
         store.sync_insights(&usage, &repositories)?;
         store.insights_summary(&InsightsQuery::default())
     })();
@@ -1511,22 +2007,76 @@ fn perform_insights(app: &AppHandle, state: &InsightsRuntime) -> CommandResult<I
     }
 }
 
-fn start_discovery_scheduler(app: AppHandle) {
-    std::thread::spawn(move || {
-        loop {
+fn run_refresh_job(
+    app: &AppHandle,
+    kind: RefreshKind,
+    write_lock: &Mutex<()>,
+) -> anyhow::Result<()> {
+    let result = match kind {
+        RefreshKind::Discovery => {
             let state = app.state::<Arc<DiscoveryRuntime>>();
-            let _ = perform_discovery(&app, state.inner());
-            let insights = app.state::<Arc<InsightsRuntime>>();
-            let _ = perform_insights(&app, insights.inner());
-            if let Ok(path) = remote_gateway_registry_path()
-                && let Ok(gateways) =
-                    tauri::async_runtime::block_on(agentkib_gateways::refresh_all(&path))
-            {
+            perform_discovery(app, state.inner(), write_lock).map(|_| ())
+        }
+        RefreshKind::Insights => {
+            let state = app.state::<Arc<InsightsRuntime>>();
+            perform_insights(app, state.inner(), write_lock).map(|_| ())
+        }
+        RefreshKind::Gateways => remote_gateway_registry_path()
+            .and_then(|path| tauri::async_runtime::block_on(agentkib_gateways::refresh_all(&path)))
+            .map(|gateways| {
+                record_remote_gateway_achievements(&gateways);
                 let _ = app.emit("agentkib:remote-gateways-updated", gateways);
-            }
-            std::thread::sleep(std::time::Duration::from_secs(15 * 60));
+            })
+            .map_err(format_error),
+        RefreshKind::Quota => {
+            let state = app.state::<Arc<QuotaRuntime>>();
+            perform_quota(app, state.inner(), write_lock).map(|_| ())
+        }
+    };
+    result.map_err(|error| anyhow::anyhow!(error.detail.unwrap_or(error.key)))
+}
+
+fn start_refresh_scheduler(
+    app: AppHandle,
+    kind: RefreshKind,
+    initial_delay: Duration,
+    interval: Duration,
+) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(initial_delay).await;
+        loop {
+            let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
+            coordinator.request(app.clone(), kind, false);
+            tokio::time::sleep(interval).await;
         }
     });
+}
+
+fn start_refresh_schedulers(app: AppHandle) {
+    start_refresh_scheduler(
+        app.clone(),
+        RefreshKind::Gateways,
+        Duration::from_secs(1),
+        Duration::from_secs(15 * 60),
+    );
+    start_refresh_scheduler(
+        app.clone(),
+        RefreshKind::Discovery,
+        Duration::from_secs(2),
+        Duration::from_secs(15 * 60),
+    );
+    start_refresh_scheduler(
+        app.clone(),
+        RefreshKind::Quota,
+        Duration::from_secs(3),
+        Duration::from_secs(5 * 60),
+    );
+    start_refresh_scheduler(
+        app,
+        RefreshKind::Insights,
+        Duration::from_secs(4),
+        Duration::from_secs(30 * 60),
+    );
 }
 
 fn format_error(error: impl std::fmt::Display) -> LocalizedMessage {
@@ -1543,6 +2093,8 @@ pub fn run() {
     );
     let discovery = Arc::new(DiscoveryRuntime::default());
     let insights = Arc::new(InsightsRuntime::default());
+    let quota = Arc::new(QuotaRuntime::default());
+    let refresh = Arc::new(RefreshCoordinator::default());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
@@ -1551,27 +2103,49 @@ pub fn run() {
         .manage(hub)
         .manage(discovery)
         .manage(insights)
+        .manage(quota)
+        .manage(refresh)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let theme = app.state::<Arc<LifecycleState>>().theme_preference();
             apply_native_theme(app.handle(), theme)?;
             setup_tray(app)?;
             app.state::<Arc<HubController>>().start()?;
-            start_discovery_scheduler(app.handle().clone());
+            start_refresh_schedulers(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main"
-                && let WindowEvent::CloseRequested { api, .. } = event
-            {
-                handle_close_request(window, api);
+            if window.label() == "main" {
+                match event {
+                    WindowEvent::CloseRequested { api, .. } => handle_close_request(window, api),
+                    WindowEvent::Focused(true) => {
+                        let app = window.app_handle();
+                        let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
+                        for (kind, minutes) in [
+                            (RefreshKind::Discovery, 15),
+                            (RefreshKind::Insights, 30),
+                            (RefreshKind::Gateways, 15),
+                            (RefreshKind::Quota, 5),
+                        ] {
+                            coordinator.request_if_stale(
+                                app.clone(),
+                                kind,
+                                chrono::Duration::minutes(minutes),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
             scan_workspace,
             prepare_manifest,
             validate_workspace,
+            request_refresh,
+            get_refresh_status,
             discover_workspaces,
             list_workspaces,
             get_workspace,
@@ -1598,6 +2172,7 @@ pub fn run() {
             list_global_memories,
             list_activity,
             refresh_insights,
+            get_insights_view,
             get_insights_summary,
             get_insights_heatmap,
             get_agent_usage_breakdown,
@@ -1606,6 +2181,9 @@ pub fn run() {
             get_repository_commit_breakdown,
             list_achievements,
             get_insights_status,
+            get_quota_snapshot,
+            refresh_quota,
+            get_quota_collector_status,
             list_git_identities,
             add_git_identity_alias,
             set_git_identity_enabled,

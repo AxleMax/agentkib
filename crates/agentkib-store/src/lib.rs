@@ -15,6 +15,7 @@ use agentkib_insights::{
     InsightsQuery, InsightsStatus, InsightsSummary, ModelUsageBreakdown, ProviderStatus,
     RepositoryCommitBreakdown, UsageBatch, UsageQuality, WorkspaceUsageBreakdown,
 };
+use agentkib_quota::{QuotaBackend, QuotaCollectorStatus, QuotaSnapshot, sanitize_diagnostic};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Days, Local, NaiveDate, TimeZone, Timelike, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -317,6 +318,26 @@ impl Store {
                  );
                  UPDATE workspaces SET status = 'healthy' WHERE status = 'needs-import';
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '6');
+                 COMMIT;",
+            )?;
+        }
+        if current_version.is_none_or(|version| version < 7) {
+            self.connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS quota_snapshot (
+                   id INTEGER PRIMARY KEY CHECK (id = 1),
+                   snapshot_json TEXT,
+                   backend TEXT NOT NULL,
+                   backend_version TEXT,
+                   generated_at TEXT,
+                   fetched_at TEXT,
+                   stale_after_seconds INTEGER,
+                   last_attempt_at TEXT NOT NULL,
+                   last_success_at TEXT,
+                   error_key TEXT,
+                   error_detail TEXT
+                 );
+                 INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '7');
                  COMMIT;",
             )?;
         }
@@ -811,6 +832,116 @@ impl Store {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    pub fn save_quota_snapshot(&self, snapshot: &QuotaSnapshot) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.connection.execute(
+            "INSERT INTO quota_snapshot(id, snapshot_json, backend, backend_version, generated_at, fetched_at, stale_after_seconds, last_attempt_at, last_success_at, error_key, error_detail)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, NULL, NULL)
+             ON CONFLICT(id) DO UPDATE SET snapshot_json = excluded.snapshot_json, backend = excluded.backend, backend_version = excluded.backend_version, generated_at = excluded.generated_at, fetched_at = excluded.fetched_at, stale_after_seconds = excluded.stale_after_seconds, last_attempt_at = excluded.last_attempt_at, last_success_at = excluded.last_success_at, error_key = NULL, error_detail = NULL",
+            params![
+                serde_json::to_string(snapshot)?,
+                enum_string(snapshot.backend)?,
+                snapshot.backend_version,
+                snapshot.generated_at.to_rfc3339(),
+                snapshot.fetched_at.to_rfc3339(),
+                to_i64(snapshot.stale_after_seconds),
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_quota_failure(
+        &self,
+        backend: QuotaBackend,
+        error_key: &str,
+        error_detail: Option<&str>,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let error_detail = error_detail.map(sanitize_diagnostic);
+        self.connection.execute(
+            "INSERT INTO quota_snapshot(id, backend, last_attempt_at, error_key, error_detail)
+             VALUES (1, ?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET backend = excluded.backend, last_attempt_at = excluded.last_attempt_at, error_key = excluded.error_key, error_detail = excluded.error_detail",
+            params![enum_string(backend)?, now, error_key, error_detail],
+        )?;
+        Ok(())
+    }
+
+    pub fn quota_snapshot(&self) -> Result<Option<QuotaSnapshot>> {
+        let value: Option<(Option<String>, Option<String>)> = self
+            .connection
+            .query_row(
+                "SELECT snapshot_json, error_key FROM quota_snapshot WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        value
+            .and_then(|(snapshot, error_key)| snapshot.map(|snapshot| (snapshot, error_key)))
+            .map(|(value, error_key)| {
+                let mut snapshot: QuotaSnapshot = serde_json::from_str(&value)?;
+                snapshot.refresh_freshness(Utc::now());
+                if error_key.is_some() {
+                    snapshot.freshness = agentkib_quota::QuotaFreshness::Stale;
+                }
+                Ok(snapshot)
+            })
+            .transpose()
+    }
+
+    pub fn quota_collector_status(
+        &self,
+        backend: QuotaBackend,
+        platform_supported: bool,
+        sidecar_available: bool,
+        config_source: String,
+        running: bool,
+    ) -> Result<QuotaCollectorStatus> {
+        type StatusRow = (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let row: Option<StatusRow> = self
+            .connection
+            .query_row(
+                "SELECT backend_version, last_attempt_at, last_success_at, error_key, error_detail FROM quota_snapshot WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()?;
+        let (backend_version, last_attempt_at, last_success_at, mut error_key, error_detail) =
+            row.unwrap_or_default();
+        if error_key.is_none() {
+            error_key = if !platform_supported {
+                Some("errors.quotaUnsupportedPlatform".to_string())
+            } else if !sidecar_available {
+                Some("errors.quotaSidecarMissing".to_string())
+            } else {
+                None
+            };
+        }
+        Ok(QuotaCollectorStatus {
+            backend,
+            backend_version,
+            platform_supported,
+            sidecar_available,
+            config_source,
+            last_attempt_at: last_attempt_at
+                .map(|value| parse_time(&value))
+                .transpose()?,
+            last_success_at: last_success_at
+                .map(|value| parse_time(&value))
+                .transpose()?,
+            running,
+            error_key,
+            error_detail,
+        })
     }
 
     pub fn insight_git_fingerprints(&self) -> Result<BTreeMap<String, String>> {
@@ -2738,6 +2869,38 @@ mod tests {
     }
 
     #[test]
+    fn version_six_migrates_quota_snapshot_without_touching_insights() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO schema_meta(key, value) VALUES ('schema_version', '6');
+                 CREATE TABLE usage_daily(date TEXT PRIMARY KEY, total_tokens INTEGER NOT NULL);
+                 INSERT INTO usage_daily(date, total_tokens) VALUES ('2026-08-14', 42);",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&database).unwrap();
+        let quota_table: bool = store
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'quota_snapshot')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let token_total: i64 = store
+            .connection
+            .query_row("SELECT total_tokens FROM usage_daily", [], |row| row.get(0))
+            .unwrap();
+        assert!(quota_table);
+        assert_eq!(token_total, 42);
+    }
+
+    #[test]
     fn version_three_catalog_summaries_gain_translation_keys() {
         let dir = tempdir().unwrap();
         let database = dir.path().join("db.sqlite");
@@ -2787,6 +2950,53 @@ mod tests {
         for handle in handles {
             assert!(handle.join().unwrap().is_empty());
         }
+    }
+
+    #[test]
+    fn quota_failure_preserves_last_good_snapshot_and_redacts_diagnostics() {
+        let dir = tempdir().unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let payload = br#"{
+          "schemaVersion": 1,
+          "generatedAt": "2026-08-14T02:00:00Z",
+          "staleAfterSeconds": 180,
+          "host": { "codexBarVersion": "0.49.5" },
+          "providers": [{
+            "id": "codex", "name": "Codex", "enabled": true,
+            "source": "oauth", "windows": [{
+              "kind": "session", "label": "5 hour", "usedPercent": 25,
+              "remainingPercent": 75, "resetAt": "2026-08-14T05:00:00Z"
+            }]
+          }]
+        }"#;
+        let snapshot = agentkib_quota::parse_dashboard_snapshot(
+            payload,
+            QuotaBackend::CodexBarCli,
+            Utc::now(),
+        )
+        .unwrap();
+        store.save_quota_snapshot(&snapshot).unwrap();
+        store
+            .record_quota_failure(
+                QuotaBackend::CodexBarCli,
+                "errors.quotaUnavailable",
+                Some("Authorization: Bearer private-token"),
+            )
+            .unwrap();
+
+        let retained = store.quota_snapshot().unwrap().unwrap();
+        assert_eq!(retained.providers[0].id, "codex");
+        assert_eq!(retained.freshness, agentkib_quota::QuotaFreshness::Stale);
+        let diagnostic: String = store
+            .connection
+            .query_row(
+                "SELECT error_detail FROM quota_snapshot WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!diagnostic.contains("private-token"));
+        assert!(diagnostic.contains("redacted"));
     }
 
     #[test]

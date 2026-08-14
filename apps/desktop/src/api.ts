@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, DiscoveryReport, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaSnapshot, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -40,7 +40,9 @@ export const api = {
   uninstallMcp: (installationId: string) => invoke<void>("uninstall_mcp", { installationId, confirmed: true }),
   nativeMcpCandidates: (project?: string) => invoke<McpMigrationCandidate[]>("scan_native_mcp_candidates", { project }),
   planMcpMigration: (project: string, candidateIds: string[]) => invoke<ChangeSet>("plan_mcp_migration", { project, candidateIds }),
-  discoverWorkspaces: () => invoke<DiscoveryReport>("discover_workspaces"),
+  requestRefresh: (kind: RefreshKind, force = false) => invoke<RefreshReceipt>("request_refresh", { kind, force }),
+  refreshStatus: () => invoke<RefreshJobStatus[]>("get_refresh_status"),
+  discoverWorkspaces: () => invoke<RefreshReceipt>("discover_workspaces"),
   workspaces: () => invoke<WorkspaceSummary[]>("list_workspaces"),
   workspace: (id: string) => invoke<WorkspaceSummary | undefined>("get_workspace", { id }),
   addWorkspace: (path: string) => invoke<WorkspaceSummary>("add_workspace", { path }),
@@ -65,7 +67,8 @@ export const api = {
   catalogAssets: (query = "", agent?: AgentKind, workspaceId?: string, limit = 500) => invoke<CatalogAsset[]>("search_catalog_assets", { query, agent, workspaceId, limit }),
   globalMemories: (status?: MemoryStatus) => invoke<MemoryRecord[]>("list_global_memories", { status }),
   activity: (limit = 200) => invoke<ActivityRecord[]>("list_activity", { limit }),
-  refreshInsights: () => invoke<InsightsSummary>("refresh_insights"),
+  refreshInsights: () => invoke<RefreshReceipt>("refresh_insights"),
+  insightsView: (query: InsightsQuery = {}) => invoke<InsightsView>("get_insights_view", { query }),
   insightsSummary: (query: InsightsQuery = {}) => invoke<InsightsSummary>("get_insights_summary", { query }),
   insightsHeatmap: (query: InsightsQuery = {}) => invoke<HeatmapPoint[]>("get_insights_heatmap", { query }),
   agentUsageBreakdown: (query: InsightsQuery = {}) => invoke<AgentUsageBreakdown[]>("get_agent_usage_breakdown", { query }),
@@ -77,4 +80,7 @@ export const api = {
   gitIdentities: () => invoke<GitIdentitySummary[]>("list_git_identities"),
   addGitIdentityAlias: (email: string) => invoke<GitIdentitySummary>("add_git_identity_alias", { email }),
   setGitIdentityEnabled: (id: string, enabled: boolean) => invoke<void>("set_git_identity_enabled", { id, enabled }),
+  quotaSnapshot: () => invoke<QuotaSnapshot | undefined>("get_quota_snapshot"),
+  refreshQuota: () => invoke<RefreshReceipt>("refresh_quota"),
+  quotaCollectorStatus: () => invoke<QuotaCollectorStatus>("get_quota_collector_status"),
 };

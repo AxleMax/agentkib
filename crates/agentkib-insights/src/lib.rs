@@ -1,8 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,6 +18,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
+
+static EXTERNAL_COMMANDS_ACCEPTING: AtomicBool = AtomicBool::new(true);
+
+pub fn shutdown_external_commands() {
+    EXTERNAL_COMMANDS_ACCEPTING.store(false, Ordering::SeqCst);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -218,24 +228,22 @@ pub struct GitIdentitySummary {
 
 pub fn collect_usage(cursors: &BTreeMap<AgentKind, String>) -> Vec<UsageBatch> {
     let home = dirs::home_dir();
-    let providers: Vec<(AgentKind, Box<dyn UsageProvider>)> = vec![
-        (
+    parallel_map_bounded(
+        vec![
             AgentKind::Codex,
-            Box::new(CodexProvider::new(home.as_deref())),
-        ),
-        (
             AgentKind::ClaudeCode,
-            Box::new(ClaudeProvider::new(home.as_deref())),
-        ),
-        (AgentKind::OpenClaw, Box::new(OpenClawProvider)),
-        (
+            AgentKind::OpenClaw,
             AgentKind::Hermes,
-            Box::new(HermesProvider::new(home.as_deref())),
-        ),
-    ];
-    providers
-        .into_iter()
-        .map(|(agent, provider)| {
+        ],
+        3,
+        |agent| {
+            let provider: Box<dyn UsageProvider> = match agent {
+                AgentKind::Codex => Box::new(CodexProvider::new(home.as_deref())),
+                AgentKind::ClaudeCode => Box::new(ClaudeProvider::new(home.as_deref())),
+                AgentKind::OpenClaw => Box::new(OpenClawProvider),
+                AgentKind::Hermes => Box::new(HermesProvider::new(home.as_deref())),
+                AgentKind::Cursor => unreachable!("Cursor usage is not collected here"),
+            };
             let cursor = cursors
                 .get(&agent)
                 .cloned()
@@ -256,8 +264,8 @@ pub fn collect_usage(cursors: &BTreeMap<AgentKind, String>) -> Vec<UsageBatch> {
                 cursor: None,
                 unchanged: false,
             })
-        })
-        .collect()
+        },
+    )
 }
 
 pub fn collect_git(
@@ -272,23 +280,66 @@ pub fn collect_git(
                 .or_insert_with(|| workspace.path.clone());
         }
     }
-    repositories
-        .into_iter()
-        .map(
-            |(group, path)| match collect_git_repository(&group, &path, known_fingerprints) {
-                Ok(value) => value,
-                Err(error) => GitRepositorySnapshot {
-                    repository_group_id: group,
-                    path,
-                    fingerprint: String::new(),
-                    changed: false,
-                    commits: Vec::new(),
-                    identities: Vec::new(),
-                    error: Some(error.to_string()),
-                },
+    parallel_map_bounded(repositories.into_iter().collect(), 4, |(group, path)| {
+        match collect_git_repository(&group, &path, known_fingerprints) {
+            Ok(value) => value,
+            Err(error) => GitRepositorySnapshot {
+                repository_group_id: group,
+                path,
+                fingerprint: String::new(),
+                changed: false,
+                commits: Vec::new(),
+                identities: Vec::new(),
+                error: Some(error.to_string()),
             },
-        )
-        .collect()
+        }
+    })
+}
+
+fn parallel_map_bounded<T, R, F>(items: Vec<T>, concurrency: usize, operation: F) -> Vec<R>
+where
+    T: Send,
+    R: Send,
+    F: Fn(T) -> R + Sync,
+{
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let item_count = items.len();
+    let queue = Arc::new(Mutex::new(
+        items
+            .into_iter()
+            .enumerate()
+            .collect::<std::collections::VecDeque<_>>(),
+    ));
+    let output = Arc::new(Mutex::new(Vec::with_capacity(item_count)));
+    thread::scope(|scope| {
+        for _ in 0..concurrency.max(1).min(item_count) {
+            let queue = Arc::clone(&queue);
+            let output = Arc::clone(&output);
+            let operation = &operation;
+            scope.spawn(move || {
+                loop {
+                    let item = queue
+                        .lock()
+                        .expect("parallel work queue lock is poisoned")
+                        .pop_front();
+                    let Some((index, item)) = item else { break };
+                    output
+                        .lock()
+                        .expect("parallel output lock is poisoned")
+                        .push((index, operation(item)));
+                }
+            });
+        }
+    });
+    let mut output = Arc::try_unwrap(output)
+        .ok()
+        .expect("parallel workers must release their output references")
+        .into_inner()
+        .expect("parallel output lock is poisoned");
+    output.sort_by_key(|(index, _)| *index);
+    output.into_iter().map(|(_, value)| value).collect()
 }
 
 struct CodexProvider {
@@ -1107,42 +1158,144 @@ fn git_output(path: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn command_text(program: &str, args: &[&str]) -> Result<String> {
-    let output = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("Failed to execute {program}"))?;
-    if !output.status.success() {
-        bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    command_output_with_limits(program, args, Duration::from_secs(15), 256 * 1024 * 1024)
+        .map(|output| String::from_utf8_lossy(&output).into_owned())
 }
 
 fn command_output_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
-    let mut child = Command::new(program)
+    command_output_with_limits(program, args, timeout, 16 * 1024 * 1024)
+}
+
+fn command_output_with_limits(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+    stdout_limit: usize,
+) -> Result<Vec<u8>> {
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
         .spawn()
         .with_context(|| format!("Failed to execute {program}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("Command stdout is unavailable")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("Command stderr is unavailable")?;
+    let stdout_reader = thread::spawn(move || read_bounded(stdout, stdout_limit));
+    let stderr_reader = thread::spawn(move || read_bounded(stderr, 64 * 1024));
     let started = Instant::now();
-    loop {
-        if child.try_wait()?.is_some() {
-            let output = child.wait_with_output()?;
-            if !output.status.success() {
-                bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
-            }
-            return Ok(output.stdout);
+    let (status, timed_out) = loop {
+        if let Some(status) = child.try_wait()? {
+            break (status, false);
         }
-        if started.elapsed() >= timeout {
+        if !EXTERNAL_COMMANDS_ACCEPTING.load(Ordering::SeqCst) {
+            terminate_command(&mut child);
             let _ = child.kill();
             let _ = child.wait();
-            bail!("{program} usage query timed out");
+            bail!("{program} query was cancelled because AgentKib is exiting");
+        }
+        if started.elapsed() >= timeout {
+            terminate_command(&mut child);
+            let _ = child.kill();
+            break (child.wait()?, true);
         }
         thread::sleep(Duration::from_millis(25));
+    };
+    let (stdout, stdout_exceeded) = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("{program} stdout reader panicked"))??;
+    let (stderr, _) = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("{program} stderr reader panicked"))??;
+    if timed_out {
+        bail!(
+            "{program} query timed out after {} seconds",
+            timeout.as_secs()
+        );
     }
+    if stdout_exceeded {
+        bail!("{program} output exceeded the {} byte limit", stdout_limit);
+    }
+    if !status.success() {
+        let diagnostic = sanitize_command_stderr(&stderr);
+        if diagnostic.is_empty() {
+            bail!("{program} exited unsuccessfully");
+        }
+        bail!("{program} exited unsuccessfully: {diagnostic}");
+    }
+    Ok(stdout)
+}
+
+fn sanitize_command_stderr(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .take(3)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let normalized = line.to_ascii_lowercase();
+            if [
+                "token",
+                "secret",
+                "password",
+                "authorization",
+                "api_key",
+                "apikey",
+            ]
+            .iter()
+            .any(|marker| normalized.contains(marker))
+            {
+                "[redacted diagnostic]".to_string()
+            } else {
+                line.chars().take(256).collect()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+#[cfg(unix)]
+fn terminate_command(child: &mut std::process::Child) {
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    // The child starts a new process group, so a group-directed SIGKILL also stops descendants.
+    unsafe {
+        let _ = kill(-(child.id() as i32), 9);
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_command(_child: &mut std::process::Child) {}
+
+fn read_bounded(mut reader: impl Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut output = Vec::with_capacity(limit.min(64 * 1024));
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut exceeded = false;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(output.len());
+        let kept = remaining.min(read);
+        output.extend_from_slice(&buffer[..kept]);
+        exceeded |= kept < read;
+    }
+    Ok((output, exceeded))
 }
 
 fn json_u64(value: &Value, key: &str) -> u64 {
@@ -1196,6 +1349,35 @@ mod tests {
     #[test]
     fn quality_orders_incomplete_as_worst() {
         assert!(quality_rank(UsageQuality::Incomplete) > quality_rank(UsageQuality::Exact));
+    }
+
+    #[test]
+    fn bounded_reader_drains_input_without_retaining_excess_output() {
+        let input = vec![7_u8; 128 * 1024];
+        let (output, exceeded) = read_bounded(input.as_slice(), 1024).unwrap();
+        assert_eq!(output.len(), 1024);
+        assert!(exceeded);
+    }
+
+    #[test]
+    fn command_diagnostics_redact_sensitive_lines() {
+        let diagnostic = sanitize_command_stderr(b"request failed token=private\nplain failure");
+        assert!(!diagnostic.contains("private"));
+        assert!(diagnostic.contains("plain failure"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_timeout_terminates_the_process_group() {
+        let started = Instant::now();
+        let error = command_output_with_timeout(
+            "/bin/sh",
+            &["-c", "sleep 5 & wait"],
+            Duration::from_millis(50),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

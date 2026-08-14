@@ -32,6 +32,7 @@ AgentKib is a local-first desktop app for people who use more than one coding ag
 - **Understand what an agent will receive.** Preview instruction loading order, directory rules, overrides, available Skills, connections, and memory for a selected working directory.
 - **Share project rules safely.** Edit common assets once, review the generated diff, and write only after explicit approval. A project does not need an AgentKib manifest before it can be discovered or inspected.
 - **Use one local MCP entry point.** AgentKib can manage downstream MCP servers and expose them to supported agents through one local hub.
+- **Watch rolling plan limits.** On macOS, see available Codex, Claude Code, Cursor, and configured Coding Plan windows in the app or menu bar, including remaining quota and reset time.
 - **Track your progress.** View locally available Token usage, sessions, Git commits, contribution heatmaps, streaks, and achievements. Incomplete data is always labeled as incomplete.
 
 AgentKib can also link a workspace to an Obsidian Vault and read public metadata from optional OpenClaw or Hermes remote connections. These integrations are opt-in and read-only by default.
@@ -64,6 +65,7 @@ Ignored workspaces, additional scan folders, integrations, appearance, language,
 - Automatic discovery does not store prompts, message bodies, conversation titles, or raw session IDs.
 - Credentials, environment files, private keys, and message databases are excluded from the asset catalog.
 - Git statistics do not store commit messages, diffs, file contents, or plaintext email addresses.
+- Quota snapshots stay on this Mac. Account email is kept only to identify local accounts; credentials, cookies, raw CLI output, and raw diagnostics are not stored.
 - Agent-proposed memory is not shared until you approve it.
 - Every generated file change is shown as a diff and checked again before writing.
 
@@ -86,6 +88,7 @@ AgentKib 是一个面向多 Agent 用户的本地桌面应用。它把散落在�
 - **看清 Agent 实际获得的上下文**：预览指令加载顺序、目录规则、平台覆盖，以及当前可见的 Skills、连接和记忆。
 - **安全共享项目规则**：公共资产只维护一次，写入前必须审查完整 Diff。项目不需要预先创建 AgentKib manifest，也能被发现和查看。
 - **统一连接 MCP**：通过一个本地 MCP Hub 管理下游 Server，并提供给受支持的 Agent 使用。
+- **查看滚动额度**：macOS 版可在应用和菜单栏查看 Codex、Claude Code、Cursor 及已配置 Coding Plan 的剩余额度和重置时间。
 - **记录使用成就**：汇总本地可获得的 Token、会话和 Git 提交，展示贡献热力图、连续活跃和成就；数据不完整时会明确标注。
 
 AgentKib 还可以将工作区关联到 Obsidian Vault，并按需只读连接 OpenClaw 或 Hermes 的远程元数据。这些能力默认不会主动启用或写入外部内容。
@@ -118,6 +121,7 @@ AgentKib 会区分“实际安装的应用或 CLI”和“卸载后留下的配�
 - 自动发现不会保存 Prompt、消息正文、对话标题或原始会话 ID。
 - 凭据、环境文件、私钥和消息数据库不会进入资产目录。
 - Git 统计不保存提交说明、Diff、文件内容或明文邮箱。
+- 额度快照只保存在本机。账号邮箱仅用于区分本地账号；凭据、Cookie、CLI 原始输出和原始诊断不会落库。
 - Agent 提议的记忆必须由你批准后才能共享。
 - 所有生成的文件修改都会先展示 Diff，并在写入前再次校验。
 
@@ -152,7 +156,7 @@ pnpm dev
 pnpm tauri build
 ```
 
-构建结果位于 `target/release/bundle/`。
+首次构建会下载固定版本的 CodexBarCLI 并校验 SHA-256；构建结果位于 `target/release/bundle/`。第三方许可见 `THIRD_PARTY_NOTICES.md`。
 
 ### Validate / 验证
 

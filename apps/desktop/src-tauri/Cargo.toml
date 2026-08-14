@@ -16,6 +16,7 @@ agentkib-core.workspace = true
 agentkib-adapters.workspace = true
 agentkib-discovery.workspace = true
 agentkib-insights.workspace = true
+agentkib-quota.workspace = true
 agentkib-gateways.workspace = true
 agentkib-mcp.workspace = true
 agentkib-store.workspace = true
@@ -30,6 +31,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-os = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-shell = "2"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -66,4 +66,19 @@ export interface RepositoryCommitBreakdown { repository_group_id: string; name: 
 export interface Achievement { code: string; category: string; threshold: number; progress: number; unlocked_at?: string }
 export interface ProviderStatus { agent: AgentKind; available: boolean; quality: UsageQuality; coverage_from?: string; coverage_to?: string; imported_events: number; error_key?: string; error_params?: Record<string, string>; error?: string }
 export interface InsightsStatus { providers: ProviderStatus[]; refreshed_at?: string; running: boolean }
+export type RefreshKind = "discovery" | "insights" | "gateways" | "quota";
+export type RefreshState = "idle" | "queued" | "running" | "succeeded" | "failed" | "backoff";
+export interface RefreshReceipt { kind: RefreshKind; disposition: "queued" | "already-running"; request_id: string }
+export interface RefreshJobStatus { kind: RefreshKind; state: RefreshState; request_id?: string; started_at?: string; finished_at?: string; progress_current?: number; progress_total?: number; error?: string; next_allowed_at?: string }
+export interface InsightsView { summary: InsightsSummary; heatmap: HeatmapPoint[]; agents: AgentUsageBreakdown[]; models: ModelUsageBreakdown[]; workspaces: WorkspaceUsageBreakdown[]; repositories: RepositoryCommitBreakdown[]; achievements: Achievement[]; status: InsightsStatus }
 export interface GitIdentitySummary { id: string; label: string; source: string; enabled: boolean }
+export type QuotaBackend = "codex-bar-cli" | "win-codex-bar";
+export type QuotaFreshness = "fresh" | "stale" | "unavailable";
+export interface QuotaIdentity { account_email?: string; plan?: string }
+export interface QuotaWindow { kind: string; label: string; used_percent: number; remaining_percent: number; reset_at?: string }
+export interface QuotaCredits { remaining: number; unit: string }
+export interface QuotaAccount { id: string; label: string; active: boolean; identity?: QuotaIdentity; windows: QuotaWindow[]; error?: string; updated_at?: string }
+export interface QuotaProviderStatus { level: string; label: string; updated_at?: string }
+export interface QuotaProvider { id: string; name: string; enabled: boolean; source?: string; status?: QuotaProviderStatus; identity?: QuotaIdentity; windows: QuotaWindow[]; credits?: QuotaCredits; error?: string; updated_at?: string; accounts: QuotaAccount[] }
+export interface QuotaSnapshot { schema_version: number; backend: QuotaBackend; backend_version?: string; generated_at: string; fetched_at: string; stale_after_seconds: number; freshness: QuotaFreshness; providers: QuotaProvider[] }
+export interface QuotaCollectorStatus { backend: QuotaBackend; backend_version?: string; platform_supported: boolean; sidecar_available: boolean; config_source: string; last_attempt_at?: string; last_success_at?: string; running: boolean; error_key?: string; error_detail?: string }

@@ -8,6 +8,7 @@
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "build:web": "tsc -b && vite build",
+    "quota:prepare": "node scripts/prepare-quota-sidecar.mjs",
     "icons:app": "tauri icon src-tauri/assets/app-icon-source.png",
     "icons:tray": "swift src-tauri/scripts/generate-tray-icon.swift",
     "test": "vitest run",

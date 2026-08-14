@@ -1,7 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::SystemTime;
 
 #[cfg(unix)]
@@ -17,7 +19,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::Value as JsonValue;
 use walkdir::{DirEntry, WalkDir};
 
-pub trait WorkspaceDiscoveryProvider {
+pub trait WorkspaceDiscoveryProvider: Send {
     fn installation(&self) -> AgentInstallation;
     fn discover(&self) -> Result<Vec<DiscoveryCandidate>>;
     fn scan_home_assets(&self) -> Result<Vec<CatalogAsset>>;
@@ -38,27 +40,39 @@ pub fn discover(scan_roots: &[(PathBuf, usize)]) -> DiscoverySnapshot {
         Box::new(OpenClawProvider::default()),
         Box::new(HermesProvider::default()),
     ];
+    let provider_results = parallel_map_bounded(providers, 4, |provider| {
+        let installation = provider.installation();
+        let label = installation.agent.as_str();
+        let mut errors = Vec::new();
+        let candidates = provider.discover().unwrap_or_else(|error| {
+            errors.push(format!("{label} workspace discovery failed: {error}"));
+            Vec::new()
+        });
+        let home_assets = provider.scan_home_assets().unwrap_or_else(|error| {
+            errors.push(format!("{label} Home asset scan failed: {error}"));
+            Vec::new()
+        });
+        (installation, candidates, home_assets, errors)
+    });
+    let scan_results = parallel_map_bounded(scan_roots.to_vec(), 4, |(root, depth)| {
+        let result = discover_scan_root(&root, depth);
+        (root, result)
+    });
+
     let mut candidates = Vec::new();
     let mut installations = Vec::new();
     let mut home_assets = Vec::new();
     let mut errors = Vec::new();
-    for provider in providers {
-        let installation = provider.installation();
-        let label = installation.agent.as_str();
+    for (installation, discovered, assets, provider_errors) in provider_results {
         installations.push(installation);
-        match provider.discover() {
-            Ok(values) => candidates.extend(values),
-            Err(error) => errors.push(format!("{label} workspace discovery failed: {error}")),
-        }
-        match provider.scan_home_assets() {
-            Ok(values) => home_assets.extend(values),
-            Err(error) => errors.push(format!("{label} Home asset scan failed: {error}")),
-        }
+        candidates.extend(discovered);
+        home_assets.extend(assets);
+        errors.extend(provider_errors);
     }
-    for (root, depth) in scan_roots {
-        match discover_scan_root(root, *depth) {
-            Ok((values, scan_errors)) => {
-                candidates.extend(values);
+    for (root, result) in scan_results {
+        match result {
+            Ok((discovered, scan_errors)) => {
+                candidates.extend(discovered);
                 errors.extend(scan_errors.into_iter().map(|error| {
                     format!("Scan root {} partially failed: {error}", root.display())
                 }));
@@ -72,6 +86,46 @@ pub fn discover(scan_roots: &[(PathBuf, usize)]) -> DiscoverySnapshot {
         home_assets,
         errors,
     }
+}
+
+fn parallel_map_bounded<T, R, F>(items: Vec<T>, concurrency: usize, operation: F) -> Vec<R>
+where
+    T: Send,
+    R: Send,
+    F: Fn(T) -> R + Sync,
+{
+    let item_count = items.len();
+    if item_count == 0 {
+        return Vec::new();
+    }
+    let queue = Arc::new(Mutex::new(
+        items.into_iter().enumerate().collect::<VecDeque<_>>(),
+    ));
+    let output = Arc::new(Mutex::new(Vec::with_capacity(item_count)));
+    thread::scope(|scope| {
+        for _ in 0..concurrency.max(1).min(item_count) {
+            let queue = Arc::clone(&queue);
+            let output = Arc::clone(&output);
+            let operation = &operation;
+            scope.spawn(move || {
+                loop {
+                    let item = queue.lock().expect("discovery queue lock").pop_front();
+                    let Some((index, item)) = item else { break };
+                    output
+                        .lock()
+                        .expect("discovery output lock")
+                        .push((index, operation(item)));
+                }
+            });
+        }
+    });
+    let mut output = Arc::try_unwrap(output)
+        .ok()
+        .expect("discovery output still shared")
+        .into_inner()
+        .expect("discovery output lock");
+    output.sort_by_key(|(index, _)| *index);
+    output.into_iter().map(|(_, value)| value).collect()
 }
 
 #[derive(Default)]
@@ -1112,6 +1166,12 @@ fn modified_at(path: &Path) -> Result<DateTime<Utc>> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn bounded_parallel_map_preserves_input_order() {
+        let values = parallel_map_bounded(vec![3, 1, 2], 2, |value| value * 10);
+        assert_eq!(values, vec![30, 10, 20]);
+    }
 
     #[test]
     fn residual_home_is_configured_but_not_installed() {

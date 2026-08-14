@@ -35,7 +35,9 @@ vi.mock("./api", () => ({
     runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark" }),
     setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale, theme_preference: "system", effective_theme: "dark" })),
     setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark" })),
-    discoverWorkspaces: vi.fn().mockResolvedValue({ started_at: new Date().toISOString(), finished_at: new Date().toISOString(), discovered_count: 0, removed_count: 0, errors: [] }),
+    requestRefresh: vi.fn().mockResolvedValue({ kind: "discovery", disposition: "queued", request_id: "test-refresh" }),
+    refreshStatus: vi.fn().mockResolvedValue([]),
+    discoverWorkspaces: vi.fn().mockResolvedValue({ kind: "discovery", disposition: "queued", request_id: "test-refresh" }),
     insightsSummary: vi.fn().mockResolvedValue({ total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" }),
     insightsHeatmap: vi.fn().mockResolvedValue([{ date: "2026-08-13", tokens: 120000, my_commits: 8, all_commits: 20, attributed_commits: 3, sessions: 12, quality: "exact" }]),
     agentUsageBreakdown: vi.fn().mockResolvedValue([{ agent: "codex", total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, quality: "exact" }]),
@@ -44,6 +46,17 @@ vi.mock("./api", () => ({
     repositoryCommitBreakdown: vi.fn().mockResolvedValue([]),
     achievements: vi.fn().mockResolvedValue([]),
     insightsStatus: vi.fn().mockResolvedValue({ providers: [], running: false }),
+    quotaSnapshot: vi.fn().mockResolvedValue(undefined),
+    quotaCollectorStatus: vi.fn().mockResolvedValue({ backend: "codex-bar-cli", platform_supported: true, sidecar_available: true, config_source: "agentkib-managed", running: false }),
+    refreshQuota: vi.fn().mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-refresh" }),
+    insightsView: vi.fn().mockResolvedValue({
+      summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
+      heatmap: [{ date: "2026-08-13", tokens: 120000, my_commits: 8, all_commits: 20, attributed_commits: 3, sessions: 12, quality: "exact" }],
+      agents: [{ agent: "codex", total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, quality: "exact" }],
+      models: [{ model: "gpt-5", total_tokens: 120000, session_count: 12 }],
+      workspaces: [{ name: "未关联工作区", total_tokens: 120000, session_count: 12 }],
+      repositories: [], achievements: [], status: { providers: [], running: false },
+    }),
     gitIdentities: vi.fn().mockResolvedValue([]),
     scan: vi.fn().mockResolvedValue({ root: "/tmp/project", manifest_exists: false, agents: [], assets: [], warnings: [] }),
     manifest: vi.fn().mockResolvedValue({ schema_version: 1, workspace: { id: "project", name: "Project" }, instructions: { shared: "", scoped: [], platform_overrides: {} }, skills: [], mcp: { config: ".agentkib/mcp.json" }, connections: [], memories: { require_approval: true }, adapters: {} }),
@@ -69,7 +82,14 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup();
   vi.mocked(api.workspaces).mockResolvedValue([]);
-  vi.mocked(api.achievements).mockResolvedValue([]);
+  vi.mocked(api.insightsView).mockResolvedValue({
+    summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
+    heatmap: [{ date: "2026-08-13", tokens: 120000, my_commits: 8, all_commits: 20, attributed_commits: 3, sessions: 12, quality: "exact" }],
+    agents: [{ agent: "codex", total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, quality: "exact" }],
+    models: [{ model: "gpt-5", total_tokens: 120000, session_count: 12 }],
+    workspaces: [{ name: "未关联工作区", total_tokens: 120000, session_count: 12 }],
+    repositories: [], achievements: [], status: { providers: [], running: false },
+  });
 });
 
 describe("AgentKib desktop", () => {
@@ -115,6 +135,36 @@ describe("AgentKib desktop", () => {
     expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
   });
 
+  it("queues manual discovery without replacing the cached workspace view", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*1/ }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Workspaces" })).toBeInTheDocument());
+    vi.mocked(api.requestRefresh).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /Refresh Discovery/i }));
+
+    await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledWith("discovery", true));
+    expect(screen.getByRole("button", { name: /Project \/tmp\/project/ })).toBeInTheDocument();
+  });
+
+  it("defers discovery cache reads while the window is hidden", async () => {
+    render(<App />);
+    await waitFor(() => expect(tauriListeners.has("agentkib:refresh-state")).toBe(true));
+    vi.mocked(api.workspaces).mockClear();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+
+    act(() => tauriListeners.get("agentkib:refresh-state")?.({ payload: { kind: "discovery", state: "succeeded" } }));
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+    expect(api.workspaces).not.toHaveBeenCalled();
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(api.workspaces).toHaveBeenCalledTimes(1));
+  });
+
   it("keeps low-frequency tasks out of the global navigation", async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
@@ -124,6 +174,7 @@ describe("AgentKib desktop", () => {
       "Workspaces",
       "Assets",
       "Agents",
+      "Quota",
       "Achievements",
     ]);
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
@@ -153,7 +204,7 @@ describe("AgentKib desktop", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Project" })).toBeInTheDocument());
     expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
     const navigation = within(screen.getByRole("navigation", { name: "Primary navigation" }));
-    expect(navigation.getAllByRole("button")).toHaveLength(5);
+    expect(navigation.getAllByRole("button")).toHaveLength(6);
     expect(screen.getByRole("button", { name: "Review changes" })).toBeDisabled();
   });
 
@@ -197,7 +248,8 @@ describe("AgentKib desktop", () => {
   });
 
   it("groups achievements into expandable milestone paths", async () => {
-    vi.mocked(api.achievements).mockResolvedValue([
+    const view = await api.insightsView();
+    vi.mocked(api.insightsView).mockResolvedValue({ ...view, achievements: [
       { code: "token-100000", category: "token", threshold: 100_000, progress: 120_000, unlocked_at: "2026-08-01T00:00:00Z" },
       { code: "token-1000000", category: "token", threshold: 1_000_000, progress: 120_000 },
       { code: "session-10", category: "session", threshold: 10, progress: 12, unlocked_at: "2026-08-01T00:00:00Z" },
@@ -211,7 +263,7 @@ describe("AgentKib desktop", () => {
       { code: "special-first-memory", category: "special", threshold: 1, progress: 0 },
       { code: "special-night-owl", category: "special", threshold: 1, progress: 0 },
       { code: "special-comeback", category: "special", threshold: 1, progress: 1, unlocked_at: "2026-08-02T00:00:00Z" },
-    ]);
+    ] });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Achievements" }));
     fireEvent.click(screen.getByRole("tab", { name: "Milestones" }));

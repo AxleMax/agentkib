@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Activity, Award, Bot, Boxes, Brain, CalendarCheck2, CalendarDays, Check, ChevronRight, CircleAlert, Code2, Copy, FileCode2, Flame, FolderGit2, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, LockKeyhole, MessageSquareText, Moon, MoreHorizontal, Network, Pencil, PlugZap, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Trash2, Workflow, X } from "lucide-react";
+import { Activity, Award, Bot, Boxes, Brain, CalendarCheck2, CalendarDays, Check, ChevronRight, CircleAlert, Code2, Copy, FileCode2, Flame, FolderGit2, Gauge, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, LockKeyhole, MessageSquareText, Moon, MoreHorizontal, Network, Pencil, PlugZap, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Trash2, Workflow, X } from "lucide-react";
 import { api } from "./api";
 import { achievementReached, buildAchievementTracks, buildSpecialAchievements, type AchievementCategory, type AchievementTrack, type SpecialAchievement } from "./achievements";
 import { AgentIcon } from "./components/AgentIcon";
@@ -12,15 +12,16 @@ import { SettingsSidebar, settingsSectionLabel, type SettingsSection } from "./c
 import { WindowToolbar } from "./components/WindowToolbar";
 import { ObsidianSettingsCard, WorkspaceObsidianCard } from "./components/ObsidianIntegration";
 import { RemoteGatewaysSettings } from "./components/RemoteGateways";
+import { QuotaDiagnostics, QuotaPage } from "./components/QuotaPage";
 import { groupCatalogAssets, workspaceAssetCounts, type CatalogAssetGroup } from "./catalog";
 import { diffLines } from "./diff";
 import { changeLocale, formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "./i18n";
 import { buildHeatmapMonthMarkers } from "./insights";
 import { applyTheme } from "./theme";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, ModelUsageBreakdown, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, UsageQuality, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, ModelUsageBreakdown, QuotaCollectorStatus, RefreshJobStatus, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, UsageQuality, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 type Page = "overview" | "assets" | "context" | "changes";
-type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "insights";
+type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
 type AppMode = "main" | "settings";
 type AssetSection = "instructions" | "skills" | "mcp" | "memory" | "other";
 type WorkspaceAssetSection = "instructions" | "skills" | "mcp" | "native";
@@ -36,6 +37,7 @@ const globalNav: SidebarEntry<GlobalPage>[] = [
   { id: "workspaces", label: "nav.workspaces", icon: FolderGit2 },
   { id: "catalog", label: "nav.assets", icon: Library },
   { id: "agents", label: "nav.agents", icon: Bot },
+  { id: "quota", label: "nav.quota", icon: Gauge },
   { id: "insights", label: "nav.insights", icon: Award },
 ];
 
@@ -60,9 +62,14 @@ export function App() {
   const [remoteGateways, setRemoteGateways] = useState<RemoteGatewaySummary[]>([]);
   const [insightsSummary, setInsightsSummary] = useState<InsightsSummary>();
   const [insightsStatus, setInsightsStatus] = useState<InsightsStatus>();
+  const [quotaStatus, setQuotaStatus] = useState<QuotaCollectorStatus>();
+  const [quotaProvider, setQuotaProvider] = useState<string>();
+  const [navigationRequest, setNavigationRequest] = useState<{ page: string; provider?: string }>();
+  const [refreshJobs, setRefreshJobs] = useState<RefreshJobStatus[]>([]);
   const [assetSection, setAssetSection] = useState<AssetSection>("instructions");
   const [workspaceAssetSection, setWorkspaceAssetSection] = useState<WorkspaceAssetSection>("instructions");
   const [insightsSection, setInsightsSection] = useState<InsightsSection>("overview");
+  const pendingRefreshKinds = useRef(new Set<string>());
   const groupedCatalog = useMemo(() => groupCatalogAssets(catalog), [catalog]);
   const assetCounts = useMemo(() => workspaceAssetCounts(groupedCatalog), [groupedCatalog]);
 
@@ -85,15 +92,38 @@ export function App() {
       const [summary, status] = await Promise.all([api.insightsSummary(), api.insightsStatus()]);
       setInsightsSummary(summary); setInsightsStatus(status);
     } catch { /* 首次迁移或后台采集尚未完成时显示空状态。 */ }
+    try { setQuotaStatus(await api.quotaCollectorStatus()); } catch { /* Sidecar 尚未准备时由诊断页展示不可用状态。 */ }
+  };
+
+  const loadDiscoveryCache = async () => {
+    const [nextWorkspaces, nextInstallations, nextCatalog] = await Promise.all([
+      api.workspaces(), api.agentInstallations(), api.catalogAssets(),
+    ]);
+    setWorkspaces(nextWorkspaces);
+    setInstallations(nextInstallations);
+    setCatalog(nextCatalog);
   };
 
   useEffect(() => {
-    let disposed = false; let unlisten: (() => void) | undefined; let unlistenInsights: (() => void) | undefined; let unlistenGateways: (() => void) | undefined; let unlistenTheme: (() => void) | undefined;
+    let disposed = false; let refreshReloadTimer: number | undefined; let unlisten: (() => void) | undefined; let unlistenRefresh: (() => void) | undefined; let unlistenInsights: (() => void) | undefined; let unlistenGateways: (() => void) | undefined; let unlistenQuota: (() => void) | undefined; let unlistenNavigate: (() => void) | undefined; let unlistenTheme: (() => void) | undefined;
     void (async () => {
       try {
-        unlisten = await listen<DiscoveryReport>("agentkib:discovery-updated", (event) => { setDiscovery(event.payload); void loadGlobal(); });
+        unlisten = await listen<DiscoveryReport>("agentkib:discovery-updated", (event) => { setDiscovery(event.payload); });
+        unlistenRefresh = await listen<RefreshJobStatus>("agentkib:refresh-state", (event) => {
+          setRefreshJobs((current) => [...current.filter((job) => job.kind !== event.payload.kind), event.payload]);
+          if (event.payload.kind === "discovery" && event.payload.state === "succeeded") {
+            if (document.visibilityState !== "visible") {
+              pendingRefreshKinds.current.add("discovery");
+              return;
+            }
+            window.clearTimeout(refreshReloadTimer);
+            refreshReloadTimer = window.setTimeout(() => { if (!disposed) void loadDiscoveryCache(); }, 100);
+          }
+        });
         unlistenInsights = await listen<InsightsSummary>("agentkib:insights-updated", (event) => { setInsightsSummary(event.payload); });
         unlistenGateways = await listen<RemoteGatewaySummary[]>("agentkib:remote-gateways-updated", (event) => { setRemoteGateways(event.payload); });
+        unlistenQuota = await listen("agentkib:quota-updated", () => { void api.quotaCollectorStatus().then(setQuotaStatus); });
+        unlistenNavigate = await listen<{ page: string; provider?: string }>("agentkib:navigate", (event) => { setNavigationRequest(event.payload); });
         unlistenTheme = await listen<EffectiveTheme>("tauri://theme-changed", (event) => {
           setRuntime((current) => {
             if (!current || current.theme_preference !== "system") return current;
@@ -107,20 +137,18 @@ export function App() {
           localStorage.removeItem("agentkib.project");
         }
         await loadGlobal();
-        try {
-          const report = await api.discoverWorkspaces();
-          if (!disposed) { setDiscovery(report); await loadGlobal(); }
-        } catch (error) {
-          // Rust 启动调度可能已经占用发现任务；事件监听会接收其结果。
-          if (!(typeof error === "object" && error !== null && "key" in error && error.key === "errors.discoveryRunning")) throw error;
-        }
+        if (!disposed) setRefreshJobs(await api.refreshStatus());
+        await api.requestRefresh("discovery");
       } catch (error) { if (!disposed) setMessage(localizeMessage(error)); }
     })();
-    return () => { disposed = true; unlisten?.(); unlistenInsights?.(); unlistenGateways?.(); unlistenTheme?.(); };
+    return () => { disposed = true; window.clearTimeout(refreshReloadTimer); unlisten?.(); unlistenRefresh?.(); unlistenInsights?.(); unlistenGateways?.(); unlistenQuota?.(); unlistenNavigate?.(); unlistenTheme?.(); };
   }, []);
   useEffect(() => { localStorage.setItem("agentkib.sidebar.collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
   useEffect(() => {
-    const refreshRuntime = () => { void api.runtime().then(async (nextRuntime) => { setRuntime(nextRuntime); applyTheme(nextRuntime.effective_theme); await changeLocale(nextRuntime.effective_locale); }).catch(() => undefined); };
+    const refreshRuntime = () => {
+      if (pendingRefreshKinds.current.delete("discovery")) void loadDiscoveryCache();
+      void api.runtime().then(async (nextRuntime) => { setRuntime(nextRuntime); applyTheme(nextRuntime.effective_theme); await changeLocale(nextRuntime.effective_locale); }).catch(() => undefined);
+    };
     window.addEventListener("focus", refreshRuntime);
     return () => window.removeEventListener("focus", refreshRuntime);
   }, []);
@@ -131,6 +159,14 @@ export function App() {
   };
 
   const hasUnsavedDraft = Boolean(manifest && baselineManifest && JSON.stringify(manifest) !== baselineManifest);
+  useEffect(() => {
+    if (navigationRequest?.page !== "quota") return;
+    if (selectedWorkspace && manifest && hasUnsavedDraft) {
+      setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
+    }
+    setSelectedWorkspace(undefined); setProject(""); setScan(undefined); setManifest(undefined); setChangeSet(undefined); setBaselineManifest("");
+    setQuotaProvider(navigationRequest.provider); setGlobalPage("quota"); setAppMode("main"); setNavigationRequest(undefined);
+  }, [navigationRequest]);
   const persistWorkspaceDraft = () => {
     if (selectedWorkspace && manifest && hasUnsavedDraft) setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
   };
@@ -151,7 +187,10 @@ export function App() {
     finally { setBusy(false); }
   };
   const closeWorkspace = () => leaveWorkspace(() => setGlobalPage("workspaces"));
-  const navigateGlobal = (nextPage: GlobalPage) => selectedWorkspace ? leaveWorkspace(() => setGlobalPage(nextPage)) : setGlobalPage(nextPage);
+  const navigateGlobal = (nextPage: GlobalPage) => {
+    if (nextPage === "quota") setQuotaProvider(undefined);
+    selectedWorkspace ? leaveWorkspace(() => setGlobalPage(nextPage)) : setGlobalPage(nextPage);
+  };
   const openSettings = () => setAppMode("settings");
 
   const plan = async (includeHome = false) => {
@@ -161,7 +200,8 @@ export function App() {
     catch (error) { setMessage(localizeMessage(error)); }
     finally { setBusy(false); }
   };
-  const refreshDiscovery = async () => { setBusy(true); setMessage(""); try { setDiscovery(await api.discoverWorkspaces()); await loadGlobal(); } catch (error) { setMessage(localizeMessage(error)); } finally { setBusy(false); } };
+  const refreshDiscovery = async () => { setMessage(""); try { await api.requestRefresh("discovery", true); } catch (error) { setMessage(localizeMessage(error)); } };
+  const discoveryRefreshing = refreshJobs.some((job) => job.kind === "discovery" && (job.state === "queued" || job.state === "running"));
 
   const navigation = globalNav.map((entry) => entry.id === "catalog" ? { ...entry, badge: globalMemories.filter((item) => item.status === "pending").length } : entry);
   const shellClass = `app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`;
@@ -176,7 +216,7 @@ export function App() {
         </header>
         {message && <div className="alert"><CircleAlert size={17} />{message}</div>}
         <section className={`content settings-content${settingsSection === "general" ? " compact" : ""}`}>
-          <GlobalSettings section={settingsSection} runtime={runtime} discovery={discovery} insightsStatus={insightsStatus} remoteGateways={remoteGateways} scanRoots={scanRoots} excluded={excluded} activity={activity} onAddRoot={addScanRootFromDialog} onRemoveRoot={async (id) => { await api.removeScanRoot(id); await refreshDiscovery(); }} onRestore={async (path) => { await api.restoreExcludedWorkspace(path); await refreshDiscovery(); }} onCloseBehaviorChanged={async (behavior) => { await api.setCloseBehavior(behavior); await loadGlobal(); }} onLocaleChanged={setRuntime} onRemoteGatewaysChanged={loadGlobal} />
+          <GlobalSettings section={settingsSection} runtime={runtime} discovery={discovery} insightsStatus={insightsStatus} quotaStatus={quotaStatus} remoteGateways={remoteGateways} scanRoots={scanRoots} excluded={excluded} activity={activity} onAddRoot={addScanRootFromDialog} onRemoveRoot={async (id) => { await api.removeScanRoot(id); await loadGlobal(); await refreshDiscovery(); }} onRestore={async (path) => { await api.restoreExcludedWorkspace(path); await loadGlobal(); await refreshDiscovery(); }} onCloseBehaviorChanged={async (behavior) => { await api.setCloseBehavior(behavior); await loadGlobal(); }} onLocaleChanged={setRuntime} onRemoteGatewaysChanged={loadGlobal} />
         </section>
       </main>
     </div>
@@ -200,16 +240,18 @@ export function App() {
     </div>
   );
 
-  const headerAction = globalPage === "workspaces" ? <><button className="ghost icon-only" title={tr("workspace.refreshDiscovery")} aria-label={tr("workspace.refreshDiscovery")} onClick={() => void refreshDiscovery()} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /></button><button className="primary" onClick={() => void selectProject()}><FolderGit2 size={15} />{tr("workspace.addManually")}</button></> : null;
-  return <div className={`${shellClass} global-shell`}><WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} /><AppSidebar active={globalPage} entries={navigation} collapsed={sidebarCollapsed} onNavigate={navigateGlobal} onSettings={openSettings} />{!sidebarCollapsed && <button className="sidebar-backdrop" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}<main><header className="page-header" data-tauri-drag-region><div className="page-title-row"><h1>{tr(globalNav.find(({ id }) => id === globalPage)?.label ?? "nav.home")}</h1></div><div className="header-actions">{headerAction}</div></header>{message && <div className="alert"><CircleAlert size={17} />{message}</div>}<section className="content global-content">
+  const discoveryFailure = refreshJobs.find((job) => job.kind === "discovery" && job.state === "failed");
+  const headerAction = globalPage === "workspaces" ? <>{discoveryRefreshing && <span className="badge">{tr("tray.refreshing")}</span>}<button className="ghost icon-only" title={tr("workspace.refreshDiscovery")} aria-label={tr("workspace.refreshDiscovery")} onClick={() => void refreshDiscovery()} disabled={discoveryRefreshing}><RefreshCw size={15} className={discoveryRefreshing ? "spin" : ""} /></button><button className="primary" onClick={() => void selectProject()}><FolderGit2 size={15} />{tr("workspace.addManually")}</button></> : null;
+  return <div className={`${shellClass} global-shell`}><WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} /><AppSidebar active={globalPage} entries={navigation} collapsed={sidebarCollapsed} onNavigate={navigateGlobal} onSettings={openSettings} />{!sidebarCollapsed && <button className="sidebar-backdrop" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}<main><header className="page-header" data-tauri-drag-region><div className="page-title-row"><h1>{tr(globalNav.find(({ id }) => id === globalPage)?.label ?? "nav.home")}</h1></div><div className="header-actions">{headerAction}</div></header>{message && <div className="alert"><CircleAlert size={17} />{message}</div>}{globalPage === "workspaces" && discoveryFailure?.error && <div className="alert"><CircleAlert size={17} />{discoveryFailure.error}</div>}<section className="content global-content">
     {globalPage === "home" && <GlobalHome workspaces={workspaces} installations={installations} memories={globalMemories} discovery={discovery} activity={activity} insights={insightsSummary} uniqueAssetCount={groupedCatalog.filter((asset) => asset.scope === "workspace").length} assetCounts={assetCounts} onShowInsights={() => setGlobalPage("insights")} onShowWorkspaces={() => setGlobalPage("workspaces")} onShowAgents={() => setGlobalPage("agents")} onOpen={openWorkspace} onOpenAssets={(section) => { setAssetSection(section); setGlobalPage("catalog"); }} onAddRoot={async () => { await addScanRootFromDialog(); }} />}
     {globalPage === "workspaces" && <WorkspacesPage workspaces={workspaces} assetCounts={assetCounts} onOpen={openWorkspace} onRefresh={async (id) => { await api.refreshWorkspace(id); await loadGlobal(); }} onExclude={async (id) => { if (!window.confirm(tr("workspace.ignoreConfirm"))) return; await api.excludeWorkspace(id); await loadGlobal(); }} />}
     {globalPage === "agents" && <AgentsPage installations={installations} assets={catalog.filter((asset) => asset.scope === "agent-home")} workspaces={workspaces} remoteGateways={remoteGateways} insightsStatus={insightsStatus} onOpen={openWorkspace} />}
     {globalPage === "catalog" && <GlobalAssetsPage section={assetSection} onSection={setAssetSection} assets={catalog} workspaces={workspaces} memories={globalMemories} runtime={runtime} onReload={loadGlobal} onRuntimeChanged={setRuntime} onOpen={(id) => { const workspace = workspaces.find((item) => item.id === id); if (workspace) void openWorkspace(workspace); }} onMigrationPlanned={async (workspacePath, planned) => { const workspace = workspaces.find((item) => item.path === workspacePath); if (!workspace) return; await openWorkspace(workspace); setChangeSet(planned); setPage("changes"); }} />}
+    {globalPage === "quota" && <QuotaPage initialProvider={quotaProvider} />}
     {globalPage === "insights" && <div className="insights-host" data-view={insightsSection}><div className="section-tabs insights-section-tabs" role="tablist" aria-label={tr("nav.insights")} onKeyDown={handleTabKey}>{(["overview", "tokens", "commits", "milestones", "sources"] as InsightsSection[]).map((section) => <button key={section} role="tab" aria-selected={insightsSection === section} className={insightsSection === section ? "active" : ""} onClick={() => setInsightsSection(section)}>{tr(`insights.section.${section}`)}</button>)}</div><InsightsPage section={insightsSection} workspaces={workspaces} onSummary={setInsightsSummary} /></div>}
   </section></main></div>;
 
-  async function addScanRootFromDialog() { const selected = await open({ directory: true, multiple: false, title: tr("dialog.addScanRoot") }); if (typeof selected === "string") { await api.addScanRoot(selected, 5); await refreshDiscovery(); } }
+  async function addScanRootFromDialog() { const selected = await open({ directory: true, multiple: false, title: tr("dialog.addScanRoot") }); if (typeof selected === "string") { await api.addScanRoot(selected, 5); await loadGlobal(); await refreshDiscovery(); } }
 }
 
 function GlobalHome({ workspaces, installations, memories, discovery, activity, insights, uniqueAssetCount, assetCounts, onShowInsights, onShowWorkspaces, onShowAgents, onOpen, onOpenAssets, onAddRoot }: { workspaces: WorkspaceSummary[]; installations: AgentInstallation[]; memories: MemoryRecord[]; discovery?: DiscoveryReport; activity: ActivityRecord[]; insights?: InsightsSummary; uniqueAssetCount: number; assetCounts: Map<string, number>; onShowInsights: () => void; onShowWorkspaces: () => void; onShowAgents: () => void; onOpen: (workspace: WorkspaceSummary) => Promise<void>; onOpenAssets: (section: AssetSection) => void; onAddRoot: () => Promise<void> }) {
@@ -311,6 +353,7 @@ function InsightsPage({ section, workspaces, onSummary }: { section: InsightsSec
   const [status, setStatus] = useState<InsightsStatus>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const pendingRefresh = useRef(false);
   const query = useMemo<InsightsQuery>(() => {
     const today = new Date();
     const from = range === "year" ? new Date(today.getFullYear(), 0, 1) : new Date(today.getFullYear(), today.getMonth(), today.getDate() - 363);
@@ -326,14 +369,36 @@ function InsightsPage({ section, workspaces, onSummary }: { section: InsightsSec
   const loadInsights = async () => {
     setError("");
     try {
-      const [nextSummary, nextPoints, nextAgents, nextModels, nextWorkspaceUsage, nextRepositories, nextAchievements, nextStatus] = await Promise.all([
-        api.insightsSummary(query), api.insightsHeatmap(query), api.agentUsageBreakdown(query), api.modelUsageBreakdown(query), api.workspaceUsageBreakdown(query), api.repositoryCommitBreakdown(query), api.achievements(), api.insightsStatus(),
-      ]);
-      setSummary(nextSummary); setPoints(nextPoints); setAgents(nextAgents); setModels(nextModels); setWorkspaceUsage(nextWorkspaceUsage); setRepositories(nextRepositories); setAchievements(nextAchievements); setStatus(nextStatus); onSummary(nextSummary);
+      const view = await api.insightsView(query);
+      setSummary(view.summary); setPoints(view.heatmap); setAgents(view.agents); setModels(view.models); setWorkspaceUsage(view.workspaces); setRepositories(view.repositories); setAchievements(view.achievements); setStatus(view.status); setBusy(view.status.running); onSummary(view.summary);
     } catch (reason) { setError(localizeMessage(reason)); }
   };
   useEffect(() => { void loadInsights(); }, [query]);
-  const refresh = async () => { setBusy(true); setError(""); try { await api.refreshInsights(); await loadInsights(); } catch (reason) { setError(localizeMessage(reason)); } finally { setBusy(false); } };
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<RefreshJobStatus>("agentkib:refresh-state", (event) => {
+      if (event.payload.kind !== "insights") return;
+      if (event.payload.state === "queued" || event.payload.state === "running") setBusy(true);
+      if (event.payload.state === "succeeded") {
+        setBusy(false);
+        if (document.visibilityState === "visible") void loadInsights();
+        else pendingRefresh.current = true;
+      }
+      if (event.payload.state === "failed") { setBusy(false); setError(event.payload.error ?? tr("errors.generic")); }
+    }).then((dispose) => { unlisten = dispose; });
+    return () => unlisten?.();
+  }, [query]);
+  useEffect(() => {
+    const refreshVisibleInsights = () => {
+      if (pendingRefresh.current) {
+        pendingRefresh.current = false;
+        void loadInsights();
+      }
+    };
+    window.addEventListener("focus", refreshVisibleInsights);
+    return () => window.removeEventListener("focus", refreshVisibleInsights);
+  }, [query]);
+  const refresh = async () => { setError(""); try { setBusy(true); await api.requestRefresh("insights", true); } catch (reason) { setBusy(false); setError(localizeMessage(reason)); } };
   const metricLabels: Record<HeatmapMetric, string> = { tokens: "Token", my_commits: tr("insights.myCommits"), all_commits: tr("insights.allCommits"), attributed_commits: tr("insights.attributedCommits"), sessions: tr("common.sessions") };
   const max = Math.max(1, ...points.map((point) => point[metric]));
   const padding = points.length ? new Date(`${points[0].date}T00:00:00`).getDay() : 0;
@@ -348,6 +413,7 @@ function InsightsPage({ section, workspaces, onSummary }: { section: InsightsSec
       {showTokenFilters && <select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="all">{tr("workspace.all")}</option>{workspaces.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select>}
       {showCommitFilters && <select value={repository} onChange={(event) => setRepository(event.target.value)}><option value="all">{tr("insights.allRepositories")}</option>{repositoryOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>}
       {showRange && <select value={range} onChange={(event) => setRange(event.target.value as typeof range)}><option value="52w">{tr("insights.range52w")}</option><option value="year">{tr("insights.rangeYear")}</option></select>}
+      {busy && <span className="badge">{tr("tray.refreshing")}</span>}
       <button className="ghost icon-only" aria-label={tr("insights.refresh")} title={tr("insights.refresh")} onClick={() => void refresh()} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /></button>
     </div>
     {!summary && <div className="panel"><Empty compact icon={Award} title={tr("insights.preparing")} text={tr("insights.preparingText")} /></div>}
@@ -557,12 +623,12 @@ function McpMigrationInventory({ project, onPlanned }: { project?: string; onPla
   return <div className="panel"><div className="panel-head"><div><h2>{tr("mcp.migration")}</h2><p>{tr("mcp.migrationDescription")}</p></div><div className="mcp-actions"><button className="ghost" onClick={() => void scan()}><Search size={13} />{tr("common.scan")}</button><button className="primary" disabled={!project || !selected.length || busy} onClick={() => void plan()}>{tr("mcp.planMigration")}</button></div></div>{!project && <div className="warning"><CircleAlert size={14} />{tr("mcp.projectRequired")}</div>}{error && <div className="alert"><CircleAlert size={16} />{error}</div>}{scanned && <div className="mcp-list migration-list">{candidates.map((candidate) => <article key={candidate.id}><label><input type="checkbox" disabled={!candidate.supported || !project} checked={selected.includes(candidate.id)} onChange={(event) => toggle(candidate.id, event.target.checked)} /><span><strong>{candidate.name}</strong><small>{agentLabels[candidate.agent]} · {candidate.source_path}</small><em>{candidate.transport} · {candidate.endpoint}{candidate.has_secret_values ? ` · ${tr("mcp.secretReentry")}` : ""}</em></span></label><span className={`status ${candidate.supported ? "approved" : "rejected"}`}>{tr(candidate.supported ? "mcp.importable" : "mcp.unsupported")}</span></article>)}{!candidates.length && <p>{tr("mcp.migrationEmpty")}</p>}</div>}</div>;
 }
 
-function GlobalSettings({ section, runtime, discovery, insightsStatus, remoteGateways, scanRoots, excluded, activity, onAddRoot, onRemoveRoot, onRestore, onCloseBehaviorChanged, onLocaleChanged, onRemoteGatewaysChanged }: { section: SettingsSection; runtime?: RuntimeInfo; discovery?: DiscoveryReport; insightsStatus?: InsightsStatus; remoteGateways: RemoteGatewaySummary[]; scanRoots: ScanRoot[]; excluded: ExcludedWorkspace[]; activity: ActivityRecord[]; onAddRoot: () => Promise<void>; onRemoveRoot: (id: string) => Promise<void>; onRestore: (path: string) => Promise<void>; onCloseBehaviorChanged: (behavior?: CloseBehavior) => Promise<void>; onLocaleChanged: (runtime: RuntimeInfo) => void; onRemoteGatewaysChanged: () => Promise<void> }) {
+function GlobalSettings({ section, runtime, discovery, insightsStatus, quotaStatus, remoteGateways, scanRoots, excluded, activity, onAddRoot, onRemoveRoot, onRestore, onCloseBehaviorChanged, onLocaleChanged, onRemoteGatewaysChanged }: { section: SettingsSection; runtime?: RuntimeInfo; discovery?: DiscoveryReport; insightsStatus?: InsightsStatus; quotaStatus?: QuotaCollectorStatus; remoteGateways: RemoteGatewaySummary[]; scanRoots: ScanRoot[]; excluded: ExcludedWorkspace[]; activity: ActivityRecord[]; onAddRoot: () => Promise<void>; onRemoveRoot: (id: string) => Promise<void>; onRestore: (path: string) => Promise<void>; onCloseBehaviorChanged: (behavior?: CloseBehavior) => Promise<void>; onLocaleChanged: (runtime: RuntimeInfo) => void; onRemoteGatewaysChanged: () => Promise<void> }) {
   if (section === "general") return <div className="settings-groups"><section className="panel settings-section settings-general"><div className="setting-rows"><ThemeSetting runtime={runtime} onChanged={onLocaleChanged} /><LanguageSetting runtime={runtime} onChanged={onLocaleChanged} /><div className="setting-row"><div><strong>{tr("settings.closeBehavior")}</strong></div><CloseBehaviorSelect value={runtime?.close_behavior} onChange={onCloseBehaviorChanged} /></div></div></section></div>;
   if (section === "discovery") return <div className="settings-groups"><SettingGroup title={tr("settings.discovery")}><div className="setting-row"><div><strong>{tr("settings.discoveryStatus")}</strong></div><span className={discovery?.errors.length ? "status rejected" : "ready"}>{discovery ? tr("settings.workspaceCount", { count: discovery.discovered_count }) : tr("home.discovering")}</span></div>{discovery?.errors.map((error) => <div className="setting-detail error" key={error}>{error}</div>)}</SettingGroup><div className="panel settings-section"><div className="panel-head"><h2>{tr("settings.scanRoots")}</h2><button className="primary" onClick={() => void onAddRoot()}>{tr("settings.addFolder")}</button></div><div className="settings-list">{scanRoots.map((root) => <div key={root.id}><FolderGit2 size={16} /><span><strong>{root.path}</strong><small>{tr("settings.maxDepth", { depth: root.max_depth })}</small></span><button className="icon-danger" onClick={() => void onRemoveRoot(root.id)}><Trash2 size={15} /></button></div>)}{!scanRoots.length && <p>{tr("settings.noScanRoots")}</p>}</div></div><div className="panel settings-section"><div className="panel-head"><h2>{tr("settings.excluded")}</h2></div><div className="settings-list">{excluded.map((item) => <div key={item.path}><X size={16} /><span><strong>{item.path}</strong><small>{formatDateTime(item.created_at)}</small></span><button className="ghost" onClick={() => void onRestore(item.path)}>{tr("common.restore")}</button></div>)}{!excluded.length && <p>{tr("settings.noExcluded")}</p>}</div></div></div>;
   if (section === "integrations") return <div className="settings-groups"><SettingGroup title="AgentKib MCP Hub"><div className="setting-row"><div><strong>{tr("mcp.network")}</strong><code>{runtime?.mcp_hub ? runtime.mcp_hub.accessible_addresses.join(" · ") : "—"}</code></div><span className={runtime?.mcp_hub?.running ? "ready" : "status neutral"}>{tr(runtime?.mcp_hub?.running ? "mcp.running" : "mcp.stopped")}</span></div></SettingGroup><RemoteGatewaysSettings gateways={remoteGateways} onChanged={onRemoteGatewaysChanged} /><ObsidianSettingsCard /></div>;
   if (section === "privacy") return <div className="settings-groups"><SettingGroup title={tr("settings.localData")}><div className="setting-row"><div><strong>{tr("settings.dataLocation")}</strong><code>{runtime?.data_dir ?? "—"}</code></div><span className="ready"><Check size={14} />{tr("common.localOnly")}</span></div></SettingGroup><GitIdentitySettings /></div>;
-  return <div className="settings-groups"><SettingGroup title={tr("settings.providerStatus")}>{insightsStatus?.providers.map((provider) => <div className="setting-row" key={provider.agent}><div className="setting-agent"><AgentIcon agent={provider.agent} /><strong>{agentLabels[provider.agent]}</strong></div><QualityBadge quality={provider.available ? provider.quality : "incomplete"} /></div>)}{!insightsStatus?.providers.length && <div className="setting-empty">{tr("insights.noData")}</div>}</SettingGroup><ActivityPage records={activity} /></div>;
+  return <div className="settings-groups"><SettingGroup title={tr("quota.diagnostics")}><QuotaDiagnostics status={quotaStatus} /></SettingGroup><SettingGroup title={tr("settings.providerStatus")}>{insightsStatus?.providers.map((provider) => <div className="setting-row" key={provider.agent}><div className="setting-agent"><AgentIcon agent={provider.agent} /><strong>{agentLabels[provider.agent]}</strong></div><QualityBadge quality={provider.available ? provider.quality : "incomplete"} /></div>)}{!insightsStatus?.providers.length && <div className="setting-empty">{tr("insights.noData")}</div>}</SettingGroup><ActivityPage records={activity} /></div>;
 }
 
 function SettingGroup({ title, children }: { title: string; children: ReactNode }) { return <section className="panel settings-section"><div className="panel-head"><h2>{title}</h2></div><div className="setting-rows">{children}</div></section>; }

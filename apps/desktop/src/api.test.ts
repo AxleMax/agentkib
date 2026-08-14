@@ -42,6 +42,22 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("set_theme_preference", { preference: "light" });
   });
 
+  it("queues refresh work without waiting for collector results", async () => {
+    vi.mocked(invoke).mockResolvedValue({ kind: "insights", disposition: "queued", request_id: "refresh-1" });
+
+    await expect(api.requestRefresh("insights", true)).resolves.toMatchObject({ disposition: "queued" });
+
+    expect(invoke).toHaveBeenCalledWith("request_refresh", { kind: "insights", force: true });
+  });
+
+  it("exposes quota refresh as a non-blocking IPC request", async () => {
+    vi.mocked(invoke).mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-1" });
+
+    await expect(api.refreshQuota()).resolves.toMatchObject({ kind: "quota", disposition: "queued" });
+
+    expect(invoke).toHaveBeenCalledWith("refresh_quota");
+  });
+
   it("keeps remote gateway credentials inside the native IPC boundary", async () => {
     vi.mocked(invoke).mockResolvedValue({ id: "gateway", state: "connected" });
 
