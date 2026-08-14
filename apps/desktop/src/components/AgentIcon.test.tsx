@@ -7,7 +7,7 @@ import type { AgentKind } from "../types";
 afterEach(cleanup);
 
 describe("AgentIcon", () => {
-  it.each(["codex", "claude-code", "cursor", "open-claw", "hermes"] as AgentKind[])(
+  it.each(["codex", "claude-code", "cursor", "open-claw", "hermes", "deepseek-harness"] as AgentKind[])(
     "renders the local %s brand asset instead of a letter placeholder",
     (agent) => {
       const { container } = render(<AgentIcon agent={agent} />);

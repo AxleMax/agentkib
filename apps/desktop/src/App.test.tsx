@@ -87,6 +87,7 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup();
   vi.mocked(api.workspaces).mockResolvedValue([]);
+  vi.mocked(api.agentInstallations).mockResolvedValue([]);
   vi.mocked(api.insightsView).mockResolvedValue({
     summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
     heatmap: [{ date: "2026-08-13", tokens: 120000, my_commits: 8, all_commits: 20, attributed_commits: 3, sessions: 12, quality: "exact" }],
@@ -99,9 +100,9 @@ afterEach(() => {
 
 describe("AgentKib desktop", () => {
   it("keeps the supported agent labels stable", () => {
-    const agents = ["Codex", "Claude Code", "Cursor", "OpenClaw", "Hermes"];
-    expect(agents).toHaveLength(5);
-    expect(new Set(agents).size).toBe(5);
+    const agents = ["Codex", "Claude Code", "Cursor", "OpenClaw", "Hermes", "DeepSeek Harness"];
+    expect(agents).toHaveLength(6);
+    expect(new Set(agents).size).toBe(6);
   });
 
   it("shows both removed and added lines in a changeset diff", () => {
@@ -215,6 +216,23 @@ describe("AgentKib desktop", () => {
     fireEvent.click(screen.getByRole("button", { name: "Quota" }));
     expect(await screen.findByPlaceholderText("Search providers or accounts")).toBeInTheDocument();
     expect(screen.getByText("No quota snapshot yet")).toBeInTheDocument();
+  });
+
+  it("does not count DeepSeek Harness residual data as an installation", async () => {
+    vi.mocked(api.agentInstallations).mockResolvedValue([{
+      agent: "deepseek-harness",
+      installed: false,
+      configured: true,
+      home: "/tmp/.dsh",
+      warnings: [],
+    }]);
+    render(<App />);
+
+    expect(await screen.findByText("0 / 6")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Agents" }));
+    expect(await screen.findByText("Local data found")).toBeInTheDocument();
+    expect(screen.getAllByText("DeepSeek Harness").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Beta").length).toBeGreaterThan(0);
   });
 
   it("keeps the global sidebar when opening a workspace without a manifest", async () => {

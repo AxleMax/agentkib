@@ -260,6 +260,7 @@ pub fn collect_usage(
             AgentKind::ClaudeCode,
             AgentKind::OpenClaw,
             AgentKind::Hermes,
+            AgentKind::DeepSeekHarness,
         ],
         policy.provider_concurrency,
         |agent| {
@@ -268,27 +269,40 @@ pub fn collect_usage(
                 AgentKind::ClaudeCode => Box::new(ClaudeProvider::new(home.as_deref())),
                 AgentKind::OpenClaw => Box::new(OpenClawProvider),
                 AgentKind::Hermes => Box::new(HermesProvider::new(home.as_deref())),
+                AgentKind::DeepSeekHarness => {
+                    Box::new(DeepSeekHarnessProvider::new(home.as_deref()))
+                }
                 AgentKind::Cursor => unreachable!("Cursor usage is not collected here"),
             };
             let cursor = cursors
                 .get(&agent)
                 .cloned()
                 .map(|value| ImportCursor { value });
-            provider.import(cursor).unwrap_or_else(|error| UsageBatch {
-                events: Vec::new(),
-                status: ProviderStatus {
-                    agent,
-                    available: false,
-                    quality: UsageQuality::Incomplete,
-                    coverage_from: None,
-                    coverage_to: None,
-                    imported_events: 0,
-                    error_key: Some("errors.providerUnavailable".into()),
-                    error_params: BTreeMap::new(),
-                    error: Some(error.to_string()),
-                },
-                cursor: None,
-                unchanged: false,
+            provider.import(cursor).unwrap_or_else(|error| {
+                let detail = error.to_string();
+                let error_key = if agent == AgentKind::DeepSeekHarness
+                    && detail.contains("projection cache version is not supported")
+                {
+                    "errors.deepseekProjectionVersion"
+                } else {
+                    "errors.providerUnavailable"
+                };
+                UsageBatch {
+                    events: Vec::new(),
+                    status: ProviderStatus {
+                        agent,
+                        available: false,
+                        quality: UsageQuality::Incomplete,
+                        coverage_from: None,
+                        coverage_to: None,
+                        imported_events: 0,
+                        error_key: Some(error_key.into()),
+                        error_params: BTreeMap::new(),
+                        error: Some(detail),
+                    },
+                    cursor: None,
+                    unchanged: false,
+                }
             })
         },
     )
@@ -884,6 +898,111 @@ fn collect_openclaw_values(
 
 struct HermesProvider {
     paths: Vec<PathBuf>,
+}
+
+struct DeepSeekHarnessProvider {
+    path: Option<PathBuf>,
+}
+
+impl DeepSeekHarnessProvider {
+    fn new(home: Option<&Path>) -> Self {
+        let root = std::env::var_os("DSH_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home.map(|path| path.join(".dsh")));
+        Self {
+            path: root.map(|path| path.join("storages/session_projcache.json")),
+        }
+    }
+}
+
+impl UsageProvider for DeepSeekHarnessProvider {
+    fn capabilities(&self) -> UsageCapabilities {
+        UsageCapabilities {
+            token_breakdown: true,
+            daily_activity: false,
+            workspace_mapping: true,
+        }
+    }
+
+    fn import(&self, cursor: Option<ImportCursor>) -> Result<UsageBatch> {
+        let Some(path) = self.path.as_ref().filter(|path| path.is_file()) else {
+            bail!("DeepSeek Harness projection cache was not found");
+        };
+        let fingerprint = source_fingerprint(std::slice::from_ref(path));
+        if cursor
+            .as_ref()
+            .is_some_and(|value| value.value == fingerprint)
+        {
+            return Ok(unchanged_batch(AgentKind::DeepSeekHarness, fingerprint));
+        }
+        let value: Value = serde_json::from_reader(BufReader::new(File::open(path)?))?;
+        let unit = value
+            .get("unit")
+            .and_then(Value::as_object)
+            .context("DeepSeek Harness projection cache has no unit header")?;
+        if unit.get("name").and_then(Value::as_str) != Some("session_projcache")
+            || unit.get("version").and_then(Value::as_u64) != Some(3)
+        {
+            bail!("DeepSeek Harness projection cache version is not supported");
+        }
+        let sessions = value
+            .pointer("/tables/sessions")
+            .and_then(Value::as_object)
+            .context("DeepSeek Harness projection cache has no sessions table")?;
+        let mut events = Vec::new();
+        for (session_id, record) in sessions {
+            let Some(token_row) = record.pointer("/rows/tokenUsage") else {
+                continue;
+            };
+            if token_row.get("ver").and_then(Value::as_u64) != Some(1) {
+                continue;
+            }
+            let Some(totals) = token_row.pointer("/val/totals") else {
+                continue;
+            };
+            let input = json_u64(totals, "uncachedInputTokens");
+            let output = json_u64(totals, "outputTokens");
+            let cache_read = json_u64(totals, "cacheReadTokens");
+            let cache_write = json_u64(totals, "cacheWriteTokens");
+            let total = input
+                .saturating_add(output)
+                .saturating_add(cache_read)
+                .saturating_add(cache_write);
+            if total == 0 {
+                continue;
+            }
+            events.push(UsageEvent {
+                source_key: format!("deepseek-harness:{session_id}"),
+                surface_agent: AgentKind::DeepSeekHarness,
+                workspace_path: record
+                    .pointer("/identity/cwd")
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from),
+                occurred_at: None,
+                day: None,
+                model: None,
+                input_tokens: input,
+                output_tokens: output,
+                cache_read_tokens: cache_read,
+                cache_write_tokens: cache_write,
+                reasoning_tokens: 0,
+                total_tokens: total,
+                session_key: Some(session_id.clone()),
+                session_count: 1,
+                date_precision: DatePrecision::Aggregate,
+                quality: UsageQuality::Incomplete,
+            });
+        }
+        if events.is_empty() {
+            bail!("DeepSeek Harness projection cache has no usable Token data");
+        }
+        Ok(finish_batch(
+            AgentKind::DeepSeekHarness,
+            events,
+            None,
+            Some(fingerprint),
+        ))
+    }
 }
 
 impl HermesProvider {
@@ -1498,6 +1617,80 @@ mod tests {
                 .map(|event| event.session_count)
                 .sum::<u64>(),
             2
+        );
+    }
+
+    #[test]
+    fn deepseek_harness_imports_disjoint_token_buckets_as_aggregate() {
+        let dir = tempdir().unwrap();
+        let storage = dir.path().join(".dsh/storages");
+        fs::create_dir_all(&storage).unwrap();
+        fs::write(
+            storage.join("session_projcache.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "unit": { "name": "session_projcache", "version": 3 },
+                "global": null,
+                "tables": { "sessions": { "private-session-id": {
+                    "identity": { "createdAt": 1, "cwd": "/tmp/harness-workspace" },
+                    "rows": { "tokenUsage": {
+                        "ver": 1,
+                        "seq": 12,
+                        "val": {
+                            "totals": {
+                                "uncachedInputTokens": 10,
+                                "outputTokens": 20,
+                                "cacheReadTokens": 30,
+                                "cacheWriteTokens": 40
+                            },
+                            "last": null
+                        }
+                    } }
+                } } }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let batch = DeepSeekHarnessProvider::new(Some(dir.path()))
+            .import(None)
+            .unwrap();
+
+        assert_eq!(batch.events.len(), 1);
+        let event = &batch.events[0];
+        assert_eq!(event.total_tokens, 100);
+        assert_eq!(event.input_tokens, 10);
+        assert_eq!(event.output_tokens, 20);
+        assert_eq!(event.cache_read_tokens, 30);
+        assert_eq!(event.cache_write_tokens, 40);
+        assert_eq!(event.date_precision, DatePrecision::Aggregate);
+        assert_eq!(event.quality, UsageQuality::Incomplete);
+        assert!(event.day.is_none());
+        assert!(event.occurred_at.is_none());
+
+        let unchanged = DeepSeekHarnessProvider::new(Some(dir.path()))
+            .import(batch.cursor)
+            .unwrap();
+        assert!(unchanged.unchanged);
+        assert!(unchanged.events.is_empty());
+    }
+
+    #[test]
+    fn deepseek_harness_rejects_unknown_projection_cache_version() {
+        let dir = tempdir().unwrap();
+        let storage = dir.path().join(".dsh/storages");
+        fs::create_dir_all(&storage).unwrap();
+        fs::write(
+            storage.join("session_projcache.json"),
+            r#"{"unit":{"name":"session_projcache","version":4},"tables":{"sessions":{}}}"#,
+        )
+        .unwrap();
+
+        assert!(
+            DeepSeekHarnessProvider::new(Some(dir.path()))
+                .import(None)
+                .unwrap_err()
+                .to_string()
+                .contains("version is not supported")
         );
     }
 }

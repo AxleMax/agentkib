@@ -516,6 +516,7 @@ fn parse_agent(value: &str) -> Result<AgentKind> {
         "cursor" => Ok(AgentKind::Cursor),
         "openclaw" | "open-claw" => Ok(AgentKind::OpenClaw),
         "hermes" => Ok(AgentKind::Hermes),
+        "deepseek-harness" | "dsh" => Ok(AgentKind::DeepSeekHarness),
         _ => anyhow::bail!("Unknown Agent: {value}"),
     }
 }

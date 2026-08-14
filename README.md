@@ -46,8 +46,10 @@ On macOS, AgentKib can stay active in the menu bar after its window is hidden. I
 - Cursor
 - OpenClaw
 - Hermes
+- DeepSeek Harness (Beta, read-only)
 
 AgentKib distinguishes an installed app or CLI from leftover configuration. Existing Agent Home assets can still be inventoried read-only without incorrectly marking the agent as installed.
+DeepSeek Harness support currently covers local workspace discovery, asset inventory, context preview, and cumulative Token usage; shared writes and MCP setup remain disabled while its storage contracts are in Beta.
 
 ### Typical workflow
 
@@ -102,8 +104,10 @@ AgentKib 还可以将工作区关联到 Obsidian Vault，并按需只读连接 O
 - Cursor
 - OpenClaw
 - Hermes
+- DeepSeek Harness（Beta，只读）
 
 AgentKib 会区分“实际安装的应用或 CLI”和“卸载后留下的配置”。即使只剩 Agent Home 资产，也可以继续只读盘点，但不会被错误标记为已安装。
+DeepSeek Harness 当前支持本地工作区发现、资产盘点、上下文预览和累计 Token 用量；在其存储协议仍处于 Beta 期间，不会写入共享配置或接入 MCP。
 
 ### 常见使用流程
 

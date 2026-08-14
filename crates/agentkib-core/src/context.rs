@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +8,8 @@ use anyhow::{Context, Result, bail};
 use crate::{AgentKind, ContextPreview, ContextSection, Manifest, canonical_project};
 
 const MAX_CONTEXT_CHARS_PER_FILE: usize = 128 * 1024;
+const DSH_MAX_CONTEXT_BYTES: usize = 64 * 1024;
+const DSH_MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 
 pub fn resolve_context(
     project: &Path,
@@ -28,7 +31,12 @@ pub fn resolve_context(
         bail!("Working directory must be inside the project");
     }
 
-    let dirs = directory_chain(&root, &cwd)?;
+    let context_root = if agent == AgentKind::DeepSeekHarness {
+        deepseek_project_root(&root, &cwd)
+    } else {
+        root.clone()
+    };
+    let dirs = directory_chain(&context_root, &cwd)?;
     let mut warnings = Vec::new();
     let sources = match agent {
         AgentKind::Codex => codex_sources(&dirs),
@@ -36,25 +44,31 @@ pub fn resolve_context(
         AgentKind::Cursor => cursor_sources(&dirs),
         AgentKind::OpenClaw => openclaw_sources(&root),
         AgentKind::Hermes => hermes_sources(&dirs),
+        AgentKind::DeepSeekHarness => Vec::new(),
     };
-    let mut sections = Vec::new();
-    for source in sources {
-        match load_with_imports(&source, &root, &mut HashSet::new(), 0, &mut warnings) {
-            Ok(content) => sections.push(ContextSection {
-                scope: source
-                    .parent()
-                    .unwrap_or(&root)
-                    .strip_prefix(&root)
-                    .unwrap_or(Path::new("."))
-                    .display()
-                    .to_string(),
-                source,
-                content,
-                precedence: sections.len(),
-            }),
-            Err(error) => warnings.push(error.to_string()),
+    let mut sections = if agent == AgentKind::DeepSeekHarness {
+        deepseek_harness_sections(&context_root, &dirs, &mut warnings)
+    } else {
+        let mut sections = Vec::new();
+        for source in sources {
+            match load_with_imports(&source, &root, &mut HashSet::new(), 0, &mut warnings) {
+                Ok(content) => sections.push(ContextSection {
+                    scope: source
+                        .parent()
+                        .unwrap_or(&root)
+                        .strip_prefix(&root)
+                        .unwrap_or(Path::new("."))
+                        .display()
+                        .to_string(),
+                    source,
+                    content,
+                    precedence: sections.len(),
+                }),
+                Err(error) => warnings.push(error.to_string()),
+            }
         }
-    }
+        sections
+    };
     if sections.is_empty() {
         warnings.push("No project instruction file was found for this Agent".into());
     }
@@ -77,39 +91,260 @@ pub fn resolve_context(
             });
         }
     }
-    let visible_skills = manifest
-        .map(|value| {
-            value
-                .skills
-                .iter()
-                .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
-                .map(|skill| skill.name.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    let visible_connections = manifest
-        .map(|value| {
-            value
-                .connections
-                .iter()
-                .filter(|connection| {
-                    connection.targets.is_empty() || connection.targets.contains(&agent)
-                })
-                .map(|connection| connection.name.clone())
-                .collect()
-        })
-        .unwrap_or_default();
+    let visible_skills = if agent == AgentKind::DeepSeekHarness {
+        deepseek_harness_skills(&context_root)
+    } else {
+        manifest
+            .map(|value| {
+                value
+                    .skills
+                    .iter()
+                    .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
+                    .map(|skill| skill.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let visible_connections = if agent == AgentKind::DeepSeekHarness {
+        Vec::new()
+    } else {
+        manifest
+            .map(|value| {
+                value
+                    .connections
+                    .iter()
+                    .filter(|connection| {
+                        connection.targets.is_empty() || connection.targets.contains(&agent)
+                    })
+                    .map(|connection| connection.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
     Ok(ContextPreview {
         agent,
-        project: root,
+        project: context_root,
         cwd,
         sections,
         visible_skills,
         visible_connections,
-        approved_memories,
+        approved_memories: if agent == AgentKind::DeepSeekHarness {
+            Vec::new()
+        } else {
+            approved_memories
+        },
         warnings,
     })
+}
+
+fn deepseek_project_root(workspace: &Path, cwd: &Path) -> PathBuf {
+    let mut current = cwd;
+    loop {
+        if current.join(".git").exists() {
+            return current.to_path_buf();
+        }
+        if current == workspace {
+            return cwd.to_path_buf();
+        }
+        let Some(parent) = current
+            .parent()
+            .filter(|parent| parent.starts_with(workspace))
+        else {
+            return cwd.to_path_buf();
+        };
+        current = parent;
+    }
+}
+
+fn deepseek_harness_home() -> Option<PathBuf> {
+    env::var_os("DSH_HOME")
+        .map(PathBuf::from)
+        .or_else(|| user_home().map(|home| home.join(".dsh")))
+}
+
+fn user_home() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("USERPROFILE").map(PathBuf::from))
+}
+
+fn deepseek_harness_sections(
+    root: &Path,
+    dirs: &[PathBuf],
+    warnings: &mut Vec<String>,
+) -> Vec<ContextSection> {
+    let mut sections = Vec::new();
+    let mut remaining = DSH_MAX_CONTEXT_BYTES;
+    if let Some(home) = deepseek_harness_home() {
+        let global = home.join("AGENTS.md");
+        push_deepseek_section(
+            &mut sections,
+            global,
+            "agent-home".into(),
+            &mut remaining,
+            warnings,
+        );
+        if deepseek_custom_loading_rules(&home) {
+            warnings.push(
+                "DeepSeek Harness custom instruction or Skill loading rules were detected; this preview uses the public default rules"
+                    .into(),
+            );
+        }
+    }
+    for dir in dirs {
+        let scope = dir
+            .strip_prefix(root)
+            .unwrap_or(Path::new("."))
+            .display()
+            .to_string();
+        let mut seen = HashSet::new();
+        for name in [
+            "AGENTS.md",
+            "CLAUDE.md",
+            "AGENTS.local.md",
+            "CLAUDE.local.md",
+        ] {
+            let path = dir.join(name);
+            let Ok(metadata) = fs::metadata(&path) else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            if metadata.len() > DSH_MAX_SOURCE_BYTES {
+                warnings.push(format!(
+                    "DeepSeek Harness instruction file exceeds 1 MiB and was skipped: {}",
+                    path.display()
+                ));
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(&path) else {
+                warnings.push(format!("Could not read {}", path.display()));
+                continue;
+            };
+            let normalized = content.trim().to_string();
+            if !seen.insert(normalized) {
+                continue;
+            }
+            if name == "CLAUDE.md" && content.lines().any(|line| line.trim() == "@AGENTS.md") {
+                warnings.push(
+                    "DeepSeek Harness reads @AGENTS.md in CLAUDE.md as literal text, not as a Claude Code import"
+                        .into(),
+                );
+            }
+            push_deepseek_content(
+                &mut sections,
+                path,
+                scope.clone(),
+                content,
+                &mut remaining,
+                warnings,
+            );
+        }
+    }
+    sections
+}
+
+fn push_deepseek_section(
+    sections: &mut Vec<ContextSection>,
+    path: PathBuf,
+    scope: String,
+    remaining: &mut usize,
+    warnings: &mut Vec<String>,
+) {
+    let Ok(metadata) = fs::metadata(&path) else {
+        return;
+    };
+    if !metadata.is_file() {
+        return;
+    }
+    if metadata.len() > DSH_MAX_SOURCE_BYTES {
+        warnings.push(format!(
+            "DeepSeek Harness instruction file exceeds 1 MiB and was skipped: {}",
+            path.display()
+        ));
+        return;
+    }
+    match fs::read_to_string(&path) {
+        Ok(content) => push_deepseek_content(sections, path, scope, content, remaining, warnings),
+        Err(error) => warnings.push(format!("Could not read {}: {error}", path.display())),
+    }
+}
+
+fn push_deepseek_content(
+    sections: &mut Vec<ContextSection>,
+    path: PathBuf,
+    scope: String,
+    content: String,
+    remaining: &mut usize,
+    warnings: &mut Vec<String>,
+) {
+    if *remaining == 0 {
+        warnings.push("DeepSeek Harness instruction budget of 64 KiB was exhausted".into());
+        return;
+    }
+    let take = content.len().min(*remaining);
+    let mut boundary = take;
+    while boundary > 0 && !content.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let truncated = boundary < content.len();
+    sections.push(ContextSection {
+        source: path.clone(),
+        scope,
+        content: content[..boundary].to_string(),
+        precedence: sections.len(),
+    });
+    *remaining = remaining.saturating_sub(boundary);
+    if truncated {
+        warnings.push(format!(
+            "DeepSeek Harness instruction budget of 64 KiB truncated {}",
+            path.display()
+        ));
+    }
+}
+
+fn deepseek_custom_loading_rules(home: &Path) -> bool {
+    let mut candidates = vec![home.join("cordis.patch.yml")];
+    let profiles = home.join("profiles");
+    if let Ok(entries) = fs::read_dir(profiles) {
+        candidates.extend(
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path().join("cordis.patch.yml")),
+        );
+    }
+    candidates.into_iter().any(|path| {
+        fs::read_to_string(path).is_ok_and(|content| {
+            content.contains("agent-instructions") || content.contains("skill-filesystem")
+        })
+    })
+}
+
+fn deepseek_harness_skills(root: &Path) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    let mut roots = vec![root.join(".dsh/skills"), root.join(".agents/skills")];
+    if let Some(home) = deepseek_harness_home() {
+        roots.push(home.join("skills"));
+    }
+    if let Some(home) = user_home() {
+        roots.push(home.join(".agents/skills"));
+    }
+    for skill_root in roots {
+        let Ok(entries) = fs::read_dir(skill_root) else {
+            continue;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            let is_skill = path.is_dir() && path.join("SKILL.md").is_file()
+                || path.extension().is_some_and(|extension| extension == "md");
+            if is_skill && let Some(name) = path.file_stem().and_then(|value| value.to_str()) {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names.into_iter().collect()
 }
 
 fn directory_chain(root: &Path, cwd: &Path) -> Result<Vec<PathBuf>> {
@@ -375,5 +610,50 @@ mod tests {
                 .any(|warning| warning.contains("outside the project"))
         );
         assert!(preview.sections.is_empty());
+    }
+
+    #[test]
+    fn deepseek_harness_loads_overlays_in_order_and_keeps_claude_import_literal() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("src");
+        fs::create_dir(&nested).unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "root rules").unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), "@AGENTS.md\nclaude rules").unwrap();
+        fs::write(nested.join("AGENTS.md"), "nested rules").unwrap();
+        fs::write(nested.join("AGENTS.local.md"), "local override").unwrap();
+
+        let preview = resolve_context(
+            dir.path(),
+            &nested,
+            AgentKind::DeepSeekHarness,
+            None,
+            vec!["must not be shared".into()],
+        )
+        .unwrap();
+        let project = dir.path().canonicalize().unwrap();
+        let project_sections: Vec<_> = preview
+            .sections
+            .iter()
+            .filter(|section| section.source.starts_with(&project))
+            .collect();
+
+        assert_eq!(project_sections.len(), 4);
+        assert_eq!(project_sections[0].source, project.join("AGENTS.md"));
+        assert_eq!(project_sections[1].source, project.join("CLAUDE.md"));
+        assert_eq!(project_sections[2].source, project.join("src/AGENTS.md"));
+        assert_eq!(
+            project_sections[3].source,
+            project.join("src/AGENTS.local.md")
+        );
+        assert!(project_sections[1].content.contains("@AGENTS.md"));
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("literal text"))
+        );
+        assert!(preview.approved_memories.is_empty());
+        assert!(preview.visible_connections.is_empty());
     }
 }

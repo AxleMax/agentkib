@@ -88,11 +88,12 @@ fn parse_agent(value: &str) -> Result<AgentKind> {
         "cursor" => Ok(AgentKind::Cursor),
         "openclaw" => Ok(AgentKind::OpenClaw),
         "hermes" => Ok(AgentKind::Hermes),
+        "deepseek-harness" | "dsh" => Ok(AgentKind::DeepSeekHarness),
         _ => bail!("Unknown Agent: {value}"),
     }
 }
 fn print_help() {
     println!(
-        "agentkib scan <project>\nagentkib context <project> <codex|claude-code|cursor|openclaw|hermes> [cwd]\nagentkib plan <project>\nagentkib validate <project>\nagentkib manifest <project>"
+        "agentkib scan <project>\nagentkib context <project> <codex|claude-code|cursor|openclaw|hermes|deepseek-harness> [cwd]\nagentkib plan <project>\nagentkib validate <project>\nagentkib manifest <project>"
     );
 }

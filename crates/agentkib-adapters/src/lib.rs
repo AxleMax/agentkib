@@ -66,7 +66,7 @@ pub fn default_manifest(project: &Path) -> Result<Manifest> {
     {
         platform_overrides.insert(AgentKind::Hermes, override_text);
     }
-    let adapters = AgentKind::ALL
+    let adapters = AgentKind::WRITABLE
         .into_iter()
         .map(|agent| {
             (
@@ -934,7 +934,10 @@ fn connection_json(connection: &ConnectionDefinition, agent: AgentKind) -> JsonV
                 AgentKind::OpenClaw => {
                     value.insert("transport".into(), "streamable-http".into());
                 }
-                AgentKind::Codex | AgentKind::Cursor | AgentKind::Hermes => {}
+                AgentKind::Codex
+                | AgentKind::Cursor
+                | AgentKind::Hermes
+                | AgentKind::DeepSeekHarness => {}
             }
         }
     }
@@ -957,6 +960,7 @@ fn agent_url(url: &str, agent: AgentKind) -> String {
         AgentKind::Cursor => "cursor",
         AgentKind::OpenClaw => "open-claw",
         AgentKind::Hermes => "hermes",
+        AgentKind::DeepSeekHarness => "deepseek-harness",
     };
     url.replace("{agent}", slug)
 }
@@ -1253,7 +1257,7 @@ mod tests {
             },
             env: BTreeMap::new(),
             allow_tools: vec![],
-            targets: AgentKind::ALL.into_iter().collect(),
+            targets: AgentKind::WRITABLE.into_iter().collect(),
         };
         let claude: JsonValue = serde_json::from_str(
             &merge_claude_mcp(
@@ -1328,7 +1332,7 @@ mod tests {
             },
             env: BTreeMap::new(),
             allow_tools: vec![],
-            targets: AgentKind::ALL.into_iter().collect(),
+            targets: AgentKind::WRITABLE.into_iter().collect(),
         });
         let plan = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
         let mcp = plan

@@ -12,10 +12,23 @@ pub enum AgentKind {
     Cursor,
     OpenClaw,
     Hermes,
+    #[serde(rename = "deepseek-harness")]
+    DeepSeekHarness,
 }
 
 impl AgentKind {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
+        Self::Codex,
+        Self::ClaudeCode,
+        Self::Cursor,
+        Self::OpenClaw,
+        Self::Hermes,
+        Self::DeepSeekHarness,
+    ];
+
+    /// Agents whose native configuration AgentKib may generate today.
+    /// DeepSeek Harness remains read-only while its persistence contracts are beta.
+    pub const WRITABLE: [Self; 5] = [
         Self::Codex,
         Self::ClaudeCode,
         Self::Cursor,
@@ -30,6 +43,7 @@ impl AgentKind {
             Self::Cursor => "cursor",
             Self::OpenClaw => "openclaw",
             Self::Hermes => "hermes",
+            Self::DeepSeekHarness => "deepseek-harness",
         }
     }
 }
@@ -427,6 +441,8 @@ pub enum DiscoveryEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryCandidate {
     pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub source_agent: Option<AgentKind>,
     pub evidence: DiscoveryEvidence,
     pub last_active_at: Option<DateTime<Utc>>,
@@ -639,4 +655,22 @@ pub struct MemoryProposal {
     pub source_agent: Option<String>,
     pub source_thread: Option<String>,
     pub source_reference: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deepseek_harness_uses_the_public_stable_id() {
+        assert_eq!(
+            serde_json::to_string(&AgentKind::DeepSeekHarness).unwrap(),
+            "\"deepseek-harness\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentKind>("\"deepseek-harness\"").unwrap(),
+            AgentKind::DeepSeekHarness
+        );
+        assert!(!AgentKind::WRITABLE.contains(&AgentKind::DeepSeekHarness));
+    }
 }

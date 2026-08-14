@@ -3,6 +3,7 @@ import codexIcon from "../assets/agent-icons/codex.svg";
 import cursorIcon from "../assets/agent-icons/cursor.svg";
 import hermesIcon from "../assets/agent-icons/hermes.svg";
 import openClawIcon from "../assets/agent-icons/open-claw.svg";
+import deepSeekHarnessIcon from "../assets/agent-icons/deepseek-harness.svg";
 import type { AgentKind } from "../types";
 
 const agentIcons: Record<AgentKind, string> = {
@@ -11,6 +12,7 @@ const agentIcons: Record<AgentKind, string> = {
   cursor: cursorIcon,
   "open-claw": openClawIcon,
   hermes: hermesIcon,
+  "deepseek-harness": deepSeekHarnessIcon,
 };
 
 export function AgentIcon({ agent }: { agent: AgentKind }) {

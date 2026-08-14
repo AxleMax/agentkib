@@ -13,7 +13,7 @@ use agentkib_core::{
     AgentInstallation, AgentKind, AssetKind, CatalogAsset, CatalogScope, DiscoveryCandidate,
     DiscoveryEvidence, hash_content,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value as JsonValue;
@@ -39,6 +39,7 @@ pub fn discover(scan_roots: &[(PathBuf, usize)]) -> DiscoverySnapshot {
         Box::new(CursorProvider::default()),
         Box::new(OpenClawProvider::default()),
         Box::new(HermesProvider::default()),
+        Box::new(DeepSeekHarnessProvider::default()),
     ];
     let provider_results = parallel_map_bounded(providers, 4, |provider| {
         let installation = provider.installation();
@@ -657,6 +658,113 @@ impl WorkspaceDiscoveryProvider for HermesProvider {
     }
 }
 
+#[derive(Default)]
+struct DeepSeekHarnessProvider {
+    home: Option<PathBuf>,
+}
+
+impl DeepSeekHarnessProvider {
+    fn home(&self) -> Option<PathBuf> {
+        self.home.clone().or_else(|| {
+            env::var_os("DSH_HOME")
+                .map(PathBuf::from)
+                .or_else(|| dirs::home_dir().map(|path| path.join(".dsh")))
+        })
+    }
+
+    fn workspace_file(&self) -> Option<PathBuf> {
+        self.home().map(|home| home.join("storages/workspace.json"))
+    }
+}
+
+impl WorkspaceDiscoveryProvider for DeepSeekHarnessProvider {
+    fn installation(&self) -> AgentInstallation {
+        let home = self.home();
+        let mut value = installation(
+            AgentKind::DeepSeekHarness,
+            home.clone(),
+            agent_is_installed(AgentKind::DeepSeekHarness),
+        );
+        if let Some(path) = self.workspace_file().filter(|path| path.is_file())
+            && let Err(error) = parse_deepseek_workspaces(&path)
+        {
+            value.warnings.push(error.to_string());
+        }
+        value
+    }
+
+    fn discover(&self) -> Result<Vec<DiscoveryCandidate>> {
+        let Some(path) = self.workspace_file().filter(|path| path.is_file()) else {
+            return Ok(Vec::new());
+        };
+        parse_deepseek_workspaces(&path)
+    }
+
+    fn scan_home_assets(&self) -> Result<Vec<CatalogAsset>> {
+        Ok(self
+            .home()
+            .filter(|path| path.is_dir())
+            .map(|home| {
+                scan_known_home(
+                    AgentKind::DeepSeekHarness,
+                    &home,
+                    &[
+                        "AGENTS.md",
+                        "settings.yaml",
+                        "cordis.patch.yml",
+                        "profiles",
+                        "skills",
+                        ".agent-presets",
+                    ],
+                )
+            })
+            .transpose()?
+            .unwrap_or_default())
+    }
+}
+
+fn parse_deepseek_workspaces(path: &Path) -> Result<Vec<DiscoveryCandidate>> {
+    let value: JsonValue = serde_json::from_str(&fs::read_to_string(path)?)?;
+    let unit = value
+        .get("unit")
+        .and_then(JsonValue::as_object)
+        .context("DeepSeek Harness workspace storage has no unit header")?;
+    if unit.get("name").and_then(JsonValue::as_str) != Some("workspace")
+        || unit.get("version").and_then(JsonValue::as_u64) != Some(2)
+    {
+        anyhow::bail!("DeepSeek Harness workspace storage version is not supported");
+    }
+    let records = value
+        .pointer("/tables/workspaces")
+        .and_then(JsonValue::as_object)
+        .context("DeepSeek Harness workspace storage has no workspaces table")?;
+    let mut output = Vec::new();
+    for record in records.values() {
+        let Some(workspace_path) = record.get("path").and_then(JsonValue::as_str) else {
+            continue;
+        };
+        let session_count = record
+            .get("sessionIds")
+            .and_then(JsonValue::as_array)
+            .map_or(0, |values| values.len() as u64);
+        let mut value = candidate(
+            PathBuf::from(workspace_path),
+            Some(AgentKind::DeepSeekHarness),
+            DiscoveryEvidence::ConfiguredWorkspace,
+            record.get("updatedAt").and_then(parse_json_timestamp),
+            session_count,
+            true,
+        );
+        value.display_name = record
+            .get("title")
+            .and_then(JsonValue::as_str)
+            .filter(|title| !title.trim().is_empty())
+            .map(str::to_owned);
+        output.push(value);
+    }
+    Ok(output)
+}
+
 fn discover_scan_root(
     root: &Path,
     max_depth: usize,
@@ -730,6 +838,9 @@ fn normalize_and_merge(candidates: Vec<DiscoveryCandidate>) -> Vec<DiscoveryCand
         grouped
             .entry(key)
             .and_modify(|existing| {
+                if existing.display_name.is_none() {
+                    existing.display_name = candidate.display_name.clone();
+                }
                 existing.session_count = existing
                     .session_count
                     .saturating_add(candidate.session_count);
@@ -765,6 +876,7 @@ fn has_project_marker(path: &Path) -> bool {
         ".codex",
         ".claude",
         ".cursor",
+        ".dsh",
     ]
     .into_iter()
     .any(|name| path.join(name).exists())
@@ -883,7 +995,10 @@ fn home_asset_kind(path: &Path) -> AssetKind {
         AssetKind::Memory
     } else if name.eq_ignore_ascii_case("hooks.json") || text.contains("/hooks/") {
         AssetKind::Hook
-    } else if text.contains("/agents/") || text.contains("/profiles/") {
+    } else if text.contains("/agents/")
+        || text.contains("/profiles/")
+        || text.contains("/.agent-presets/")
+    {
         AssetKind::Agent
     } else if path.extension().and_then(|value| value.to_str()) == Some("md") {
         AssetKind::Instruction
@@ -953,6 +1068,7 @@ fn agent_is_installed(agent: AgentKind) -> bool {
         AgentKind::Cursor => "cursor",
         AgentKind::OpenClaw => "openclaw",
         AgentKind::Hermes => "hermes",
+        AgentKind::DeepSeekHarness => "dsh",
     };
     command_is_available(command) || app_bundle_is_available(agent)
 }
@@ -1011,7 +1127,10 @@ fn app_bundle_is_available(agent: AgentKind) -> bool {
     let bundle = match agent {
         AgentKind::Codex => "Codex.app",
         AgentKind::Cursor => "Cursor.app",
-        AgentKind::ClaudeCode | AgentKind::OpenClaw | AgentKind::Hermes => return false,
+        AgentKind::ClaudeCode
+        | AgentKind::OpenClaw
+        | AgentKind::Hermes
+        | AgentKind::DeepSeekHarness => return false,
     };
     let mut candidates = vec![PathBuf::from("/Applications").join(bundle)];
     if let Some(home) = dirs::home_dir() {
@@ -1037,6 +1156,7 @@ fn candidate(
 ) -> DiscoveryCandidate {
     DiscoveryCandidate {
         path,
+        display_name: None,
         source_agent,
         evidence,
         last_active_at,
@@ -1402,6 +1522,58 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].path, workspace);
         assert!(!format!("{candidates:?}").contains("must not be retained"));
+    }
+
+    #[test]
+    fn deepseek_harness_reads_workspace_v2_without_retaining_session_ids() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("harness-project");
+        fs::create_dir(&workspace).unwrap();
+        let storage = dir.path().join("workspace.json");
+        fs::write(
+            &storage,
+            serde_json::to_vec(&serde_json::json!({
+                "unit": { "name": "workspace", "version": 2 },
+                "global": null,
+                "tables": { "workspaces": { "private-workspace-id": {
+                    "path": workspace,
+                    "title": "Harness Project",
+                    "sessionIds": ["private-session-1", "private-session-2"],
+                    "updatedAt": "2026-08-14T00:00:00Z"
+                } } }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let candidates = parse_deepseek_workspaces(&storage).unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].session_count, 2);
+        assert_eq!(
+            candidates[0].display_name.as_deref(),
+            Some("Harness Project")
+        );
+        assert!(candidates[0].explicit_workspace);
+        assert!(!format!("{candidates:?}").contains("private-session"));
+    }
+
+    #[test]
+    fn deepseek_harness_rejects_unknown_workspace_storage_version() {
+        let dir = tempdir().unwrap();
+        let storage = dir.path().join("workspace.json");
+        fs::write(
+            &storage,
+            r#"{"unit":{"name":"workspace","version":3},"tables":{"workspaces":{}}}"#,
+        )
+        .unwrap();
+
+        assert!(
+            parse_deepseek_workspaces(&storage)
+                .unwrap_err()
+                .to_string()
+                .contains("version is not supported")
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import type { AgentKind, CatalogAsset } from "./types";
+import type { AgentKind, AssetRecord, CatalogAsset } from "./types";
 
 export interface CatalogAssetGroup {
   id: string;
@@ -16,7 +16,16 @@ export interface CatalogAssetGroup {
   records: CatalogAsset[];
 }
 
-const agentOrder: AgentKind[] = ["codex", "claude-code", "cursor", "open-claw", "hermes"];
+export interface WorkspaceAssetGroup {
+  id: string;
+  kind: string;
+  path: string;
+  size: number;
+  agents: AgentKind[];
+  records: AssetRecord[];
+}
+
+const agentOrder: AgentKind[] = ["codex", "claude-code", "cursor", "open-claw", "hermes", "deepseek-harness"];
 
 export function groupCatalogAssets(assets: CatalogAsset[]): CatalogAssetGroup[] {
   const grouped = new Map<string, CatalogAssetGroup>();
@@ -45,6 +54,30 @@ export function groupCatalogAssets(assets: CatalogAsset[]): CatalogAssetGroup[] 
     current.size = Math.max(current.size, asset.size);
     if (asset.modified_at && (!current.modified_at || asset.modified_at > current.modified_at)) current.modified_at = asset.modified_at;
     if (asset.agent && !current.agents.includes(asset.agent)) current.agents.push(asset.agent);
+  }
+  for (const asset of grouped.values()) asset.agents.sort((a, b) => agentOrder.indexOf(a) - agentOrder.indexOf(b));
+  return [...grouped.values()];
+}
+
+export function groupWorkspaceAssets(assets: AssetRecord[]): WorkspaceAssetGroup[] {
+  const grouped = new Map<string, WorkspaceAssetGroup>();
+  for (const asset of assets) {
+    const key = [asset.path, asset.kind].join("\u0000");
+    const current = grouped.get(key);
+    if (!current) {
+      grouped.set(key, {
+        id: key,
+        kind: asset.kind,
+        path: asset.path,
+        size: asset.size,
+        agents: [asset.agent],
+        records: [asset],
+      });
+      continue;
+    }
+    current.records.push(asset);
+    current.size = Math.max(current.size, asset.size);
+    if (!current.agents.includes(asset.agent)) current.agents.push(asset.agent);
   }
   for (const asset of grouped.values()) asset.agents.sort((a, b) => agentOrder.indexOf(a) - agentOrder.indexOf(b));
   return [...grouped.values()];

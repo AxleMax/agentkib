@@ -6,7 +6,7 @@ import { currentLocale, formatDateTime, localizeMessage, tr } from "../i18n";
 import { squarifyTreemap } from "../treemap";
 import type { AgentKind, RefreshJobStatus, StorageBreakdown, StorageOverview, WorkspaceStorage, WorkspaceSummary } from "../types";
 
-const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes" };
+const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes", "deepseek-harness": "DeepSeek Harness" };
 
 export function WorkspaceStoragePage({ workspaces, job }: { workspaces: WorkspaceSummary[]; job?: RefreshJobStatus }) {
   const [overview, setOverview] = useState<StorageOverview>();

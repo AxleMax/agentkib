@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::{ConnectionTransport, Manifest};
+use crate::{AgentKind, ConnectionTransport, Manifest};
 
 pub fn manifest_path(project: &Path) -> PathBuf {
     project.join(".agentkib/manifest.yaml")
@@ -28,6 +28,7 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
     }
     let mut skill_names = BTreeSet::new();
     for skill in &manifest.skills {
+        reject_read_only_target(&skill.targets)?;
         validate_relative_path(&skill.path, "Skill path")?;
         if skill.name.trim().is_empty() {
             bail!("Skill name cannot be empty");
@@ -44,6 +45,7 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
     }
     let mut connection_names = BTreeSet::new();
     for connection in &manifest.connections {
+        reject_read_only_target(&connection.targets)?;
         if connection.name.trim().is_empty() {
             bail!("MCP connection name cannot be empty");
         }
@@ -70,6 +72,21 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
             }
             _ => {}
         }
+    }
+    if manifest
+        .instructions
+        .platform_overrides
+        .contains_key(&AgentKind::DeepSeekHarness)
+        || manifest.adapters.contains_key(&AgentKind::DeepSeekHarness)
+    {
+        bail!("DeepSeek Harness Beta is read-only and cannot be a manifest write target");
+    }
+    Ok(())
+}
+
+fn reject_read_only_target(targets: &[AgentKind]) -> Result<()> {
+    if targets.contains(&AgentKind::DeepSeekHarness) {
+        bail!("DeepSeek Harness Beta is read-only and cannot be a manifest write target");
     }
     Ok(())
 }
@@ -123,5 +140,21 @@ mod tests {
             targets: vec![],
         });
         assert!(validate_manifest(&value).is_err());
+    }
+
+    #[test]
+    fn rejects_deepseek_harness_write_targets() {
+        let mut value = manifest();
+        value.skills.push(SkillDefinition {
+            name: "read-only".into(),
+            path: ".agents/skills/read-only".into(),
+            targets: vec![AgentKind::DeepSeekHarness],
+        });
+        assert!(
+            validate_manifest(&value)
+                .unwrap_err()
+                .to_string()
+                .contains("read-only")
+        );
     }
 }

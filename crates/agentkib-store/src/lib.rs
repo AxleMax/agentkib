@@ -660,6 +660,7 @@ impl Store {
         }
         let candidate = DiscoveryCandidate {
             path: path.clone(),
+            display_name: None,
             source_agent: None,
             evidence: DiscoveryEvidence::Manual,
             last_active_at: Some(Utc::now()),
@@ -1291,7 +1292,7 @@ impl Store {
             |row| Ok((as_u64(row, 0)?, as_u64(row, 1)?, as_u64(row, 2)?, as_u64(row, 3)?, as_u64(row, 4)?, as_u64(row, 5)?)),
         )?;
         let commits = self.connection.query_row(
-            "SELECT COALESCE(SUM(is_mine), 0), COUNT(*), COALESCE(SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND (?4 IS NULL OR a.agent = ?4))), 0)
+            "SELECT COALESCE(SUM(is_mine), 0), COUNT(*), COALESCE(SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND a.confidence = 'exact' AND (?4 IS NULL OR a.agent = ?4))), 0)
              FROM git_commits c WHERE (?1 IS NULL OR c.day >= ?1) AND (?2 IS NULL OR c.day <= ?2) AND (?3 IS NULL OR c.repository_group_id = ?3)",
             params![from, to, repository, agent],
             |row| Ok((as_u64(row, 0)?, as_u64(row, 1)?, as_u64(row, 2)?)),
@@ -1408,7 +1409,7 @@ impl Store {
             }
         }
         let mut commit_statement = self.connection.prepare(
-            "SELECT c.day, SUM(c.is_mine), COUNT(*), SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND (?4 IS NULL OR a.agent = ?4)))
+            "SELECT c.day, SUM(c.is_mine), COUNT(*), SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND a.confidence = 'exact' AND (?4 IS NULL OR a.agent = ?4)))
              FROM git_commits c WHERE c.day >= ?1 AND c.day <= ?2 AND (?3 IS NULL OR c.repository_group_id = ?3) GROUP BY c.day",
         )?;
         let commit_rows = commit_statement.query_map(
@@ -1521,7 +1522,7 @@ impl Store {
             active.insert(NaiveDate::parse_from_str(&row?, "%Y-%m-%d")?);
         }
         let mut commit_statement = self.connection.prepare(
-            "SELECT DISTINCT c.day FROM git_commits c WHERE c.is_mine = 1 AND (?1 IS NULL OR c.day >= ?1) AND (?2 IS NULL OR c.day <= ?2) AND (?3 IS NULL OR c.repository_group_id = ?3) AND (?4 IS NULL OR EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND a.agent = ?4))",
+            "SELECT DISTINCT c.day FROM git_commits c WHERE c.is_mine = 1 AND (?1 IS NULL OR c.day >= ?1) AND (?2 IS NULL OR c.day <= ?2) AND (?3 IS NULL OR c.repository_group_id = ?3) AND (?4 IS NULL OR EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND a.agent = ?4 AND a.confidence = 'exact'))",
         )?;
         let rows = commit_statement.query_map(params![from, to, repository, agent], |row| {
             row.get::<_, String>(0)
@@ -1538,7 +1539,7 @@ impl Store {
     ) -> Result<Vec<RepositoryCommitBreakdown>> {
         let (from, to, _, _, repository) = query_values(&self.connection, query)?;
         let mut statement = self.connection.prepare(
-            "SELECT c.repository_group_id, COALESCE((SELECT MIN(w.name) FROM workspaces w WHERE w.repository_group_id = c.repository_group_id), 'Repository'), SUM(c.is_mine), COUNT(*), SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash))
+            "SELECT c.repository_group_id, COALESCE((SELECT MIN(w.name) FROM workspaces w WHERE w.repository_group_id = c.repository_group_id), 'Repository'), SUM(c.is_mine), COUNT(*), SUM(EXISTS(SELECT 1 FROM commit_attributions a WHERE a.repository_group_id = c.repository_group_id AND a.commit_hash = c.commit_hash AND a.confidence = 'exact'))
              FROM git_commits c
              WHERE (?1 IS NULL OR c.day >= ?1) AND (?2 IS NULL OR c.day <= ?2) AND (?3 IS NULL OR c.repository_group_id = ?3)
              GROUP BY c.repository_group_id ORDER BY SUM(c.is_mine) DESC",
@@ -2220,45 +2221,6 @@ fn rebuild_commit_attributions(connection: &Connection) -> Result<()> {
         "DELETE FROM commit_attributions WHERE method = 'time-correlation'",
         [],
     )?;
-    let commits = {
-        let mut statement = connection.prepare(
-            "SELECT repository_group_id, commit_hash, authored_at FROM git_commits WHERE is_mine = 1",
-        )?;
-        let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-    for (repository, commit_hash, authored_at) in commits {
-        let Some(authored_at) = DateTime::parse_from_rfc3339(&authored_at)
-            .ok()
-            .map(|value| value.with_timezone(&Utc))
-        else {
-            continue;
-        };
-        let from = authored_at - chrono::Duration::minutes(30);
-        let agents = {
-            let mut statement = connection.prepare(
-                "SELECT DISTINCT u.surface_agent FROM usage_events u JOIN workspaces w ON w.id = u.workspace_id
-                 WHERE w.repository_group_id = ?1 AND u.occurred_at >= ?2 AND u.occurred_at <= ?3",
-            )?;
-            let rows = statement.query_map(
-                params![repository, from.to_rfc3339(), authored_at.to_rfc3339()],
-                |row| row.get::<_, String>(0),
-            )?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        if agents.len() == 1 {
-            connection.execute(
-                "INSERT OR IGNORE INTO commit_attributions(repository_group_id, commit_hash, agent, confidence, method) VALUES (?1, ?2, ?3, 'estimated', 'time-correlation')",
-                params![repository, commit_hash, agents[0]],
-            )?;
-        }
-    }
     Ok(())
 }
 
@@ -2476,9 +2438,15 @@ fn upsert_workspace(
     let repository_group_id = sources
         .iter()
         .find_map(|value| value.repository_group_id.clone());
+    let display_name = sources
+        .iter()
+        .find_map(|value| value.display_name.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| path.file_name().and_then(|value| value.to_str()))
+        .unwrap_or("workspace");
     connection.execute(
         "INSERT INTO workspaces(id, canonical_path, name, repository_group_id, manifest_workspace_id, status, asset_count, warning_count, last_active_at, last_discovered_at, last_scanned_at) VALUES (?1, ?2, ?3, ?4, NULL, 'healthy', 0, 0, ?5, ?6, NULL) ON CONFLICT(canonical_path) DO UPDATE SET name = excluded.name, repository_group_id = COALESCE(excluded.repository_group_id, workspaces.repository_group_id), last_active_at = CASE WHEN excluded.last_active_at IS NULL THEN workspaces.last_active_at WHEN workspaces.last_active_at IS NULL OR excluded.last_active_at > workspaces.last_active_at THEN excluded.last_active_at ELSE workspaces.last_active_at END, last_discovered_at = excluded.last_discovered_at",
-        params![id, path_text, path.file_name().and_then(|value| value.to_str()).unwrap_or("workspace"), repository_group_id, last_active_at.map(|value| value.to_rfc3339()), Utc::now().to_rfc3339()],
+        params![id, path_text, display_name, repository_group_id, last_active_at.map(|value| value.to_rfc3339()), Utc::now().to_rfc3339()],
     )?;
     let workspace_id: String = connection.query_row(
         "SELECT id FROM workspaces WHERE canonical_path = ?1",
@@ -2839,6 +2807,7 @@ mod tests {
     fn candidate(path: &Path) -> DiscoveryCandidate {
         DiscoveryCandidate {
             path: path.canonicalize().unwrap(),
+            display_name: None,
             source_agent: Some(AgentKind::Codex),
             evidence: DiscoveryEvidence::SessionCwd,
             last_active_at: Some(Utc::now()),
@@ -3311,6 +3280,16 @@ mod tests {
         let summary = store.insights_summary(&InsightsQuery::default()).unwrap();
         assert_eq!(summary.total_tokens, 100);
         assert_eq!(summary.my_commits, 1);
+        assert_eq!(summary.attributed_commits, 0);
+        let inferred_attributions: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM commit_attributions WHERE confidence = 'estimated'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(inferred_attributions, 0);
         let stored_source: String = store
             .connection
             .query_row("SELECT source_key FROM usage_events", [], |row| row.get(0))

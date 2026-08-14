@@ -1407,7 +1407,7 @@ fn ensure_agentkib_connection(manifest: &mut Manifest, port: u16) {
         },
         env: Default::default(),
         allow_tools: vec![],
-        targets: AgentKind::ALL.into_iter().collect(),
+        targets: AgentKind::WRITABLE.into_iter().collect(),
     };
     if let Some(existing) = manifest
         .connections

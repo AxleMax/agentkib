@@ -74,6 +74,9 @@ pub fn migration_server(candidate: &McpMigrationCandidate) -> Result<McpServerCo
         AgentKind::Cursor => json_server(candidate, &["mcpServers"], false)?,
         AgentKind::OpenClaw => json_server(candidate, &["mcp", "servers"], true)?,
         AgentKind::Hermes => hermes_server(candidate)?,
+        AgentKind::DeepSeekHarness => {
+            bail!("DeepSeek Harness Beta native MCP migration is not supported")
+        }
     };
     server.targets = vec![candidate.agent];
     Ok(server)
@@ -563,6 +566,9 @@ fn remove_native_candidates(
             upsert_json_gateway(&mut value, &["mcp_servers"], agent, gateway_url)?;
             Ok(serde_yaml::to_string(&value)?)
         }
+        AgentKind::DeepSeekHarness => {
+            bail!("DeepSeek Harness Beta native MCP migration is not supported")
+        }
     }
 }
 
@@ -577,6 +583,7 @@ fn agent_gateway_url(template: &str, agent: AgentKind) -> String {
         AgentKind::Cursor => "cursor",
         AgentKind::OpenClaw => "open-claw",
         AgentKind::Hermes => "hermes",
+        AgentKind::DeepSeekHarness => "deepseek-harness",
     };
     template.replace("{agent}", slug)
 }
@@ -605,7 +612,7 @@ fn upsert_json_gateway(
         AgentKind::OpenClaw => {
             gateway.insert("transport".into(), "streamable-http".into());
         }
-        AgentKind::Codex | AgentKind::Cursor | AgentKind::Hermes => {}
+        AgentKind::Codex | AgentKind::Cursor | AgentKind::Hermes | AgentKind::DeepSeekHarness => {}
     }
     servers.insert("agentkib".into(), Value::Object(gateway));
     Ok(())

@@ -214,6 +214,30 @@ fn candidates(agent: AgentKind) -> Vec<(&'static str, AssetKind, &'static str)> 
                 "Hermes Cursor-compatible rules",
             ),
         ],
+        AgentKind::DeepSeekHarness => vec![
+            (
+                "AGENTS.md",
+                AssetKind::Instruction,
+                "DeepSeek Harness project instructions",
+            ),
+            (
+                "CLAUDE.md",
+                AssetKind::Instruction,
+                "DeepSeek Harness project instructions",
+            ),
+            (
+                "AGENTS.local.md",
+                AssetKind::Instruction,
+                "DeepSeek Harness local project instructions",
+            ),
+            (
+                "CLAUDE.local.md",
+                AssetKind::Instruction,
+                "DeepSeek Harness local project instructions",
+            ),
+            (".dsh/skills", AssetKind::Skill, "DeepSeek Harness Skills"),
+            (".agents/skills", AssetKind::Skill, "Shared Agent Skill"),
+        ],
     }
 }
 
@@ -240,6 +264,8 @@ fn summary_translation_key(summary: &str) -> Option<&'static str> {
         Some("assets.summary.openClawInstructions")
     } else if summary.contains("Hermes") && summary.contains("instruction") {
         Some("assets.summary.hermesInstructions")
+    } else if summary.contains("DeepSeek Harness") && summary.contains("instruction") {
+        Some("assets.summary.deepseekHarnessInstructions")
     } else if summary.contains("Cursor") && summary.contains("instruction") {
         Some("assets.summary.cursorInstructions")
     } else if summary.contains("Skill") {
