@@ -82,3 +82,6 @@ export interface QuotaProviderStatus { level: string; label: string; updated_at?
 export interface QuotaProvider { id: string; name: string; enabled: boolean; source?: string; status?: QuotaProviderStatus; identity?: QuotaIdentity; windows: QuotaWindow[]; credits?: QuotaCredits; error?: string; updated_at?: string; accounts: QuotaAccount[] }
 export interface QuotaSnapshot { schema_version: number; backend: QuotaBackend; backend_version?: string; generated_at: string; fetched_at: string; stale_after_seconds: number; freshness: QuotaFreshness; providers: QuotaProvider[] }
 export interface QuotaCollectorStatus { backend: QuotaBackend; backend_version?: string; platform_supported: boolean; sidecar_available: boolean; config_source: string; last_attempt_at?: string; last_success_at?: string; running: boolean; error_key?: string; error_detail?: string }
+export interface QuotaWindowSelector { provider_id: string; account_id?: string; kind: string; label: string }
+export interface QuotaPopoverPreferences { hidden_providers: string[]; hidden_windows: QuotaWindowSelector[] }
+export interface QuotaNavigationRequest { page: "quota" | "settings"; provider?: string; window?: QuotaWindowSelector; configure_popover?: boolean }

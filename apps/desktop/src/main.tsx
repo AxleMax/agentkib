@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { QuotaPopover } from "./components/QuotaPopover";
 import { api } from "./api";
 import { initializeI18n, normalizeLocale } from "./i18n";
 import { applyTheme, systemTheme } from "./theme";
@@ -18,7 +19,10 @@ async function bootstrap() {
   }
   applyTheme(theme);
   await initializeI18n(locale);
-  createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+  const surface = new URLSearchParams(window.location.search).get("surface");
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>{surface === "quota-popover" ? <QuotaPopover /> : <App />}</StrictMode>,
+  );
 }
 
 void bootstrap();

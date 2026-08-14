@@ -33,6 +33,7 @@ vi.mock("./api", () => ({
     refreshRemoteGateway: vi.fn(),
     removeRemoteGateway: vi.fn(),
     runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark" }),
+    openFilesAndFoldersSettings: vi.fn().mockResolvedValue(undefined),
     setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale, theme_preference: "system", effective_theme: "dark" })),
     setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark" })),
     requestRefresh: vi.fn().mockResolvedValue({ kind: "discovery", disposition: "queued", request_id: "test-refresh" }),
@@ -48,6 +49,8 @@ vi.mock("./api", () => ({
     insightsStatus: vi.fn().mockResolvedValue({ providers: [], running: false }),
     quotaSnapshot: vi.fn().mockResolvedValue(undefined),
     quotaCollectorStatus: vi.fn().mockResolvedValue({ backend: "codex-bar-cli", platform_supported: true, sidecar_available: true, config_source: "agentkib-managed", running: false }),
+    quotaPopoverPreferences: vi.fn().mockResolvedValue({ hidden_providers: [], hidden_windows: [] }),
+    setQuotaPopoverPreferences: vi.fn().mockImplementation((preferences) => Promise.resolve(preferences)),
     refreshQuota: vi.fn().mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-refresh" }),
     insightsView: vi.fn().mockResolvedValue({
       summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
@@ -366,11 +369,21 @@ describe("AgentKib desktop", () => {
     expect(screen.getByText("CLI not enabled (optional)")).toBeInTheDocument();
   });
 
+  it.runIf(import.meta.env.TAURI_ENV_PLATFORM === "darwin")("opens macOS Files & Folders settings from Data & Privacy", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Data & Privacy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Files & Folders" }));
+
+    await waitFor(() => expect(api.openFilesAndFoldersSettings).toHaveBeenCalledOnce());
+  });
+
   it("collapses the sidebar completely and restores the preference", async () => {
     const first = render(<App />);
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toHaveAttribute("data-tauri-drag-region"));
     const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
-    expect(collapse.closest(".window-toolbar")).toBeInTheDocument();
+    expect(collapse.closest(".window-toolbar")).toHaveAttribute("data-tauri-drag-region");
     expect(collapse.closest(".brand")).toBeNull();
     fireEvent.click(collapse);
     expect(storage.get("agentkib.sidebar.collapsed")).toBe("true");

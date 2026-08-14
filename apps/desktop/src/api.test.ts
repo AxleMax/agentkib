@@ -58,6 +58,31 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("refresh_quota");
   });
 
+  it("persists quota popover display preferences through desktop preferences", async () => {
+    const preferences = {
+      hidden_providers: ["claude"],
+      hidden_windows: [{ provider_id: "codex", kind: "weekly", label: "Weekly" }],
+    };
+    vi.mocked(invoke).mockResolvedValue(preferences);
+
+    await expect(api.setQuotaPopoverPreferences(preferences)).resolves.toEqual(preferences);
+
+    expect(invoke).toHaveBeenCalledWith("set_quota_popover_preferences", { preferences });
+  });
+
+  it("opens the quota dashboard at an exact provider window", async () => {
+    const window = { provider_id: "codex", account_id: "work", kind: "weekly", label: "Weekly" };
+    vi.mocked(invoke).mockResolvedValue(undefined);
+
+    await api.openQuotaDashboard("codex", window, false);
+
+    expect(invoke).toHaveBeenCalledWith("open_quota_dashboard", {
+      provider: "codex",
+      window,
+      configurePopover: false,
+    });
+  });
+
   it("keeps remote gateway credentials inside the native IPC boundary", async () => {
     vi.mocked(invoke).mockResolvedValue({ id: "gateway", state: "connected" });
 

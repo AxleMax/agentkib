@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Activity, Award, Bot, Boxes, Brain, Check, ChevronRight, CircleAlert, Code2, Copy, FileCode2, FolderGit2, Gauge, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, MoreHorizontal, Pencil, PlugZap, RefreshCw, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
+import { Activity, Award, Bot, Boxes, Brain, Check, ChevronRight, CircleAlert, Code2, Copy, ExternalLink, FileCode2, FolderGit2, Gauge, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, MoreHorizontal, Pencil, PlugZap, RefreshCw, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 import { api } from "./api";
 import { AgentIcon } from "./components/AgentIcon";
 import { AppSidebar, type SidebarEntry } from "./components/AppSidebar";
@@ -17,7 +17,7 @@ import { groupCatalogAssets, workspaceAssetCounts, type CatalogAssetGroup } from
 import { diffLines } from "./diff";
 import { changeLocale, formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "./i18n";
 import { applyTheme } from "./theme";
-import type { ActivityRecord, AgentInstallation, AgentKind, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, QuotaCollectorStatus, RefreshJobStatus, RemoteGatewaySummary, RuntimeInfo, ScanRoot, ThemePreference, UsageQuality, WorkspaceScan, WorkspaceSummary } from "./types";
+import type { ActivityRecord, AgentInstallation, AgentKind, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, QuotaCollectorStatus, QuotaNavigationRequest, QuotaWindowSelector, RefreshJobStatus, RemoteGatewaySummary, RuntimeInfo, ScanRoot, ThemePreference, UsageQuality, WorkspaceScan, WorkspaceSummary } from "./types";
 
 type Page = "overview" | "assets" | "context" | "changes";
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
@@ -28,6 +28,7 @@ type WorkspaceAssetSection = "instructions" | "skills" | "mcp" | "native";
 const AgentsPageLazy = lazy(() => import("./components/AgentsPage").then(({ AgentsPage }) => ({ default: AgentsPage })));
 const InsightsPageLazy = lazy(() => import("./components/InsightsPage").then(({ InsightsPage }) => ({ default: InsightsPage })));
 const QuotaPageLazy = lazy(() => import("./components/QuotaPage").then(({ QuotaPage }) => ({ default: QuotaPage })));
+const isMacOSBuild = import.meta.env.TAURI_ENV_PLATFORM === "darwin";
 
 const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes" };
 const workspaceTabs = [
@@ -66,7 +67,9 @@ export function App() {
   const [insightsStatus, setInsightsStatus] = useState<InsightsStatus>();
   const [quotaStatus, setQuotaStatus] = useState<QuotaCollectorStatus>();
   const [quotaProvider, setQuotaProvider] = useState<string>();
-  const [navigationRequest, setNavigationRequest] = useState<{ page: string; provider?: string }>();
+  const [quotaWindow, setQuotaWindow] = useState<QuotaWindowSelector>();
+  const [quotaConfigureRequest, setQuotaConfigureRequest] = useState(0);
+  const [navigationRequest, setNavigationRequest] = useState<QuotaNavigationRequest>();
   const [refreshJobs, setRefreshJobs] = useState<RefreshJobStatus[]>([]);
   const [assetSection, setAssetSection] = useState<AssetSection>("instructions");
   const [workspaceAssetSection, setWorkspaceAssetSection] = useState<WorkspaceAssetSection>("instructions");
@@ -125,7 +128,7 @@ export function App() {
         unlistenInsights = await listen<InsightsSummary>("agentkib:insights-updated", (event) => { setInsightsSummary(event.payload); });
         unlistenGateways = await listen<RemoteGatewaySummary[]>("agentkib:remote-gateways-updated", (event) => { setRemoteGateways(event.payload); });
         unlistenQuota = await listen("agentkib:quota-updated", () => { void api.quotaCollectorStatus().then(setQuotaStatus); });
-        unlistenNavigate = await listen<{ page: string; provider?: string }>("agentkib:navigate", (event) => { setNavigationRequest(event.payload); });
+        unlistenNavigate = await listen<QuotaNavigationRequest>("agentkib:navigate", (event) => { setNavigationRequest(event.payload); });
         unlistenTheme = await listen<EffectiveTheme>("tauri://theme-changed", (event) => {
           setRuntime((current) => {
             if (!current || current.theme_preference !== "system") return current;
@@ -161,12 +164,18 @@ export function App() {
 
   const hasUnsavedDraft = Boolean(manifest && baselineManifest && JSON.stringify(manifest) !== baselineManifest);
   useEffect(() => {
-    if (navigationRequest?.page !== "quota") return;
+    if (!navigationRequest) return;
+    if (navigationRequest.page === "settings") {
+      setAppMode("settings");
+      setNavigationRequest(undefined);
+      return;
+    }
+    if (navigationRequest.page !== "quota") return;
     if (selectedWorkspace && manifest && hasUnsavedDraft) {
       setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
     }
     setSelectedWorkspace(undefined); setProject(""); setScan(undefined); setManifest(undefined); setChangeSet(undefined); setBaselineManifest("");
-    setQuotaProvider(navigationRequest.provider); setGlobalPage("quota"); setAppMode("main"); setNavigationRequest(undefined);
+    setQuotaProvider(navigationRequest.provider); setQuotaWindow(navigationRequest.window); if (navigationRequest.configure_popover) setQuotaConfigureRequest((value) => value + 1); setGlobalPage("quota"); setAppMode("main"); setNavigationRequest(undefined);
   }, [navigationRequest]);
   const persistWorkspaceDraft = () => {
     if (selectedWorkspace && manifest && hasUnsavedDraft) setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
@@ -189,7 +198,7 @@ export function App() {
   };
   const closeWorkspace = () => leaveWorkspace(() => setGlobalPage("workspaces"));
   const navigateGlobal = (nextPage: GlobalPage) => {
-    if (nextPage === "quota") setQuotaProvider(undefined);
+    if (nextPage === "quota") { setQuotaProvider(undefined); setQuotaWindow(undefined); }
     selectedWorkspace ? leaveWorkspace(() => setGlobalPage(nextPage)) : setGlobalPage(nextPage);
   };
   const openSettings = () => setAppMode("settings");
@@ -213,7 +222,7 @@ export function App() {
       {!sidebarCollapsed && <button className="sidebar-backdrop" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}
       <main>
         <header className="page-header" data-tauri-drag-region>
-          <div className="page-title-row"><h1>{settingsSectionLabel(settingsSection)}</h1></div>
+          <div className="page-title-row"><h1 data-tauri-drag-region>{settingsSectionLabel(settingsSection)}</h1></div>
         </header>
         {message && <div className="alert"><CircleAlert size={17} />{message}</div>}
         <section className={`content settings-content${settingsSection === "general" ? " compact" : ""}`}>
@@ -228,7 +237,7 @@ export function App() {
       <AppSidebar active="workspaces" entries={navigation} collapsed={sidebarCollapsed} onNavigate={navigateGlobal} onSettings={openSettings} />
       {!sidebarCollapsed && <button className="sidebar-backdrop" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}
       <main>
-        <header className="page-header workspace-header" data-tauri-drag-region><div className="page-title-row"><button className="breadcrumb" onClick={closeWorkspace}>{tr("nav.workspaces")}</button><span className="breadcrumb-separator">/</span><h1>{selectedWorkspace.name}</h1></div><div className="header-actions">{selectedWorkspace.status === "attention" && <span className="workspace-status attention">{workspaceStatusLabel("attention")}</span>}<details className="row-menu header-menu"><summary title={tr("common.moreActions")} aria-label={tr("common.moreActions")}><MoreHorizontal size={16} /></summary><div><button className="menu-neutral" onClick={() => void navigator.clipboard?.writeText(selectedWorkspace.path)}><Copy size={13} />{tr("workspace.copyPath")}</button></div></details><button className="ghost icon-only" title={tr("common.scan")} aria-label={tr("common.scan")} onClick={() => load(project, manifest)} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /></button><button className="primary" onClick={() => plan(false)} disabled={busy || !hasUnsavedDraft}><GitCompareArrows size={15} />{tr("workspace.reviewChanges")}</button></div></header>
+        <header className="page-header workspace-header" data-tauri-drag-region><div className="page-title-row"><button className="breadcrumb" onClick={closeWorkspace}>{tr("nav.workspaces")}</button><span className="breadcrumb-separator" data-tauri-drag-region>/</span><h1 data-tauri-drag-region>{selectedWorkspace.name}</h1></div><div className="header-actions">{selectedWorkspace.status === "attention" && <span className="workspace-status attention">{workspaceStatusLabel("attention")}</span>}<details className="row-menu header-menu"><summary title={tr("common.moreActions")} aria-label={tr("common.moreActions")}><MoreHorizontal size={16} /></summary><div><button className="menu-neutral" onClick={() => void navigator.clipboard?.writeText(selectedWorkspace.path)}><Copy size={13} />{tr("workspace.copyPath")}</button></div></details><button className="ghost icon-only" title={tr("common.scan")} aria-label={tr("common.scan")} onClick={() => load(project, manifest)} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /></button><button className="primary" onClick={() => plan(false)} disabled={busy || !hasUnsavedDraft}><GitCompareArrows size={15} />{tr("workspace.reviewChanges")}</button></div></header>
         {message && <div className="alert"><CircleAlert size={17} />{message}</div>}
         <div className="workspace-tabs" role="tablist" aria-label={selectedWorkspace.name} onKeyDown={handleTabKey}>{workspaceTabs.map(([id, label, Icon]) => <button key={id} role="tab" aria-selected={page === id} className={page === id ? "active" : ""} onClick={() => setPage(id)}><Icon size={15} />{tr(label)}{id === "changes" && changeSet?.changes.length ? <em>{changeSet.changes.length}</em> : null}</button>)}</div>
         <section className="content workspace-content">
@@ -242,13 +251,13 @@ export function App() {
   );
 
   const discoveryFailure = refreshJobs.find((job) => job.kind === "discovery" && job.state === "failed");
-  const headerAction = globalPage === "workspaces" ? <>{discoveryRefreshing && <span className="badge">{tr("tray.refreshing")}</span>}<button className="ghost icon-only" title={tr("workspace.refreshDiscovery")} aria-label={tr("workspace.refreshDiscovery")} onClick={() => void refreshDiscovery()} disabled={discoveryRefreshing}><RefreshCw size={15} className={discoveryRefreshing ? "spin" : ""} /></button><button className="primary" onClick={() => void selectProject()}><FolderGit2 size={15} />{tr("workspace.addManually")}</button></> : null;
-  return <div className={`${shellClass} global-shell`}><WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} /><AppSidebar active={globalPage} entries={navigation} collapsed={sidebarCollapsed} onNavigate={navigateGlobal} onSettings={openSettings} />{!sidebarCollapsed && <button className="sidebar-backdrop" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}<main><header className="page-header" data-tauri-drag-region><div className="page-title-row"><h1>{tr(globalNav.find(({ id }) => id === globalPage)?.label ?? "nav.home")}</h1></div><div className="header-actions">{headerAction}</div></header>{message && <div className="alert"><CircleAlert size={17} />{message}</div>}{globalPage === "workspaces" && discoveryFailure?.error && <div className="alert"><CircleAlert size={17} />{discoveryFailure.error}</div>}<section className="content global-content">
+  const headerAction = globalPage === "workspaces" ? <>{discoveryRefreshing && <span className="badge">{tr("tray.refreshDiscovery")}</span>}<button className="ghost icon-only" title={tr("workspace.refreshDiscovery")} aria-label={tr("workspace.refreshDiscovery")} onClick={() => void refreshDiscovery()} disabled={discoveryRefreshing}><RefreshCw size={15} className={discoveryRefreshing ? "spin" : ""} /></button><button className="primary" onClick={() => void selectProject()}><FolderGit2 size={15} />{tr("workspace.addManually")}</button></> : null;
+  return <div className={`${shellClass} global-shell`}><WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} /><AppSidebar active={globalPage} entries={navigation} collapsed={sidebarCollapsed} onNavigate={navigateGlobal} onSettings={openSettings} />{!sidebarCollapsed && <button className="sidebar-backdrop" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}<main><header className="page-header" data-tauri-drag-region><div className="page-title-row"><h1 data-tauri-drag-region>{tr(globalNav.find(({ id }) => id === globalPage)?.label ?? "nav.home")}</h1></div><div className="header-actions">{headerAction}</div></header>{message && <div className="alert"><CircleAlert size={17} />{message}</div>}{globalPage === "workspaces" && discoveryFailure?.error && <div className="alert"><CircleAlert size={17} />{discoveryFailure.error}</div>}<section className="content global-content">
     {globalPage === "home" && <GlobalHome workspaces={workspaces} installations={installations} memories={globalMemories} discovery={discovery} activity={activity} insights={insightsSummary} uniqueAssetCount={groupedCatalog.filter((asset) => asset.scope === "workspace").length} assetCounts={assetCounts} onShowInsights={() => setGlobalPage("insights")} onShowWorkspaces={() => setGlobalPage("workspaces")} onShowAgents={() => setGlobalPage("agents")} onOpen={openWorkspace} onOpenAssets={(section) => { setAssetSection(section); setGlobalPage("catalog"); }} onAddRoot={async () => { await addScanRootFromDialog(); }} />}
     {globalPage === "workspaces" && <WorkspacesPage workspaces={workspaces} assetCounts={assetCounts} onOpen={openWorkspace} onRefresh={async (id) => { await api.refreshWorkspace(id); await loadGlobal(); }} onExclude={async (id) => { if (!window.confirm(tr("workspace.ignoreConfirm"))) return; await api.excludeWorkspace(id); await loadGlobal(); }} />}
     {globalPage === "agents" && <DeferredPage><AgentsPageLazy installations={installations} assets={catalog.filter((asset) => asset.scope === "agent-home")} workspaces={workspaces} remoteGateways={remoteGateways} insightsStatus={insightsStatus} onOpen={openWorkspace} /></DeferredPage>}
     {globalPage === "catalog" && <GlobalAssetsPage section={assetSection} onSection={setAssetSection} assets={catalog} workspaces={workspaces} memories={globalMemories} runtime={runtime} onReload={loadGlobal} onRuntimeChanged={setRuntime} onOpen={(id) => { const workspace = workspaces.find((item) => item.id === id); if (workspace) void openWorkspace(workspace); }} onMigrationPlanned={async (workspacePath, planned) => { const workspace = workspaces.find((item) => item.path === workspacePath); if (!workspace) return; await openWorkspace(workspace); setChangeSet(planned); setPage("changes"); }} />}
-    {globalPage === "quota" && <DeferredPage><QuotaPageLazy initialProvider={quotaProvider} /></DeferredPage>}
+    {globalPage === "quota" && <DeferredPage><QuotaPageLazy initialProvider={quotaProvider} initialWindow={quotaWindow} configurePopoverRequest={quotaConfigureRequest} /></DeferredPage>}
     {globalPage === "insights" && <div className="insights-host" data-view={insightsSection}><div className="section-tabs insights-section-tabs" role="tablist" aria-label={tr("nav.insights")} onKeyDown={handleTabKey}>{(["overview", "tokens", "commits", "milestones", "sources"] as InsightsSection[]).map((section) => <button key={section} role="tab" aria-selected={insightsSection === section} className={insightsSection === section ? "active" : ""} onClick={() => setInsightsSection(section)}>{tr(`insights.section.${section}`)}</button>)}</div><DeferredPage><InsightsPageLazy section={insightsSection} workspaces={workspaces} onSummary={setInsightsSummary} /></DeferredPage></div>}
   </section></main></div>;
 
@@ -370,11 +379,21 @@ function GlobalSettings({ section, runtime, discovery, insightsStatus, quotaStat
   if (section === "general") return <div className="settings-groups"><section className="panel settings-section settings-general"><div className="setting-rows"><ThemeSetting runtime={runtime} onChanged={onLocaleChanged} /><LanguageSetting runtime={runtime} onChanged={onLocaleChanged} /><div className="setting-row"><div><strong>{tr("settings.closeBehavior")}</strong></div><CloseBehaviorSelect value={runtime?.close_behavior} onChange={onCloseBehaviorChanged} /></div></div></section></div>;
   if (section === "discovery") return <div className="settings-groups"><SettingGroup title={tr("settings.discovery")}><div className="setting-row"><div><strong>{tr("settings.discoveryStatus")}</strong></div><span className={discovery?.errors.length ? "status rejected" : "ready"}>{discovery ? tr("settings.workspaceCount", { count: discovery.discovered_count }) : tr("home.discovering")}</span></div>{discovery?.errors.map((error) => <div className="setting-detail error" key={error}>{error}</div>)}</SettingGroup><div className="panel settings-section"><div className="panel-head"><h2>{tr("settings.scanRoots")}</h2><button className="primary" onClick={() => void onAddRoot()}>{tr("settings.addFolder")}</button></div><div className="settings-list">{scanRoots.map((root) => <div key={root.id}><FolderGit2 size={16} /><span><strong>{root.path}</strong><small>{tr("settings.maxDepth", { depth: root.max_depth })}</small></span><button className="icon-danger" onClick={() => void onRemoveRoot(root.id)}><Trash2 size={15} /></button></div>)}{!scanRoots.length && <p>{tr("settings.noScanRoots")}</p>}</div></div><div className="panel settings-section"><div className="panel-head"><h2>{tr("settings.excluded")}</h2></div><div className="settings-list">{excluded.map((item) => <div key={item.path}><X size={16} /><span><strong>{item.path}</strong><small>{formatDateTime(item.created_at)}</small></span><button className="ghost" onClick={() => void onRestore(item.path)}>{tr("common.restore")}</button></div>)}{!excluded.length && <p>{tr("settings.noExcluded")}</p>}</div></div></div>;
   if (section === "integrations") return <div className="settings-groups"><SettingGroup title="AgentKib MCP Hub"><div className="setting-row"><div><strong>{tr("mcp.network")}</strong><code>{runtime?.mcp_hub ? runtime.mcp_hub.accessible_addresses.join(" · ") : "—"}</code></div><span className={runtime?.mcp_hub?.running ? "ready" : "status neutral"}>{tr(runtime?.mcp_hub?.running ? "mcp.running" : "mcp.stopped")}</span></div></SettingGroup><RemoteGatewaysSettings gateways={remoteGateways} onChanged={onRemoteGatewaysChanged} /><ObsidianSettingsCard /></div>;
-  if (section === "privacy") return <div className="settings-groups"><SettingGroup title={tr("settings.localData")}><div className="setting-row"><div><strong>{tr("settings.dataLocation")}</strong><code>{runtime?.data_dir ?? "—"}</code></div><span className="ready"><Check size={14} />{tr("common.localOnly")}</span></div></SettingGroup><GitIdentitySettings /></div>;
+  if (section === "privacy") return <div className="settings-groups"><SettingGroup title={tr("settings.localData")}><div className="setting-row"><div><strong>{tr("settings.dataLocation")}</strong><code>{runtime?.data_dir ?? "—"}</code></div><span className="ready"><Check size={14} />{tr("common.localOnly")}</span></div>{isMacOSBuild && <MacOSPrivacySettingsRow />}</SettingGroup><GitIdentitySettings /></div>;
   return <div className="settings-groups"><SettingGroup title={tr("quota.diagnostics")}><QuotaDiagnostics status={quotaStatus} /></SettingGroup><SettingGroup title={tr("settings.providerStatus")}>{insightsStatus?.providers.map((provider) => <div className="setting-row" key={provider.agent}><div className="setting-agent"><AgentIcon agent={provider.agent} /><strong>{agentLabels[provider.agent]}</strong></div><QualityBadge quality={provider.available ? provider.quality : "incomplete"} /></div>)}{!insightsStatus?.providers.length && <div className="setting-empty">{tr("insights.noData")}</div>}</SettingGroup><ActivityPage records={activity} /></div>;
 }
 
 function SettingGroup({ title, children }: { title: string; children: ReactNode }) { return <section className="panel settings-section"><div className="panel-head"><h2>{title}</h2></div><div className="setting-rows">{children}</div></section>; }
+
+function MacOSPrivacySettingsRow() {
+  const [error, setError] = useState("");
+  const openSettings = async () => {
+    setError("");
+    try { await api.openFilesAndFoldersSettings(); }
+    catch (reason) { setError(localizeMessage(reason)); }
+  };
+  return <><div className="setting-row"><div><strong>{tr("settings.appDataAccess")}</strong></div><button className="ghost" type="button" onClick={() => void openSettings()}><ExternalLink size={14} />{tr("settings.openFilesAndFolders")}</button></div>{error && <div className="setting-detail error" role="alert">{error}</div>}</>;
+}
 
 function LanguageSetting({ runtime, onChanged }: { runtime?: RuntimeInfo; onChanged: (runtime: RuntimeInfo) => void }) {
   const update = async (preference: LocalePreference) => {

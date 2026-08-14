@@ -35,6 +35,8 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Theme, WindowEvent};
+#[cfg(target_os = "macos")]
+use tauri::{PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
@@ -118,6 +120,23 @@ enum EffectiveTheme {
     Dark,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct QuotaWindowSelector {
+    provider_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+    kind: String,
+    label: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct QuotaPopoverPreferences {
+    #[serde(default)]
+    hidden_providers: Vec<String>,
+    #[serde(default)]
+    hidden_windows: Vec<QuotaWindowSelector>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct DesktopPreferences {
     #[serde(default)]
@@ -128,6 +147,8 @@ struct DesktopPreferences {
     theme_preference: ThemePreference,
     #[serde(default)]
     mcp_network: McpNetworkSettings,
+    #[serde(default)]
+    quota_popover: QuotaPopoverPreferences,
 }
 
 #[derive(Debug)]
@@ -600,11 +621,63 @@ fn get_quota_snapshot() -> CommandResult<Option<QuotaSnapshot>> {
 }
 
 #[tauri::command]
+fn get_quota_popover_preferences() -> CommandResult<QuotaPopoverPreferences> {
+    Ok(load_desktop_preferences().quota_popover)
+}
+
+#[tauri::command]
+fn set_quota_popover_preferences(
+    mut preferences: QuotaPopoverPreferences,
+    app: AppHandle,
+) -> CommandResult<QuotaPopoverPreferences> {
+    normalize_quota_popover_preferences(&mut preferences);
+    let stored = preferences.clone();
+    update_preferences(|desktop| desktop.quota_popover = stored).map_err(format_error)?;
+    let _ = app.emit("agentkib:quota-popover-preferences-updated", &preferences);
+    Ok(preferences)
+}
+
+fn normalize_quota_popover_preferences(preferences: &mut QuotaPopoverPreferences) {
+    preferences
+        .hidden_providers
+        .retain(|provider| !provider.trim().is_empty());
+    preferences.hidden_providers.sort();
+    preferences.hidden_providers.dedup();
+    preferences.hidden_windows.retain(|window| {
+        !window.provider_id.trim().is_empty()
+            && !window.kind.trim().is_empty()
+            && !window.label.trim().is_empty()
+    });
+    preferences.hidden_windows.sort_by(|left, right| {
+        (&left.provider_id, &left.account_id, &left.kind, &left.label).cmp(&(
+            &right.provider_id,
+            &right.account_id,
+            &right.kind,
+            &right.label,
+        ))
+    });
+    preferences.hidden_windows.dedup();
+}
+
+#[tauri::command]
 fn refresh_quota(
     app: AppHandle,
     coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
 ) -> RefreshReceipt {
     coordinator.request(app, RefreshKind::Quota, true)
+}
+
+#[tauri::command]
+fn open_quota_dashboard(
+    app: AppHandle,
+    provider: Option<String>,
+    window: Option<QuotaWindowSelector>,
+    configure_popover: bool,
+) {
+    if let Some(popover) = app.get_webview_window("quota-popover") {
+        let _ = popover.hide();
+    }
+    show_quota_page(&app, provider, window, configure_popover);
 }
 
 #[tauri::command]
@@ -799,6 +872,27 @@ fn runtime_info(
         theme_preference,
         effective_theme: effective_theme(&app, theme_preference),
     })
+}
+
+#[tauri::command]
+fn open_files_and_folders_settings() -> CommandResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        const FILES_AND_FOLDERS_SETTINGS_URL: &str =
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders";
+        std::process::Command::new("/usr/bin/open")
+            .arg(FILES_AND_FOLDERS_SETTINGS_URL)
+            .spawn()
+            .map_err(|error| {
+                LocalizedMessage::with_detail("errors.openSystemSettings", error.to_string())
+            })?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(LocalizedMessage::new("errors.unsupportedPlatform"))
+    }
 }
 
 #[tauri::command]
@@ -1351,8 +1445,10 @@ fn refresh_system_locale(app: &AppHandle, lifecycle: &LifecycleState) {
 }
 
 fn apply_native_theme(app: &AppHandle, preference: ThemePreference) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.set_theme(preference.native())?;
+    for label in ["main", "quota-popover"] {
+        if let Some(window) = app.get_webview_window(label) {
+            window.set_theme(preference.native())?;
+        }
     }
     Ok(())
 }
@@ -1717,53 +1813,160 @@ fn perform_quota(
     match result {
         Ok(snapshot) => {
             let _ = app.emit("agentkib:quota-updated", &snapshot);
-            let _ = refresh_tray_status(app);
             Ok(snapshot)
         }
-        Err(error) => {
-            let _ = refresh_tray_status(app);
-            Err(LocalizedMessage::with_detail(
-                if !quota_platform_supported() {
-                    "errors.quotaUnsupportedPlatform"
-                } else if !quota_sidecar_available() {
-                    "errors.quotaSidecarMissing"
-                } else if error.to_string().contains("schema version") {
-                    "errors.quotaSchemaUnsupported"
-                } else if error.to_string().contains("timed out") {
-                    "errors.quotaTimeout"
-                } else {
-                    "errors.quotaUnavailable"
-                },
-                sanitize_diagnostic(&error.to_string()),
-            ))
-        }
+        Err(error) => Err(LocalizedMessage::with_detail(
+            if !quota_platform_supported() {
+                "errors.quotaUnsupportedPlatform"
+            } else if !quota_sidecar_available() {
+                "errors.quotaSidecarMissing"
+            } else if error.to_string().contains("schema version") {
+                "errors.quotaSchemaUnsupported"
+            } else if error.to_string().contains("timed out") {
+                "errors.quotaTimeout"
+            } else {
+                "errors.quotaUnavailable"
+            },
+            sanitize_diagnostic(&error.to_string()),
+        )),
     }
 }
 
+#[cfg(target_os = "macos")]
+const QUOTA_POPOVER_WIDTH: f64 = 392.0;
+#[cfg(target_os = "macos")]
+const QUOTA_POPOVER_HEIGHT: f64 = 560.0;
+
+#[cfg(target_os = "macos")]
+fn setup_quota_popover(app: &tauri::App) -> tauri::Result<()> {
+    WebviewWindowBuilder::new(
+        app,
+        "quota-popover",
+        WebviewUrl::App("index.html?surface=quota-popover".into()),
+    )
+    .title("AgentKib Quota")
+    .inner_size(QUOTA_POPOVER_WIDTH, QUOTA_POPOVER_HEIGHT)
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .visible_on_all_workspaces(true)
+    .skip_taskbar(true)
+    .shadow(true)
+    .visible(false)
+    .build()?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn quota_popover_position(
+    tray_x: f64,
+    tray_y: f64,
+    tray_width: f64,
+    tray_height: f64,
+    work_area: Option<(f64, f64, f64, f64)>,
+    scale: f64,
+) -> PhysicalPosition<i32> {
+    let width = QUOTA_POPOVER_WIDTH * scale;
+    let height = QUOTA_POPOVER_HEIGHT * scale;
+    let mut x = tray_x + (tray_width - width) / 2.0;
+    let mut y = tray_y + tray_height + 6.0 * scale;
+    if let Some((left, top, work_width, work_height)) = work_area {
+        let right = left + work_width;
+        let bottom = top + work_height;
+        x = x.clamp(left + 8.0, (right - width - 8.0).max(left + 8.0));
+        y = y.clamp(top + 8.0, (bottom - height - 8.0).max(top + 8.0));
+    }
+    PhysicalPosition::new(x.round() as i32, y.round() as i32)
+}
+
+#[cfg(target_os = "macos")]
+fn toggle_quota_popover(app: &AppHandle, tray_rect: &tauri::Rect) {
+    let Some(window) = app.get_webview_window("quota-popover") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+        return;
+    }
+
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let tray_position = tray_rect.position.to_physical::<f64>(scale);
+    let tray_size = tray_rect.size.to_physical::<f64>(scale);
+    let monitor = window
+        .monitor_from_point(tray_position.x, tray_position.y)
+        .ok()
+        .flatten();
+    let monitor_scale = monitor
+        .as_ref()
+        .map(|monitor| monitor.scale_factor())
+        .unwrap_or(scale);
+    let work_area = monitor.map(|monitor| {
+        let work_area = monitor.work_area();
+        (
+            f64::from(work_area.position.x),
+            f64::from(work_area.position.y),
+            f64::from(work_area.size.width),
+            f64::from(work_area.size.height),
+        )
+    });
+    let position = quota_popover_position(
+        tray_position.x,
+        tray_position.y,
+        tray_size.width,
+        tray_size.height,
+        work_area,
+        monitor_scale,
+    );
+    let _ = window.set_position(position);
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn setup_quota_popover(_app: &tauri::App) -> tauri::Result<()> {
+    Ok(())
+}
+
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    use tauri::menu::MenuBuilder;
+    use tauri::menu::{MenuBuilder, MenuItem};
     use tauri::tray::TrayIconBuilder;
 
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
+    let status = MenuItem::with_id(
+        app,
+        "status",
+        translate(locale, "tray.refreshing", &[]),
+        false,
+        None::<&str>,
+    )?;
+    let mcp_status =
+        MenuItem::with_id(app, "mcp_status", "MCP Hub · starting", false, None::<&str>)?;
     let menu = MenuBuilder::new(app)
         .text("show", translate(locale, "tray.open", &[]))
-        .text("quota_all", translate(locale, "tray.quotaLoading", &[]))
+        .text("quota_all", translate(locale, "tray.quotaAll", &[]))
+        .text(
+            "refresh_quota",
+            translate(locale, "tray.refreshQuotaAction", &[]),
+        )
         .separator()
-        .text("status", translate(locale, "tray.refreshing", &[]))
-        .text("mcp_status", "MCP Hub · starting")
-        .text("refresh", translate(locale, "tray.refresh", &[]))
+        .items(&[&status, &mcp_status])
+        .text("settings", translate(locale, "nav.settings", &[]))
+        .text("refresh_all", translate(locale, "tray.refreshAll", &[]))
         .separator()
         .text("quit", translate(locale, "tray.quit", &[]))
         .build()?;
-    let tray = TrayIconBuilder::with_id("agentkib-status")
+    let mut tray = TrayIconBuilder::with_id("agentkib-status")
         .icon(tauri::include_image!("icons/tray-icon.png"))
         .icon_as_template(true)
         .menu(&menu)
         .tooltip(translate(locale, "tray.tooltip", &[]))
-        .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
-            "refresh" => {
+            "refresh_quota" => {
+                let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
+                coordinator.request(app.clone(), RefreshKind::Quota, true);
+            }
+            "refresh_all" => {
                 let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
                 for kind in [
                     RefreshKind::Discovery,
@@ -1774,16 +1977,37 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                     coordinator.request(app.clone(), kind, true);
                 }
             }
-            "quota_all" => show_quota_page(app, None),
+            "quota_all" => show_quota_page(app, None, None, false),
+            "settings" => show_settings_page(app),
             "quit" => {
                 let lifecycle = app.state::<Arc<LifecycleState>>();
                 request_real_exit(app, lifecycle.inner());
             }
-            id if id.starts_with("quota_provider:") => {
-                show_quota_page(app, id.strip_prefix("quota_provider:").map(str::to_owned));
-            }
             _ => {}
         });
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+        tray = tray
+            .show_menu_on_left_click(false)
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    rect,
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    toggle_quota_popover(tray.app_handle(), &rect);
+                }
+            });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        tray = tray.show_menu_on_left_click(true);
+    }
     tray.build(app)?;
     Ok(())
 }
@@ -1792,15 +2016,37 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 struct NavigationRequest {
     page: &'static str,
     provider: Option<String>,
+    window: Option<QuotaWindowSelector>,
+    configure_popover: bool,
 }
 
-fn show_quota_page(app: &AppHandle, provider: Option<String>) {
+fn show_quota_page(
+    app: &AppHandle,
+    provider: Option<String>,
+    window: Option<QuotaWindowSelector>,
+    configure_popover: bool,
+) {
     show_main_window(app);
     let _ = app.emit(
         "agentkib:navigate",
         NavigationRequest {
             page: "quota",
             provider,
+            window,
+            configure_popover,
+        },
+    );
+}
+
+fn show_settings_page(app: &AppHandle) {
+    show_main_window(app);
+    let _ = app.emit(
+        "agentkib:navigate",
+        NavigationRequest {
+            page: "settings",
+            provider: None,
+            window: None,
+            configure_popover: false,
         },
     );
 }
@@ -1847,7 +2093,6 @@ fn perform_discovery(
                 .lock()
                 .expect("Discovery state lock is poisoned") = Some(report.clone());
             let _ = app.emit("agentkib:discovery-updated", &report);
-            let _ = refresh_tray_status(app);
             Ok(report)
         }
         Err(error) => Err(format_error(error)),
@@ -1855,7 +2100,7 @@ fn perform_discovery(
 }
 
 fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
-    use tauri::menu::MenuBuilder;
+    use tauri::menu::{MenuBuilder, MenuItem};
     let workspaces = Store::open_default()
         .and_then(|store| store.list_workspaces())
         .unwrap_or_default();
@@ -1865,95 +2110,61 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .count();
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
     let hub_status = app.state::<Arc<HubController>>().status();
-    let refreshing = app
-        .state::<Arc<RefreshCoordinator>>()
-        .statuses()
+    let refresh_statuses = app.state::<Arc<RefreshCoordinator>>().statuses();
+    let active_refreshes = refresh_statuses
         .iter()
-        .any(|status| {
+        .filter_map(|status| {
             matches!(
                 status.state,
                 refresh::RefreshState::Queued | refresh::RefreshState::Running
             )
-        });
-    let quota = Store::open_default()
-        .and_then(|store| store.quota_snapshot())
-        .ok()
-        .flatten();
-    let mut builder = MenuBuilder::new(app).text("show", translate(locale, "tray.open", &[]));
-    if let Some(snapshot) = quota {
-        let mut providers = snapshot
-            .providers
-            .iter()
-            .filter_map(|provider| {
-                provider
-                    .lowest_remaining_percent()
-                    .map(|remaining| (provider, remaining))
-            })
-            .collect::<Vec<_>>();
-        providers.sort_by(|left, right| left.1.total_cmp(&right.1));
-        for (provider, remaining) in providers.into_iter().take(4) {
-            let reset = provider
-                .windows
-                .iter()
-                .chain(
-                    provider
-                        .accounts
-                        .iter()
-                        .flat_map(|account| account.windows.iter()),
-                )
-                .filter_map(|window| window.reset_at)
-                .filter(|reset_at| *reset_at > chrono::Utc::now())
-                .min()
-                .map(format_quota_reset)
-                .unwrap_or_else(|| "—".to_string());
-            builder = builder.text(
-                format!("quota_provider:{}", provider.id),
-                format!(
-                    "{} · {:.0}% · {}",
-                    provider.name,
-                    remaining.clamp(0.0, 100.0),
-                    reset
-                ),
-            );
-        }
-        builder = builder.text("quota_all", translate(locale, "tray.quotaAll", &[]));
-    } else {
-        builder = builder.text("quota_all", translate(locale, "tray.quotaUnavailable", &[]));
-    }
-    let menu = builder
-        .separator()
-        .text(
-            "status",
-            if refreshing {
-                translate(locale, "tray.refreshing", &[])
-            } else {
-                translate(
-                    locale,
-                    "tray.status",
-                    &[
-                        ("workspaces", workspaces.len().to_string()),
-                        ("attention", attention.to_string()),
-                    ],
-                )
-            },
-        )
-        .text(
-            "mcp_status",
-            format!(
-                "MCP Hub · {} · {}",
-                translate(
-                    locale,
-                    if hub_status.running {
-                        "mcp.running"
-                    } else {
-                        "mcp.stopped"
-                    },
-                    &[]
-                ),
-                hub_status.runtime_count
+            .then_some(status.kind)
+        })
+        .collect::<Vec<_>>();
+    let status_text = active_refresh_translation_key(&active_refreshes).map_or_else(
+        || {
+            translate(
+                locale,
+                "tray.status",
+                &[
+                    ("workspaces", workspaces.len().to_string()),
+                    ("attention", attention.to_string()),
+                ],
+            )
+        },
+        |key| translate(locale, key, &[]),
+    );
+    let status = MenuItem::with_id(app, "status", status_text, false, None::<&str>)?;
+    let mcp_status = MenuItem::with_id(
+        app,
+        "mcp_status",
+        format!(
+            "MCP Hub · {} · {}",
+            translate(
+                locale,
+                if hub_status.running {
+                    "mcp.running"
+                } else {
+                    "mcp.stopped"
+                },
+                &[]
             ),
+            hub_status.runtime_count
+        ),
+        false,
+        None::<&str>,
+    )?;
+    let menu = MenuBuilder::new(app)
+        .text("show", translate(locale, "tray.open", &[]))
+        .text("quota_all", translate(locale, "tray.quotaAll", &[]))
+        .text(
+            "refresh_quota",
+            translate(locale, "tray.refreshQuotaAction", &[]),
         )
-        .text("refresh", translate(locale, "tray.refresh", &[]))
+        .separator()
+        .items(&[&status, &mcp_status])
+        .text("settings", translate(locale, "nav.settings", &[]))
+        .text("refresh_all", translate(locale, "tray.refreshAll", &[]))
         .separator()
         .text("quit", translate(locale, "tray.quit", &[]))
         .build()?;
@@ -1964,14 +2175,14 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn format_quota_reset(reset_at: chrono::DateTime<chrono::Utc>) -> String {
-    let seconds = (reset_at - chrono::Utc::now()).num_seconds().max(0);
-    if seconds < 60 * 60 {
-        format!("{}m", (seconds / 60).max(1))
-    } else if seconds < 24 * 60 * 60 {
-        format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
-    } else {
-        format!("{}d {}h", seconds / 86400, (seconds % 86400) / 3600)
+fn active_refresh_translation_key(active: &[RefreshKind]) -> Option<&'static str> {
+    match active {
+        [] => None,
+        [RefreshKind::Discovery] => Some("tray.refreshDiscovery"),
+        [RefreshKind::Insights] => Some("tray.refreshInsights"),
+        [RefreshKind::Gateways] => Some("tray.refreshGateways"),
+        [RefreshKind::Quota] => Some("tray.refreshQuota"),
+        _ => Some("tray.refreshMultiple"),
     }
 }
 
@@ -2228,6 +2439,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let theme = app.state::<Arc<LifecycleState>>().theme_preference();
+            setup_quota_popover(app)?;
             apply_native_theme(app.handle(), theme)?;
             setup_tray(app)?;
             app.state::<Arc<HubController>>().start()?;
@@ -2262,6 +2474,18 @@ pub fn run() {
                     }
                     _ => {}
                 }
+            } else if window.label() == "quota-popover"
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let popover = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    // A tray click blurs the popover before the tray Up event toggles it.
+                    // Deferring the blur hide keeps a second left click from reopening it.
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if !popover.is_focused().unwrap_or(false) {
+                        let _ = popover.hide();
+                    }
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -2308,6 +2532,9 @@ pub fn run() {
             get_quota_snapshot,
             refresh_quota,
             get_quota_collector_status,
+            get_quota_popover_preferences,
+            set_quota_popover_preferences,
+            open_quota_dashboard,
             list_git_identities,
             add_git_identity_alias,
             set_git_identity_enabled,
@@ -2319,6 +2546,7 @@ pub fn run() {
             propose_memory,
             review_memory,
             runtime_info,
+            open_files_and_folders_settings,
             set_close_behavior,
             set_locale,
             set_theme_preference,
@@ -2375,6 +2603,15 @@ mod tests {
                 locale_preference: LocalePreference::JaJp,
                 theme_preference: ThemePreference::Light,
                 mcp_network: McpNetworkSettings::default(),
+                quota_popover: QuotaPopoverPreferences {
+                    hidden_providers: vec!["claude".into()],
+                    hidden_windows: vec![QuotaWindowSelector {
+                        provider_id: "codex".into(),
+                        account_id: Some("work".into()),
+                        kind: "weekly".into(),
+                        label: "Weekly".into(),
+                    }],
+                },
             },
         )
         .unwrap();
@@ -2389,6 +2626,13 @@ mod tests {
         assert_eq!(
             load_preferences(&path).unwrap().theme_preference,
             ThemePreference::Light
+        );
+        assert_eq!(
+            load_preferences(&path)
+                .unwrap()
+                .quota_popover
+                .hidden_providers,
+            ["claude"]
         );
     }
 
@@ -2412,6 +2656,54 @@ mod tests {
         assert_eq!(preferences.close_behavior, Some(CloseBehavior::Quit));
         assert_eq!(preferences.locale_preference, LocalePreference::System);
         assert_eq!(preferences.theme_preference, ThemePreference::System);
+        assert_eq!(
+            preferences.quota_popover,
+            QuotaPopoverPreferences::default()
+        );
+    }
+
+    #[test]
+    fn quota_popover_preferences_drop_invalid_and_duplicate_selectors() {
+        let valid = QuotaWindowSelector {
+            provider_id: "codex".into(),
+            account_id: None,
+            kind: "weekly".into(),
+            label: "Weekly".into(),
+        };
+        let mut preferences = QuotaPopoverPreferences {
+            hidden_providers: vec!["codex".into(), "".into(), "codex".into()],
+            hidden_windows: vec![
+                valid.clone(),
+                valid.clone(),
+                QuotaWindowSelector {
+                    provider_id: "codex".into(),
+                    kind: "".into(),
+                    label: "Broken".into(),
+                    account_id: None,
+                },
+            ],
+        };
+
+        normalize_quota_popover_preferences(&mut preferences);
+
+        assert_eq!(preferences.hidden_providers, ["codex"]);
+        assert_eq!(preferences.hidden_windows, [valid]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn quota_popover_position_stays_inside_the_active_monitor() {
+        let position = quota_popover_position(
+            -3820.0,
+            0.0,
+            24.0,
+            24.0,
+            Some((-3840.0, 0.0, 3840.0, 2160.0)),
+            2.0,
+        );
+
+        assert_eq!(position.x, -3832);
+        assert_eq!(position.y, 36);
     }
 
     #[test]
@@ -2453,5 +2745,26 @@ mod tests {
             now,
         ));
         assert!(!quota_reset_due(&snapshot, Some(now), now));
+    }
+
+    #[test]
+    fn tray_refresh_labels_match_the_active_jobs() {
+        assert_eq!(active_refresh_translation_key(&[]), None);
+        assert_eq!(
+            active_refresh_translation_key(&[RefreshKind::Discovery]),
+            Some("tray.refreshDiscovery")
+        );
+        assert_eq!(
+            active_refresh_translation_key(&[RefreshKind::Insights]),
+            Some("tray.refreshInsights")
+        );
+        assert_eq!(
+            active_refresh_translation_key(&[RefreshKind::Quota]),
+            Some("tray.refreshQuota")
+        );
+        assert_eq!(
+            active_refresh_translation_key(&[RefreshKind::Discovery, RefreshKind::Quota]),
+            Some("tray.refreshMultiple")
+        );
     }
 }

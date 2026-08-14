@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaSnapshot, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -17,6 +17,7 @@ export const api = {
   proposeMemory: (project: string, content: string, memoryType: MemoryType) => invoke<MemoryRecord>("propose_memory", { project, proposal: { project_id: "", memory_type: memoryType, content, source_agent: "agentkib-desktop" } }),
   reviewMemory: (id: string, status: MemoryStatus, editedContent?: string) => invoke<MemoryRecord>("review_memory", { id, status, editedContent }),
   runtime: () => invoke<RuntimeInfo>("runtime_info"),
+  openFilesAndFoldersSettings: () => invoke<void>("open_files_and_folders_settings"),
   setCloseBehavior: (behavior?: CloseBehavior) => invoke<void>("set_close_behavior", { behavior: behavior ?? null }),
   setLocale: (preference: LocalePreference) => invoke<RuntimeInfo>("set_locale", { preference }),
   setThemePreference: (preference: ThemePreference) => invoke<RuntimeInfo>("set_theme_preference", { preference }),
@@ -83,4 +84,7 @@ export const api = {
   quotaSnapshot: () => invoke<QuotaSnapshot | undefined>("get_quota_snapshot"),
   refreshQuota: () => invoke<RefreshReceipt>("refresh_quota"),
   quotaCollectorStatus: () => invoke<QuotaCollectorStatus>("get_quota_collector_status"),
+  quotaPopoverPreferences: () => invoke<QuotaPopoverPreferences>("get_quota_popover_preferences"),
+  setQuotaPopoverPreferences: (preferences: QuotaPopoverPreferences) => invoke<QuotaPopoverPreferences>("set_quota_popover_preferences", { preferences }),
+  openQuotaDashboard: (provider?: string, window?: QuotaWindowSelector, configurePopover = false) => invoke<void>("open_quota_dashboard", { provider, window, configurePopover }),
 };

@@ -88,7 +88,7 @@ export function InsightsPage({ section, workspaces, onSummary }: { section: Insi
       {showTokenFilters && <select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="all">{tr("workspace.all")}</option>{workspaces.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select>}
       {showCommitFilters && <select value={repository} onChange={(event) => setRepository(event.target.value)}><option value="all">{tr("insights.allRepositories")}</option>{repositoryOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>}
       {showRange && <select value={range} onChange={(event) => setRange(event.target.value as typeof range)}><option value="52w">{tr("insights.range52w")}</option><option value="year">{tr("insights.rangeYear")}</option></select>}
-      {busy && <span className="badge">{tr("tray.refreshing")}</span>}
+      {busy && <span className="badge">{tr("tray.refreshInsights")}</span>}
       <button className="ghost icon-only" aria-label={tr("insights.refresh")} title={tr("insights.refresh")} onClick={() => void refresh()} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /></button>
     </div>
     {!summary && <div className="panel"><Empty icon={Award} title={tr("insights.preparing")} text={tr("insights.preparingText")} /></div>}
