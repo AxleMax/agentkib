@@ -16,7 +16,7 @@ use agentkib_insights::{
     RepositoryCommitBreakdown, UsageBatch, UsageQuality, WorkspaceUsageBreakdown,
 };
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Days, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Days, Local, NaiveDate, TimeZone, Timelike, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -1275,17 +1275,24 @@ impl Store {
             .into_iter()
             .filter(|value| value.total_tokens > 0 || value.session_count > 0)
             .count() as u64;
-        let definitions = achievement_definitions(&summary, agent_count);
+        let mut definitions =
+            achievement_definitions(&summary, agent_count, self.active_workspace_count()?);
+        definitions.extend(special_achievement_definitions());
         let mut statement = self
             .connection
-            .prepare("SELECT unlocked_at FROM achievement_unlocks WHERE code = ?1")?;
+            .prepare("SELECT unlocked_at, rule_version FROM achievement_unlocks WHERE code = ?1")?;
         definitions
             .into_iter()
             .map(|mut value| {
-                let unlocked: Option<String> = statement
-                    .query_row(params![value.code], |row| row.get(0))
+                let unlocked: Option<(String, i64)> = statement
+                    .query_row(params![value.code], |row| Ok((row.get(0)?, row.get(1)?)))
                     .optional()?;
-                value.unlocked_at = unlocked.map(|value| parse_time(&value)).transpose()?;
+                if let Some((unlocked_at, rule_version)) = unlocked {
+                    value.progress = value.progress.max(value.threshold);
+                    if rule_version > 0 {
+                        value.unlocked_at = Some(parse_time(&unlocked_at)?);
+                    }
+                }
                 Ok(value)
             })
             .collect()
@@ -1452,6 +1459,16 @@ impl Store {
         Ok(output)
     }
 
+    fn active_workspace_count(&self) -> Result<u64> {
+        self.connection
+            .query_row(
+                "SELECT COUNT(DISTINCT workspace_id) FROM usage_events WHERE workspace_id IS NOT NULL AND workspace_id != '' AND (total_tokens > 0 OR session_count > 0)",
+                [],
+                |row| as_u64(row, 0),
+            )
+            .map_err(Into::into)
+    }
+
     fn refresh_achievement_unlocks(&self) -> Result<()> {
         let summary = self.insights_summary(&InsightsQuery::default())?;
         let agent_count = self
@@ -1459,16 +1476,44 @@ impl Store {
             .into_iter()
             .filter(|value| value.total_tokens > 0 || value.session_count > 0)
             .count() as u64;
-        for achievement in achievement_definitions(&summary, agent_count) {
+        for achievement in
+            achievement_definitions(&summary, agent_count, self.active_workspace_count()?)
+        {
             if achievement.progress >= achievement.threshold {
                 let unlocked_at = self
                     .achievement_unlock_day(&achievement.category, achievement.threshold)?
                     .and_then(|day| day.and_hms_opt(0, 0, 0))
-                    .map(|value| Utc.from_utc_datetime(&value))
-                    .unwrap_or_else(Utc::now);
-                self.connection.execute("INSERT OR IGNORE INTO achievement_unlocks(code, unlocked_at, rule_version) VALUES (?1, ?2, 1)", params![achievement.code, unlocked_at.to_rfc3339()])?;
+                    .map(|value| Utc.from_utc_datetime(&value));
+                self.record_achievement_unlock(&achievement.code, unlocked_at)?;
             }
         }
+        for (code, unlocked_at) in self.special_achievement_unlocks()? {
+            self.record_achievement_unlock(code, Some(unlocked_at))?;
+        }
+        Ok(())
+    }
+
+    pub fn unlock_special_achievement(&self, code: &str, unlocked_at: DateTime<Utc>) -> Result<()> {
+        if !SPECIAL_ACHIEVEMENT_CODES.contains(&code) {
+            bail!("Unknown special achievement code");
+        }
+        self.record_achievement_unlock(code, Some(unlocked_at))
+    }
+
+    fn record_achievement_unlock(
+        &self,
+        code: &str,
+        unlocked_at: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let (stored_at, rule_version) = unlocked_at
+            .map(|value| (value, 1_i64))
+            .unwrap_or_else(|| (Utc::now(), 0));
+        self.connection.execute(
+            "INSERT INTO achievement_unlocks(code, unlocked_at, rule_version) VALUES (?1, ?2, ?3)
+             ON CONFLICT(code) DO UPDATE SET unlocked_at = excluded.unlocked_at, rule_version = excluded.rule_version
+             WHERE achievement_unlocks.rule_version = 0 AND excluded.rule_version > 0",
+            params![code, stored_at.to_rfc3339(), rule_version],
+        )?;
         Ok(())
     }
 
@@ -1478,6 +1523,17 @@ impl Store {
             "token" => {
                 let mut statement = self.connection.prepare(
                     "SELECT day, SUM(total_tokens) FROM usage_daily GROUP BY day ORDER BY day",
+                )?;
+                let rows = statement
+                    .query_map([], |row| Ok((row.get::<_, String>(0)?, as_u64(row, 1)?)))?;
+                for row in rows {
+                    let (day, value) = row?;
+                    daily.push((NaiveDate::parse_from_str(&day, "%Y-%m-%d")?, value));
+                }
+            }
+            "session" => {
+                let mut statement = self.connection.prepare(
+                    "SELECT day, SUM(session_count) FROM usage_daily GROUP BY day ORDER BY day",
                 )?;
                 let rows = statement
                     .query_map([], |row| Ok((row.get::<_, String>(0)?, as_u64(row, 1)?)))?;
@@ -1515,6 +1571,30 @@ impl Store {
                 }
                 return Ok(None);
             }
+            "active-days" => {
+                let active = self.insight_active_dates(&InsightsQuery::default())?;
+                return Ok(active
+                    .iter()
+                    .nth(threshold.saturating_sub(1) as usize)
+                    .copied());
+            }
+            "workspaces" => {
+                let mut statement = self.connection.prepare(
+                    "SELECT day, workspace_id FROM usage_daily WHERE workspace_id != '' AND (total_tokens > 0 OR session_count > 0) ORDER BY day, workspace_id",
+                )?;
+                let rows = statement.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                let mut seen = BTreeSet::new();
+                for row in rows {
+                    let (day, workspace_id) = row?;
+                    seen.insert(workspace_id);
+                    if seen.len() as u64 >= threshold {
+                        return Ok(Some(NaiveDate::parse_from_str(&day, "%Y-%m-%d")?));
+                    }
+                }
+                return Ok(None);
+            }
             "agents" => {
                 let mut statement = self.connection.prepare("SELECT MIN(day) FROM usage_daily WHERE total_tokens > 0 OR session_count > 0 GROUP BY surface_agent ORDER BY MIN(day)")?;
                 let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
@@ -1535,6 +1615,105 @@ impl Store {
             }
         }
         Ok(None)
+    }
+
+    fn special_achievement_unlocks(&self) -> Result<Vec<(&'static str, DateTime<Utc>)>> {
+        let mut output = Vec::new();
+        if let Some(value) = self.minimum_time(
+            "SELECT MIN(created_at) FROM audit_events WHERE action = 'changeset.apply'",
+        )? {
+            output.push(("special-first-changeset", value));
+        }
+        if let Some(value) = self.minimum_time(
+            "SELECT MIN(approved_at) FROM memories WHERE status = 'approved' AND approved_at IS NOT NULL",
+        )? {
+            output.push(("special-first-memory", value));
+        }
+        if let Some(day) = self.first_shared_workspace_day()? {
+            output.push(("special-shared-workspace", utc_start_of_day(day)));
+        }
+        if let Some(value) = self.minimum_time(
+            "SELECT MIN(c.authored_at) FROM commit_attributions a JOIN git_commits c ON c.repository_group_id = a.repository_group_id AND c.commit_hash = a.commit_hash WHERE a.confidence = 'exact'",
+        )? {
+            output.push(("special-exact-attribution", value));
+        }
+        if let Some(value) = self.first_night_owl_activity()? {
+            output.push(("special-night-owl", value));
+        }
+        if let Some(day) = self.first_comeback_day()? {
+            output.push(("special-comeback", utc_start_of_day(day)));
+        }
+        if let Some(day) = self.first_same_day_delivery()? {
+            output.push(("special-same-day-delivery", utc_start_of_day(day)));
+        }
+        Ok(output)
+    }
+
+    fn minimum_time(&self, sql: &str) -> Result<Option<DateTime<Utc>>> {
+        let value: Option<String> = self.connection.query_row(sql, [], |row| row.get(0))?;
+        value.map(|value| parse_time(&value)).transpose()
+    }
+
+    fn first_shared_workspace_day(&self) -> Result<Option<NaiveDate>> {
+        let mut statement = self.connection.prepare(
+            "SELECT day, workspace_id, surface_agent FROM usage_daily WHERE workspace_id != '' AND (total_tokens > 0 OR session_count > 0) ORDER BY day, workspace_id, surface_agent",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut agents = BTreeMap::<String, BTreeSet<String>>::new();
+        for row in rows {
+            let (day, workspace_id, agent) = row?;
+            let workspace_agents = agents.entry(workspace_id).or_default();
+            workspace_agents.insert(agent);
+            if workspace_agents.len() >= 2 {
+                return Ok(Some(NaiveDate::parse_from_str(&day, "%Y-%m-%d")?));
+            }
+        }
+        Ok(None)
+    }
+
+    fn first_night_owl_activity(&self) -> Result<Option<DateTime<Utc>>> {
+        let mut statement = self.connection.prepare(
+            "SELECT occurred_at FROM usage_events WHERE occurred_at IS NOT NULL AND date_precision = 'exact' AND (total_tokens > 0 OR session_count > 0) ORDER BY occurred_at",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            let occurred_at = parse_time(&row?)?;
+            if occurred_at.with_timezone(&Local).hour() < 5 {
+                return Ok(Some(occurred_at));
+            }
+        }
+        Ok(None)
+    }
+
+    fn first_comeback_day(&self) -> Result<Option<NaiveDate>> {
+        let active = self.insight_active_dates(&InsightsQuery::default())?;
+        let mut previous = None;
+        for day in active {
+            if previous
+                .is_some_and(|value: NaiveDate| day.signed_duration_since(value).num_days() >= 31)
+            {
+                return Ok(Some(day));
+            }
+            previous = Some(day);
+        }
+        Ok(None)
+    }
+
+    fn first_same_day_delivery(&self) -> Result<Option<NaiveDate>> {
+        let value: Option<String> = self.connection.query_row(
+            "SELECT MIN(d.day) FROM usage_daily d WHERE (d.total_tokens > 0 OR d.session_count > 0) AND EXISTS(SELECT 1 FROM git_commits c WHERE c.day = d.day AND c.is_mine = 1)",
+            [],
+            |row| row.get(0),
+        )?;
+        value
+            .map(|value| NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(Into::into))
+            .transpose()
     }
 
     pub fn propose_memory(&self, proposal: &MemoryProposal) -> Result<MemoryRecord> {
@@ -1669,7 +1848,13 @@ impl Store {
     }
 
     pub fn audit(&self, project_id: Option<&str>, action: &str, detail: &str) -> Result<()> {
-        self.connection.execute("INSERT INTO audit_events(id, project_id, action, detail, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![Uuid::new_v4().to_string(), project_id, action, detail, Utc::now().to_rfc3339()])?;
+        let created_at = Utc::now();
+        self.connection.execute("INSERT INTO audit_events(id, project_id, action, detail, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![Uuid::new_v4().to_string(), project_id, action, detail, created_at.to_rfc3339()])?;
+        if action == "changeset.apply" {
+            self.unlock_special_achievement("special-first-changeset", created_at)?;
+        } else if action == "memory.review" && detail.ends_with(":approved") {
+            self.unlock_special_achievement("special-first-memory", created_at)?;
+        }
         Ok(())
     }
 
@@ -1895,7 +2080,22 @@ fn calculate_streaks(active: &BTreeSet<NaiveDate>, today: NaiveDate) -> (u64, u6
     (current, longest)
 }
 
-fn achievement_definitions(summary: &InsightsSummary, agent_count: u64) -> Vec<Achievement> {
+const SPECIAL_ACHIEVEMENT_CODES: [&str; 8] = [
+    "special-first-changeset",
+    "special-first-memory",
+    "special-shared-workspace",
+    "special-exact-attribution",
+    "special-remote-handshake",
+    "special-night-owl",
+    "special-comeback",
+    "special-same-day-delivery",
+];
+
+fn achievement_definitions(
+    summary: &InsightsSummary,
+    agent_count: u64,
+    active_workspace_count: u64,
+) -> Vec<Achievement> {
     let mut output = Vec::new();
     for threshold in [
         100_000,
@@ -1909,16 +2109,38 @@ fn achievement_definitions(summary: &InsightsSummary, agent_count: u64) -> Vec<A
     ] {
         output.push(achievement("token", threshold, summary.total_tokens));
     }
+    for threshold in [10, 50, 100, 500, 1_000, 5_000, 10_000] {
+        output.push(achievement("session", threshold, summary.session_count));
+    }
     for threshold in [1, 10, 100, 1_000, 5_000, 10_000] {
         output.push(achievement("commit", threshold, summary.my_commits));
     }
-    for threshold in [3, 7, 30, 100, 365] {
+    for threshold in [7, 30, 100, 365, 1_000] {
+        output.push(achievement("active-days", threshold, summary.active_days));
+    }
+    for threshold in [3, 7, 14, 30, 60, 100, 180, 365] {
         output.push(achievement("streak", threshold, summary.longest_streak));
     }
-    for threshold in [2, 4, 5] {
+    for threshold in [1, 5, 10, 25, 50, 100] {
+        output.push(achievement("workspaces", threshold, active_workspace_count));
+    }
+    for threshold in [1, 2, 3, 4, 5] {
         output.push(achievement("agents", threshold, agent_count));
     }
     output
+}
+
+fn special_achievement_definitions() -> Vec<Achievement> {
+    SPECIAL_ACHIEVEMENT_CODES
+        .into_iter()
+        .map(|code| Achievement {
+            code: code.into(),
+            category: "special".into(),
+            threshold: 1,
+            progress: 0,
+            unlocked_at: None,
+        })
+        .collect()
 }
 
 fn achievement(category: &str, threshold: u64, progress: u64) -> Achievement {
@@ -1929,6 +2151,10 @@ fn achievement(category: &str, threshold: u64, progress: u64) -> Achievement {
         progress,
         unlocked_at: None,
     }
+}
+
+fn utc_start_of_day(day: NaiveDate) -> DateTime<Utc> {
+    Utc.from_utc_datetime(&day.and_hms_opt(0, 0, 0).expect("valid start of day"))
 }
 
 fn excluded_paths(connection: &Connection) -> Result<BTreeSet<PathBuf>> {
@@ -2326,6 +2552,16 @@ mod tests {
         }
     }
 
+    fn insert_usage_day(store: &Store, day: &str, agent: &str, workspace_id: &str, sessions: u64) {
+        store
+            .connection
+            .execute(
+                "INSERT INTO usage_daily(day, surface_agent, workspace_id, total_tokens, session_count, quality) VALUES (?1, ?2, ?3, 1, ?4, 'exact')",
+                params![day, agent, workspace_id, sessions],
+            )
+            .unwrap();
+    }
+
     #[test]
     fn only_approved_memories_are_searchable() {
         let dir = tempdir().unwrap();
@@ -2666,11 +2902,11 @@ mod tests {
             output_tokens: 0,
             cache_tokens: 0,
             reasoning_tokens: 0,
-            session_count: 0,
+            session_count: 2_181,
             my_commits: 1_763,
             all_commits: 0,
             attributed_commits: 0,
-            active_days: 0,
+            active_days: 324,
             current_streak: 0,
             longest_streak: 19,
             quality: UsageQuality::Exact,
@@ -2678,7 +2914,7 @@ mod tests {
             coverage_to: None,
             refreshed_at: None,
         };
-        let definitions = achievement_definitions(&summary, 4);
+        let definitions = achievement_definitions(&summary, 4, 36);
         let thresholds = |category: &str| {
             definitions
                 .iter()
@@ -2700,9 +2936,17 @@ mod tests {
                 (1_000_000_000_000, summary.total_tokens),
             ]
         );
+        assert_eq!(thresholds("session").last(), Some(&(10_000, 2_181)));
         assert_eq!(thresholds("commit").last(), Some(&(10_000, 1_763)));
+        assert_eq!(thresholds("active-days").last(), Some(&(1_000, 324)));
         assert_eq!(thresholds("streak").last(), Some(&(365, 19)));
-        assert_eq!(thresholds("agents"), vec![(2, 4), (4, 4), (5, 4)]);
+        assert_eq!(thresholds("workspaces").last(), Some(&(100, 36)));
+        assert_eq!(
+            thresholds("agents"),
+            vec![(1, 4), (2, 4), (3, 4), (4, 4), (5, 4)]
+        );
+        assert_eq!(definitions.len(), 45);
+        assert_eq!(special_achievement_definitions().len(), 8);
     }
 
     #[test]
@@ -2729,5 +2973,154 @@ mod tests {
             )
             .unwrap();
         assert_eq!(unlocked_at, original);
+    }
+
+    #[test]
+    fn milestone_unlock_days_follow_recorded_daily_usage() {
+        let dir = tempdir().unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        insert_usage_day(&store, "2026-01-01", "codex", "workspace-a", 6);
+        insert_usage_day(&store, "2026-01-02", "codex", "workspace-b", 4);
+        insert_usage_day(&store, "2026-01-03", "claude_code", "workspace-a", 1);
+
+        assert_eq!(
+            store.achievement_unlock_day("session", 10).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 1, 2)
+        );
+        assert_eq!(
+            store.achievement_unlock_day("active-days", 3).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 1, 3)
+        );
+        assert_eq!(
+            store.achievement_unlock_day("workspaces", 2).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 1, 2)
+        );
+        assert_eq!(
+            store.achievement_unlock_day("agents", 2).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 1, 3)
+        );
+        assert_eq!(
+            store.first_shared_workspace_day().unwrap(),
+            NaiveDate::from_ymd_opt(2026, 1, 3)
+        );
+    }
+
+    #[test]
+    fn aggregate_milestones_remain_unlocked_without_a_fabricated_date() {
+        let dir = tempdir().unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        store
+            .connection
+            .execute(
+                "INSERT INTO usage_events(source_key, surface_agent, total_tokens, session_count, date_precision, quality) VALUES ('aggregate', 'codex', 100000, 10, 'aggregate', 'estimated')",
+                [],
+            )
+            .unwrap();
+
+        store.refresh_achievement_unlocks().unwrap();
+
+        let token = store
+            .list_achievements()
+            .unwrap()
+            .into_iter()
+            .find(|value| value.code == "token-100000")
+            .unwrap();
+        assert_eq!(token.progress, token.threshold);
+        assert_eq!(token.unlocked_at, None);
+        let rule_version: i64 = store
+            .connection
+            .query_row(
+                "SELECT rule_version FROM achievement_unlocks WHERE code = 'token-100000'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rule_version, 0);
+    }
+
+    #[test]
+    fn special_achievements_use_exact_local_evidence_and_stay_permanent() {
+        let dir = tempdir().unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        store.audit(None, "changeset.apply", "changeset-1").unwrap();
+        let memory = store
+            .propose_memory(&MemoryProposal {
+                project_id: "workspace-a".into(),
+                memory_type: MemoryType::Decision,
+                content: "Use the shared rule".into(),
+                source_agent: Some("codex".into()),
+                source_thread: None,
+                source_reference: None,
+            })
+            .unwrap();
+        store.approve_memory(&memory.id, None).unwrap();
+
+        insert_usage_day(&store, "2026-01-01", "codex", "workspace-a", 1);
+        insert_usage_day(&store, "2026-02-01", "claude_code", "workspace-a", 1);
+        let night = Local
+            .with_ymd_and_hms(2026, 2, 1, 2, 0, 0)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        store
+            .connection
+            .execute(
+                "INSERT INTO usage_events(source_key, surface_agent, workspace_id, occurred_at, day, total_tokens, session_count, date_precision, quality) VALUES ('night', 'codex', NULL, ?1, '2026-02-01', 1, 1, 'exact', 'exact')",
+                params![night.to_rfc3339()],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "INSERT INTO git_commits(repository_group_id, commit_hash, authored_at, day, author_identity_hash, is_mine) VALUES ('repo', 'commit', ?1, '2026-02-01', 'identity', 1)",
+                params![night.to_rfc3339()],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "INSERT INTO commit_attributions(repository_group_id, commit_hash, agent, confidence, method) VALUES ('repo', 'commit', 'codex', 'estimated', 'time-correlation')",
+                [],
+            )
+            .unwrap();
+
+        store.refresh_achievement_unlocks().unwrap();
+        let unlocked = |code: &str| {
+            store
+                .connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM achievement_unlocks WHERE code = ?1)",
+                    params![code],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        };
+        assert!(unlocked("special-first-changeset"));
+        assert!(unlocked("special-first-memory"));
+        assert!(unlocked("special-shared-workspace"));
+        assert!(unlocked("special-night-owl"));
+        assert!(unlocked("special-comeback"));
+        assert!(unlocked("special-same-day-delivery"));
+        assert!(!unlocked("special-exact-attribution"));
+
+        store
+            .connection
+            .execute(
+                "UPDATE commit_attributions SET confidence = 'exact' WHERE repository_group_id = 'repo' AND commit_hash = 'commit'",
+                [],
+            )
+            .unwrap();
+        store.refresh_achievement_unlocks().unwrap();
+        assert!(unlocked("special-exact-attribution"));
+
+        store
+            .unlock_special_achievement("special-remote-handshake", night)
+            .unwrap();
+        assert!(unlocked("special-remote-handshake"));
+        assert!(
+            store
+                .unlock_special_achievement("special-unknown", night)
+                .is_err()
+        );
     }
 }

@@ -1,6 +1,28 @@
 import type { Achievement } from "./types";
 
-export const achievementCategories = ["token", "commit", "streak", "agents"] as const;
+export const achievementCategories = [
+  "token",
+  "session",
+  "commit",
+  "active-days",
+  "streak",
+  "workspaces",
+  "agents",
+] as const;
+
+export const productAchievementCodes = [
+  "special-first-changeset",
+  "special-first-memory",
+  "special-shared-workspace",
+  "special-exact-attribution",
+  "special-remote-handshake",
+] as const;
+
+export const secretAchievementCodes = [
+  "special-night-owl",
+  "special-comeback",
+  "special-same-day-delivery",
+] as const;
 
 export type AchievementCategory = typeof achievementCategories[number];
 
@@ -11,6 +33,12 @@ export interface AchievementTrack {
   completed: number;
   next?: Achievement;
   progressRatio: number;
+}
+
+export interface SpecialAchievement {
+  achievement: Achievement;
+  secret: boolean;
+  unlocked: boolean;
 }
 
 export function achievementReached(achievement: Achievement) {
@@ -33,6 +61,18 @@ export function buildAchievementTracks(achievements: Achievement[]): Achievement
       next,
       progressRatio: calculateAchievementTrackProgress(milestones, progress),
     };
+  });
+}
+
+export function buildSpecialAchievements(achievements: Achievement[]): SpecialAchievement[] {
+  const byCode = new Map(achievements.map((achievement) => [achievement.code, achievement]));
+  return [...productAchievementCodes, ...secretAchievementCodes].flatMap((code) => {
+    const achievement = byCode.get(code);
+    return achievement ? [{
+      achievement,
+      secret: (secretAchievementCodes as readonly string[]).includes(code),
+      unlocked: achievementReached(achievement),
+    }] : [];
   });
 }
 

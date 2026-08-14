@@ -370,11 +370,27 @@ fn remote_gateway_registry_path() -> anyhow::Result<PathBuf> {
     ))
 }
 
+fn record_remote_gateway_achievements(gateways: &[RemoteGatewaySummary]) {
+    let Some(connected_at) = gateways
+        .iter()
+        .filter_map(|gateway| gateway.last_connected_at)
+        .min()
+    else {
+        return;
+    };
+    let Ok(store) = Store::open_default() else {
+        return;
+    };
+    let _ = store.unlock_special_achievement("special-remote-handshake", connected_at);
+}
+
 #[tauri::command]
 fn list_remote_gateways() -> CommandResult<Vec<RemoteGatewaySummary>> {
-    remote_gateway_registry_path()
+    let gateways = remote_gateway_registry_path()
         .and_then(|path| agentkib_gateways::list(&path))
-        .map_err(format_error)
+        .map_err(format_error)?;
+    record_remote_gateway_achievements(&gateways);
+    Ok(gateways)
 }
 
 #[tauri::command]
@@ -388,9 +404,11 @@ async fn save_remote_gateway(input: RemoteGatewayInput) -> CommandResult<RemoteG
 #[tauri::command]
 async fn refresh_remote_gateway(id: String) -> CommandResult<RemoteGatewaySummary> {
     let path = remote_gateway_registry_path().map_err(format_error)?;
-    agentkib_gateways::refresh(&path, &id)
+    let gateway = agentkib_gateways::refresh(&path, &id)
         .await
-        .map_err(format_error)
+        .map_err(format_error)?;
+    record_remote_gateway_achievements(std::slice::from_ref(&gateway));
+    Ok(gateway)
 }
 
 #[tauri::command]

@@ -200,10 +200,17 @@ describe("AgentKib desktop", () => {
     vi.mocked(api.achievements).mockResolvedValue([
       { code: "token-100000", category: "token", threshold: 100_000, progress: 120_000, unlocked_at: "2026-08-01T00:00:00Z" },
       { code: "token-1000000", category: "token", threshold: 1_000_000, progress: 120_000 },
+      { code: "session-10", category: "session", threshold: 10, progress: 12, unlocked_at: "2026-08-01T00:00:00Z" },
       { code: "commit-1", category: "commit", threshold: 1, progress: 8, unlocked_at: "2026-08-01T00:00:00Z" },
       { code: "commit-10", category: "commit", threshold: 10, progress: 8 },
+      { code: "active-days-7", category: "active-days", threshold: 7, progress: 9, unlocked_at: "2026-08-01T00:00:00Z" },
       { code: "streak-3", category: "streak", threshold: 3, progress: 4, unlocked_at: "2026-08-01T00:00:00Z" },
+      { code: "workspaces-1", category: "workspaces", threshold: 1, progress: 2, unlocked_at: "2026-08-01T00:00:00Z" },
       { code: "agents-2", category: "agents", threshold: 2, progress: 1 },
+      { code: "special-first-changeset", category: "special", threshold: 1, progress: 1, unlocked_at: "2026-08-01T00:00:00Z" },
+      { code: "special-first-memory", category: "special", threshold: 1, progress: 0 },
+      { code: "special-night-owl", category: "special", threshold: 1, progress: 0 },
+      { code: "special-comeback", category: "special", threshold: 1, progress: 1, unlocked_at: "2026-08-02T00:00:00Z" },
     ]);
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Achievements" }));
@@ -212,11 +219,20 @@ describe("AgentKib desktop", () => {
     expect(await screen.findByRole("heading", { name: "Achievement Milestones" })).toBeInTheDocument();
     expect(screen.getAllByText("Token Launch")).toHaveLength(2);
     expect(screen.getByText("Next · 1M Token")).toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar")).toHaveLength(4);
+    expect(screen.getAllByRole("progressbar")).toHaveLength(7);
     expect(screen.queryByText("Record 100K Token")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Special Achievements" })).toBeInTheDocument();
+    expect(screen.getByText("Product Achievements")).toBeInTheDocument();
+    expect(screen.getByText("Secret Discoveries")).toBeInTheDocument();
+    expect(screen.getByText("Safe Landing")).toBeInTheDocument();
+    expect(screen.getByText("Welcome Back")).toBeInTheDocument();
+    expect(screen.getByText("Mystery Achievement")).toBeInTheDocument();
+    expect(screen.queryByText("Night Owl")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByText("Milestone history")[0]);
-    expect(screen.getAllByText(/Unlocked/)).toHaveLength(3);
+    const history = screen.getAllByText("Milestone history")[0].closest("details");
+    expect(history).not.toBeNull();
+    fireEvent.click(within(history!).getByText("Milestone history"));
+    expect(within(history!).getAllByText(/Unlocked/)).toHaveLength(1);
   });
 
   it.each([

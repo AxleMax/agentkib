@@ -675,12 +675,41 @@ main { grid-row: 1; height: 100%; }
 :root[data-theme="light"] .milestone-node.reached > span, :root[data-theme="light"] .milestone-history > div span.reached { color: white; background: #6752ce; }
 :root[data-theme="light"] .milestone-node.current > span { background: var(--panel); box-shadow: 0 0 0 4px rgba(103,82,206,.11); }
 :root[data-theme="light"] .milestone-progress { background: #d7d7de; }
+.milestone-layout { display: grid; gap: 14px; }
+.special-achievement-columns { display: grid; grid-template-columns: 1fr 1fr; }
+.special-achievement-group { min-width: 0; padding: 14px 18px 18px; }
+.special-achievement-group + .special-achievement-group { border-left: 1px solid var(--border); }
+.special-achievement-group > h3 { margin: 0 0 9px; color: var(--muted); font-size: var(--label-size); font-weight: 650; }
+.special-achievement-group > div { border: 1px solid var(--border); border-radius: 9px; }
+.special-achievement-item { display: block; color: var(--muted); border-bottom: 1px solid var(--border); }
+.special-achievement-item:last-child { border-bottom: 0; }
+.special-achievement-item > summary, .special-achievement-item.hidden { min-height: 48px; padding: 7px 10px; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; list-style: none; }
+.special-achievement-item > summary { cursor: pointer; }
+.special-achievement-item > summary::-webkit-details-marker { display: none; }
+.special-achievement-item > summary:hover { background: var(--surface-hover); }
+.special-achievement-item > summary > span, .special-achievement-item.hidden > span { width: 28px; height: 28px; display: grid; place-items: center; color: var(--muted); background: var(--panel-2); border-radius: 7px; }
+.special-achievement-item strong { min-width: 0; overflow: hidden; color: var(--text); font-size: var(--body-size); text-overflow: ellipsis; white-space: nowrap; }
+.special-achievement-item small { color: var(--muted); font-size: var(--metadata-size); white-space: nowrap; }
+.special-achievement-item > summary > svg { transition: transform 150ms ease; }
+.special-achievement-item[open] > summary > svg { transform: rotate(90deg); }
+.special-achievement-item > div { padding: 0 46px 11px; }
+.special-achievement-item > div p { margin: 0; color: var(--muted); font-size: var(--metadata-size); line-height: 1.5; }
+.special-achievement-item > div time { display: block; margin-top: 5px; color: var(--purple); font-size: var(--metadata-size); }
+.special-achievement-item.unlocked > summary > span { color: white; background: var(--purple-2); }
+.special-achievement-item.hidden { cursor: default; }
+.special-achievement-item.hidden strong, .special-achievement-item.hidden small { color: var(--muted); }
+:root[data-theme="light"] .special-achievement-item > summary > span, :root[data-theme="light"] .special-achievement-item.hidden > span { background: #f0f0f3; }
+:root[data-theme="light"] .special-achievement-item.unlocked > summary > span { background: #6752ce; }
 
 @media (max-width: 760px) {
   .milestone-path > header { grid-template-columns: auto minmax(0, 1fr); }
   .milestone-path-next { grid-column: 2; justify-items: start; text-align: left; }
   .milestone-history > div > div { grid-template-columns: 22px minmax(0, 1fr) auto; }
   .milestone-history > div time { grid-column: 2 / -1; text-align: left; }
+  .special-achievement-columns { grid-template-columns: 1fr; }
+  .special-achievement-group + .special-achievement-group { border-top: 1px solid var(--border); border-left: 0; }
+  .special-achievement-item > summary, .special-achievement-item.hidden { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .special-achievement-item > summary > svg { display: none; }
 }
 
 @media (max-width: 980px) {

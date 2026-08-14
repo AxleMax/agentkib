@@ -3,9 +3,9 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Activity, Award, Bot, Boxes, Brain, CalendarDays, Check, ChevronRight, CircleAlert, Code2, Copy, FileCode2, Flame, FolderGit2, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, MoreHorizontal, Network, Pencil, PlugZap, RefreshCw, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
+import { Activity, Award, Bot, Boxes, Brain, CalendarCheck2, CalendarDays, Check, ChevronRight, CircleAlert, Code2, Copy, FileCode2, Flame, FolderGit2, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, LockKeyhole, MessageSquareText, Moon, MoreHorizontal, Network, Pencil, PlugZap, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Trash2, Workflow, X } from "lucide-react";
 import { api } from "./api";
-import { achievementReached, buildAchievementTracks, type AchievementCategory, type AchievementTrack } from "./achievements";
+import { achievementReached, buildAchievementTracks, buildSpecialAchievements, type AchievementCategory, type AchievementTrack, type SpecialAchievement } from "./achievements";
 import { AgentIcon } from "./components/AgentIcon";
 import { AppSidebar, type SidebarEntry } from "./components/AppSidebar";
 import { SettingsSidebar, settingsSectionLabel, type SettingsSection } from "./components/SettingsSidebar";
@@ -375,18 +375,37 @@ function HeatmapMonths({ points, padding }: { points: HeatmapPoint[]; padding: n
 
 const milestoneIcons: Record<AchievementCategory, typeof Activity> = {
   token: Sparkles,
+  session: MessageSquareText,
   commit: GitCommitHorizontal,
+  "active-days": CalendarCheck2,
   streak: Flame,
+  workspaces: FolderGit2,
   agents: Network,
+};
+
+const specialAchievementIcons: Record<string, typeof Activity> = {
+  "special-first-changeset": ShieldCheck,
+  "special-first-memory": Brain,
+  "special-shared-workspace": Network,
+  "special-exact-attribution": GitCommitHorizontal,
+  "special-remote-handshake": PlugZap,
+  "special-night-owl": Moon,
+  "special-comeback": RotateCcw,
+  "special-same-day-delivery": Workflow,
 };
 
 function MilestonePaths({ achievements }: { achievements: Achievement[] }) {
   if (!achievements.length) return <div className="panel"><Empty compact icon={Award} title={tr("insights.preparing")} text="" /></div>;
   const tracks = buildAchievementTracks(achievements).filter((track) => track.milestones.length);
+  const specials = buildSpecialAchievements(achievements);
   const completed = tracks.reduce((count, track) => count + track.completed, 0);
-  return <div className="panel milestone-panel">
-    <div className="panel-head"><h2>{tr("insights.milestones")}</h2><span className="badge">{completed} / {achievements.length}</span></div>
-    <div className="milestone-paths">{tracks.map((track) => <MilestonePath key={track.category} track={track} />)}</div>
+  const milestoneCount = tracks.reduce((count, track) => count + track.milestones.length, 0);
+  return <div className="milestone-layout">
+    <div className="panel milestone-panel">
+      <div className="panel-head"><h2>{tr("insights.milestones")}</h2><span className="badge">{completed} / {milestoneCount}</span></div>
+      <div className="milestone-paths">{tracks.map((track) => <MilestonePath key={track.category} track={track} />)}</div>
+    </div>
+    {!!specials.length && <SpecialAchievements achievements={specials} />}
   </div>;
 }
 
@@ -425,6 +444,41 @@ function MilestonePath({ track }: { track: AchievementTrack }) {
 
 function formatMilestoneValue(category: AchievementCategory, value: number) {
   return tr(`milestones.value.${category}`, { value: formatCompact(value) });
+}
+
+function SpecialAchievements({ achievements }: { achievements: SpecialAchievement[] }) {
+  const product = achievements.filter((value) => !value.secret);
+  const secrets = achievements.filter((value) => value.secret);
+  const unlocked = achievements.filter((value) => value.unlocked).length;
+  return <section className="panel special-achievements">
+    <div className="panel-head"><h2>{tr("special.title")}</h2><span className="badge">{unlocked} / {achievements.length}</span></div>
+    <div className="special-achievement-columns">
+      <SpecialAchievementGroup title={tr("special.product")} achievements={product} />
+      <SpecialAchievementGroup title={tr("special.secrets")} achievements={secrets} />
+    </div>
+  </section>;
+}
+
+function SpecialAchievementGroup({ title, achievements }: { title: string; achievements: SpecialAchievement[] }) {
+  return <section className="special-achievement-group"><h3>{title}</h3><div>{achievements.map((value) => <SpecialAchievementItem key={value.achievement.code} value={value} />)}</div></section>;
+}
+
+function SpecialAchievementItem({ value }: { value: SpecialAchievement }) {
+  const { achievement, secret, unlocked } = value;
+  const hidden = secret && !unlocked;
+  const key = achievementTranslationKey(achievement.code);
+  const Icon = hidden ? LockKeyhole : specialAchievementIcons[achievement.code] ?? Award;
+  const title = hidden ? tr("special.mystery") : tr(`achievements.${key}.title`);
+  const status = achievement.unlocked_at
+    ? tr("insights.unlockedAt", { date: formatDateTime(achievement.unlocked_at) })
+    : unlocked ? tr("special.reachedDateUnknown") : tr("milestones.locked");
+  if (hidden) {
+    return <div className="special-achievement-item hidden" aria-label={`${title} · ${status}`}><span><Icon size={16} /></span><strong>{title}</strong><small>{status}</small></div>;
+  }
+  return <details className={`special-achievement-item${unlocked ? " unlocked" : ""}`}>
+    <summary><span><Icon size={16} /></span><strong>{title}</strong><small>{status}</small><ChevronRight size={14} /></summary>
+    <div><p>{tr(`achievements.${key}.description`)}</p>{achievement.unlocked_at && <time>{tr("insights.unlockedAt", { date: formatDateTime(achievement.unlocked_at) })}</time>}</div>
+  </details>;
 }
 
 function ProviderRow({ provider }: { provider: NonNullable<InsightsStatus["providers"]>[number] }) {
@@ -620,9 +674,14 @@ function achievementTranslationKey(code: string) {
   return ({
     "token-100000": "token_100k", "token-1000000": "token_1m", "token-10000000": "token_10m", "token-100000000": "token_100m",
     "token-1000000000": "token_1b", "token-10000000000": "token_10b", "token-100000000000": "token_100b", "token-1000000000000": "token_1t",
+    "session-10": "session_10", "session-50": "session_50", "session-100": "session_100", "session-500": "session_500", "session-1000": "session_1000", "session-5000": "session_5000", "session-10000": "session_10000",
     "commit-1": "commit_1", "commit-10": "commit_10", "commit-100": "commit_100", "commit-1000": "commit_1000", "commit-5000": "commit_5000", "commit-10000": "commit_10000",
-    "streak-3": "streak_3", "streak-7": "streak_7", "streak-30": "streak_30", "streak-100": "streak_100", "streak-365": "streak_365",
-    "agents-2": "agents_2", "agents-4": "agents_4", "agents-5": "agents_5",
+    "active-days-7": "active_days_7", "active-days-30": "active_days_30", "active-days-100": "active_days_100", "active-days-365": "active_days_365", "active-days-1000": "active_days_1000",
+    "streak-3": "streak_3", "streak-7": "streak_7", "streak-14": "streak_14", "streak-30": "streak_30", "streak-60": "streak_60", "streak-100": "streak_100", "streak-180": "streak_180", "streak-365": "streak_365",
+    "workspaces-1": "workspaces_1", "workspaces-5": "workspaces_5", "workspaces-10": "workspaces_10", "workspaces-25": "workspaces_25", "workspaces-50": "workspaces_50", "workspaces-100": "workspaces_100",
+    "agents-1": "agents_1", "agents-2": "agents_2", "agents-3": "agents_3", "agents-4": "agents_4", "agents-5": "agents_5",
+    "special-first-changeset": "special_first_changeset", "special-first-memory": "special_first_memory", "special-shared-workspace": "special_shared_workspace", "special-exact-attribution": "special_exact_attribution",
+    "special-remote-handshake": "special_remote_handshake", "special-night-owl": "special_night_owl", "special-comeback": "special_comeback", "special-same-day-delivery": "special_same_day_delivery",
   } as Record<string, string>)[code] ?? code;
 }
 function formatBytes(bytes: number) { return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`; }

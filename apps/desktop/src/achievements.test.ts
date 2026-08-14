@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildAchievementTracks, calculateAchievementTrackProgress } from "./achievements";
+import {
+  buildAchievementTracks,
+  buildSpecialAchievements,
+  calculateAchievementTrackProgress,
+} from "./achievements";
 import type { Achievement } from "./types";
 
 function achievement(category: string, threshold: number, progress: number, unlocked = false): Achievement {
@@ -15,10 +19,18 @@ describe("achievement milestone tracks", () => {
       achievement("agents", 2, 1),
     ]);
 
-    expect(tracks.map((track) => track.category)).toEqual(["token", "commit", "streak", "agents"]);
+    expect(tracks.map((track) => track.category)).toEqual([
+      "token",
+      "session",
+      "commit",
+      "active-days",
+      "streak",
+      "workspaces",
+      "agents",
+    ]);
     expect(tracks[0].milestones.map((milestone) => milestone.threshold)).toEqual([100_000, 1_000_000]);
     expect(tracks[0].completed).toBe(2);
-    expect(tracks[3].next?.threshold).toBe(2);
+    expect(tracks.find((track) => track.category === "agents")?.next?.threshold).toBe(2);
   });
 
   it("calculates progress inside the current threshold segment", () => {
@@ -43,5 +55,21 @@ describe("achievement milestone tracks", () => {
     const track = buildAchievementTracks(milestones).find((value) => value.category === "commit")!;
     expect(track.completed).toBe(1);
     expect(track.next?.threshold).toBe(100);
+  });
+
+  it("keeps special achievements out of numeric tracks and in a stable order", () => {
+    const achievements = [
+      achievement("token", 100_000, 100_000, true),
+      { code: "special-night-owl", category: "special", threshold: 1, progress: 0 },
+      { code: "special-first-memory", category: "special", threshold: 1, progress: 1 },
+      { code: "special-first-changeset", category: "special", threshold: 1, progress: 1, unlocked_at: "2026-01-02T00:00:00Z" },
+    ];
+
+    expect(buildAchievementTracks(achievements).flatMap((track) => track.milestones)).toHaveLength(1);
+    expect(buildSpecialAchievements(achievements)).toEqual([
+      expect.objectContaining({ achievement: expect.objectContaining({ code: "special-first-changeset" }), secret: false, unlocked: true }),
+      expect.objectContaining({ achievement: expect.objectContaining({ code: "special-first-memory" }), secret: false, unlocked: true }),
+      expect.objectContaining({ achievement: expect.objectContaining({ code: "special-night-owl" }), secret: true, unlocked: false }),
+    ]);
   });
 });
