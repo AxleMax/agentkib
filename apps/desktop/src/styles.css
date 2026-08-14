@@ -74,7 +74,7 @@ body { background: var(--bg); }
 .window-toolbar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--sidebar-width); background: #0c0f15; border-right: 1px solid #1a202c; transition: width 160ms ease; }
 .sidebar-collapsed .window-toolbar::before { width: 0; border-right: 0; }
 .window-sidebar-toggle { position: absolute; z-index: 1; top: 8px; left: calc(var(--sidebar-width) - 44px); width: 32px; height: 32px; display: grid; place-items: center; color: #818a9b; background: transparent; border-radius: 7px; transition: left 160ms ease; }
-.sidebar-collapsed .window-sidebar-toggle { left: 76px; }
+.sidebar-collapsed .window-sidebar-toggle { left: 88px; }
 .window-sidebar-toggle:hover { color: var(--text); background: #181d27; }
 .sidebar { position: relative; top: auto; z-index: 20; grid-column: 1; grid-row: 2; width: var(--sidebar-width); height: 100%; min-height: 0; padding: 12px; background: #0c0f15; transition: transform 160ms ease; }
 main { grid-column: 2; grid-row: 2; min-height: 0; }
@@ -522,12 +522,12 @@ main { grid-column: 2; grid-row: 2; min-height: 0; }
 .window-toolbar { position: fixed; z-index: 45; inset: 0 auto auto 0; width: var(--sidebar-width); height: var(--page-header-height); pointer-events: auto; background: transparent !important; border: 0 !important; }
 .window-toolbar::before { display: none; }
 .window-sidebar-toggle { top: 10px; left: calc(var(--sidebar-width) - 43px); pointer-events: auto; }
-.sidebar-collapsed .window-toolbar { width: 120px; }
-.sidebar-collapsed .window-sidebar-toggle { left: 76px; }
+.sidebar-collapsed .window-toolbar { width: 132px; }
+.sidebar-collapsed .window-sidebar-toggle { left: 88px; }
 .sidebar { grid-row: 1; height: 100%; padding: 54px 12px 12px; }
 main { grid-row: 1; height: 100%; }
 .page-header, main > header.page-header { height: var(--page-header-height); min-height: var(--page-header-height); padding: 0 28px; }
-.sidebar-collapsed .page-header { padding-left: 120px; }
+.sidebar-collapsed .page-header { padding-left: 132px; }
 .page-title-row h1, main > header.page-header h1 { font-size: var(--page-title-size); }
 .panel-head h2, .panel h2 { font-size: var(--section-title-size); }
 .workspace-row, .catalog-row, .setting-row, .agent-workspace-list > div, .home-asset-list > div { font-size: var(--body-size); }

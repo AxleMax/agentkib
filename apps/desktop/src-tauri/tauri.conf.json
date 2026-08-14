@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "AgentKib", "width": 1360, "height": 860, "minWidth": 1080, "minHeight": 680, "decorations": true, "transparent": false, "titleBarStyle": "Overlay", "hiddenTitle": true }],
+    "windows": [{ "title": "AgentKib", "width": 1360, "height": 860, "minWidth": 1080, "minHeight": 680, "decorations": true, "transparent": false, "titleBarStyle": "Overlay", "trafficLightPosition": { "x": 15, "y": 25 }, "hiddenTitle": true }],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost" }
   },
   "bundle": {
