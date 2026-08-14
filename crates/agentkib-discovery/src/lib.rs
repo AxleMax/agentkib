@@ -4,6 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use agentkib_core::{
     AgentInstallation, AgentKind, AssetKind, CatalogAsset, CatalogScope, DiscoveryCandidate,
     DiscoveryEvidence, hash_content,
@@ -88,7 +91,11 @@ impl CodexProvider {
 
 impl WorkspaceDiscoveryProvider for CodexProvider {
     fn installation(&self) -> AgentInstallation {
-        installation(AgentKind::Codex, self.home())
+        installation(
+            AgentKind::Codex,
+            self.home(),
+            agent_is_installed(AgentKind::Codex),
+        )
     }
 
     fn discover(&self) -> Result<Vec<DiscoveryCandidate>> {
@@ -192,7 +199,11 @@ impl ClaudeProvider {
 
 impl WorkspaceDiscoveryProvider for ClaudeProvider {
     fn installation(&self) -> AgentInstallation {
-        installation(AgentKind::ClaudeCode, self.home())
+        installation(
+            AgentKind::ClaudeCode,
+            self.home(),
+            agent_is_installed(AgentKind::ClaudeCode),
+        )
     }
 
     fn discover(&self) -> Result<Vec<DiscoveryCandidate>> {
@@ -309,13 +320,11 @@ impl CursorProvider {
 
 impl WorkspaceDiscoveryProvider for CursorProvider {
     fn installation(&self) -> AgentInstallation {
-        let home = self.home();
-        let mut value = installation(AgentKind::Cursor, home.clone());
-        if !value.installed {
-            value.installed = self.data_home().is_some_and(|path| path.is_dir());
-            value.configured = home.is_some_and(|path| path.is_dir());
-        }
-        value
+        cursor_installation(
+            self.home(),
+            self.data_home(),
+            agent_is_installed(AgentKind::Cursor),
+        )
     }
 
     fn discover(&self) -> Result<Vec<DiscoveryCandidate>> {
@@ -415,7 +424,11 @@ impl OpenClawProvider {
 
 impl WorkspaceDiscoveryProvider for OpenClawProvider {
     fn installation(&self) -> AgentInstallation {
-        installation(AgentKind::OpenClaw, self.home())
+        installation(
+            AgentKind::OpenClaw,
+            self.home(),
+            agent_is_installed(AgentKind::OpenClaw),
+        )
     }
 
     fn discover(&self) -> Result<Vec<DiscoveryCandidate>> {
@@ -514,7 +527,11 @@ impl HermesProvider {
 impl WorkspaceDiscoveryProvider for HermesProvider {
     fn installation(&self) -> AgentInstallation {
         let home = self.homes().into_iter().next();
-        installation(AgentKind::Hermes, home)
+        installation(
+            AgentKind::Hermes,
+            home,
+            agent_is_installed(AgentKind::Hermes),
+        )
     }
 
     fn discover(&self) -> Result<Vec<DiscoveryCandidate>> {
@@ -853,16 +870,107 @@ fn home_asset(agent: AgentKind, path: &Path, kind: AssetKind) -> Result<CatalogA
     })
 }
 
-fn installation(agent: AgentKind, home: Option<PathBuf>) -> AgentInstallation {
-    let installed = home.as_ref().is_some_and(|path| path.is_dir());
+fn installation(agent: AgentKind, home: Option<PathBuf>, installed: bool) -> AgentInstallation {
+    let configured = home.as_ref().is_some_and(|path| path.is_dir());
     AgentInstallation {
         agent,
         installed,
-        configured: installed,
+        configured,
         version: None,
         home,
         warnings: Vec::new(),
     }
+}
+
+fn cursor_installation(
+    home: Option<PathBuf>,
+    data_home: Option<PathBuf>,
+    installed: bool,
+) -> AgentInstallation {
+    let mut value = installation(AgentKind::Cursor, home, installed);
+    value.configured = value.configured || data_home.is_some_and(|path| path.is_dir());
+    value
+}
+
+fn agent_is_installed(agent: AgentKind) -> bool {
+    let command = match agent {
+        AgentKind::Codex => "codex",
+        AgentKind::ClaudeCode => "claude",
+        AgentKind::Cursor => "cursor",
+        AgentKind::OpenClaw => "openclaw",
+        AgentKind::Hermes => "hermes",
+    };
+    command_is_available(command) || app_bundle_is_available(agent)
+}
+
+fn command_is_available(command: &str) -> bool {
+    command_is_available_in(command, &executable_search_dirs())
+}
+
+fn command_is_available_in(command: &str, directories: &BTreeSet<PathBuf>) -> bool {
+    directories
+        .iter()
+        .map(|directory| directory.join(format!("{command}{}", env::consts::EXE_SUFFIX)))
+        .any(|path| is_executable_file(&path))
+}
+
+fn executable_search_dirs() -> BTreeSet<PathBuf> {
+    let mut directories = BTreeSet::new();
+    if let Some(paths) = env::var_os("PATH") {
+        directories.extend(env::split_paths(&paths));
+    }
+    directories.extend([
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+    ]);
+    if let Some(home) = dirs::home_dir() {
+        directories.extend([
+            home.join(".local/bin"),
+            home.join(".cargo/bin"),
+            home.join(".bun/bin"),
+            home.join(".npm-global/bin"),
+            home.join("Library/pnpm"),
+        ]);
+    }
+    directories
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn app_bundle_is_available(agent: AgentKind) -> bool {
+    let bundle = match agent {
+        AgentKind::Codex => "Codex.app",
+        AgentKind::Cursor => "Cursor.app",
+        AgentKind::ClaudeCode | AgentKind::OpenClaw | AgentKind::Hermes => return false,
+    };
+    let mut candidates = vec![PathBuf::from("/Applications").join(bundle)];
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join("Applications").join(bundle));
+    }
+    candidates
+        .into_iter()
+        .any(|path| path.join("Contents/Info.plist").is_file())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn app_bundle_is_available(_agent: AgentKind) -> bool {
+    false
 }
 
 fn candidate(
@@ -1004,6 +1112,33 @@ fn modified_at(path: &Path) -> Result<DateTime<Utc>> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn residual_home_is_configured_but_not_installed() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("cursor-home");
+        let data_home = dir.path().join("Cursor");
+        fs::create_dir(&home).unwrap();
+        fs::create_dir(&data_home).unwrap();
+
+        let value = cursor_installation(Some(home.clone()), Some(data_home), false);
+
+        assert!(!value.installed);
+        assert!(value.configured);
+        assert_eq!(value.home, Some(home));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_file_is_valid_installation_evidence() {
+        let dir = tempdir().unwrap();
+        let executable = dir.path().join("cursor");
+        fs::write(&executable, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let directories = [dir.path().to_path_buf()].into_iter().collect();
+
+        assert!(command_is_available_in("cursor", &directories));
+    }
 
     #[test]
     fn normalizes_nested_directory_to_project_marker() {
