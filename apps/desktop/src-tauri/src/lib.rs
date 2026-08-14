@@ -30,6 +30,9 @@ use agentkib_quota::{
     QuotaCollectorStatus, QuotaCommandOutput, QuotaCommandRunner, QuotaSnapshot,
     resolve_codexbar_config, sanitize_diagnostic, write_managed_config,
 };
+use agentkib_storage::{
+    HardLinkSet, StorageOverview, StorageWorkspace, scan_workspace as scan_workspace_storage,
+};
 use agentkib_store::{Store, default_backup_dir, default_data_dir};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -177,6 +180,12 @@ struct QuotaRuntime {
     running: AtomicBool,
 }
 
+#[derive(Debug, Default)]
+struct StorageRuntime {
+    running: AtomicBool,
+    cancel_requested: AtomicBool,
+}
+
 impl LifecycleState {
     fn new(preferences: &DesktopPreferences) -> Self {
         let effective_locale = preferences.locale_preference.effective();
@@ -281,9 +290,13 @@ fn discover_workspaces(
 fn request_refresh(
     app: AppHandle,
     coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
+    storage: tauri::State<'_, Arc<StorageRuntime>>,
     kind: RefreshKind,
     force: Option<bool>,
 ) -> RefreshReceipt {
+    if kind == RefreshKind::Storage && !coordinator.is_active(kind) {
+        storage.cancel_requested.store(false, Ordering::SeqCst);
+    }
     coordinator.request(app, kind, force.unwrap_or(false))
 }
 
@@ -292,6 +305,27 @@ fn get_refresh_status(
     coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
 ) -> Vec<RefreshJobStatus> {
     coordinator.statuses()
+}
+
+#[tauri::command]
+fn get_storage_overview() -> CommandResult<StorageOverview> {
+    Store::open_default()
+        .and_then(|store| store.storage_overview())
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn cancel_storage_scan(
+    app: AppHandle,
+    coordinator: tauri::State<'_, Arc<RefreshCoordinator>>,
+    storage: tauri::State<'_, Arc<StorageRuntime>>,
+) -> bool {
+    let active = coordinator.is_active(RefreshKind::Storage);
+    if active {
+        storage.cancel_requested.store(true, Ordering::SeqCst);
+        coordinator.cancel_queued(&app, RefreshKind::Storage);
+    }
+    active
 }
 
 #[tauri::command]
@@ -1502,6 +1536,9 @@ fn show_main_window(app: &AppHandle) {
 
 fn request_real_exit(app: &AppHandle, lifecycle: &LifecycleState) {
     lifecycle.quitting.store(true, Ordering::SeqCst);
+    app.state::<Arc<StorageRuntime>>()
+        .cancel_requested
+        .store(true, Ordering::SeqCst);
     app.state::<Arc<RefreshCoordinator>>().shutdown();
     shutdown_external_commands();
     app.state::<Arc<HubController>>().shutdown();
@@ -2182,6 +2219,7 @@ fn active_refresh_translation_key(active: &[RefreshKind]) -> Option<&'static str
         [RefreshKind::Insights] => Some("tray.refreshInsights"),
         [RefreshKind::Gateways] => Some("tray.refreshGateways"),
         [RefreshKind::Quota] => Some("tray.refreshQuota"),
+        [RefreshKind::Storage] => Some("tray.refreshMultiple"),
         _ => Some("tray.refreshMultiple"),
     }
 }
@@ -2227,9 +2265,130 @@ fn perform_insights(
     }
 }
 
+fn perform_storage(
+    app: &AppHandle,
+    state: &StorageRuntime,
+    request_id: &str,
+    write_lock: &Mutex<()>,
+) -> CommandResult<StorageOverview> {
+    if state.running.swap(true, Ordering::SeqCst) {
+        return Err(LocalizedMessage::new("errors.storageRunning"));
+    }
+    let result = (|| -> anyhow::Result<StorageOverview> {
+        let store = Store::open_default()?;
+        let mut workspaces = store.list_workspaces()?;
+        // Stable path order keeps cross-workspace hard-link ownership deterministic across
+        // interrupted scans, so last-good rows cannot temporarily double-count a link.
+        workspaces.sort_by(|left, right| left.path.cmp(&right.path));
+        drop(store);
+        let roots = workspaces
+            .iter()
+            .map(|workspace| workspace.path.clone())
+            .collect::<Vec<_>>();
+        let total = workspaces.len() as u64;
+        let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
+        coordinator.set_progress(app, RefreshKind::Storage, request_id, 0, total);
+        let mut hard_links = HardLinkSet::default();
+
+        for (index, workspace) in workspaces.iter().enumerate() {
+            if state.cancel_requested.load(Ordering::SeqCst) {
+                break;
+            }
+            if storage_path_is_too_broad(&workspace.path) {
+                {
+                    let _write = write_lock
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("refresh database write lock is poisoned"))?;
+                    Store::open_default()?.record_workspace_storage_failure(
+                        &workspace.id,
+                        Utc::now(),
+                        "storage.scanTooBroad",
+                        None,
+                    )?;
+                }
+                let overview = Store::open_default()?.storage_overview()?;
+                let _ = app.emit("agentkib:storage-updated", &overview);
+                coordinator.set_progress(
+                    app,
+                    RefreshKind::Storage,
+                    request_id,
+                    index as u64 + 1,
+                    total,
+                );
+                continue;
+            }
+            let excluded_roots = roots
+                .iter()
+                .filter(|path| *path != &workspace.path && path.starts_with(&workspace.path))
+                .cloned()
+                .collect::<Vec<_>>();
+            let source = StorageWorkspace {
+                id: workspace.id.clone(),
+                name: workspace.name.clone(),
+                path: workspace.path.clone(),
+            };
+            let scan = scan_workspace_storage(&source, &excluded_roots, &mut hard_links, || {
+                state.cancel_requested.load(Ordering::Relaxed)
+            });
+            if scan.cancelled {
+                break;
+            }
+            {
+                let _write = write_lock
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("refresh database write lock is poisoned"))?;
+                let store = Store::open_default()?;
+                if scan.storage.last_success_at.is_some() {
+                    store.save_workspace_storage(&scan.storage)?;
+                } else {
+                    store.record_workspace_storage_failure(
+                        &workspace.id,
+                        scan.storage.last_attempt_at,
+                        scan.storage
+                            .error_key
+                            .as_deref()
+                            .unwrap_or("storage.scanUnavailable"),
+                        scan.storage.error_detail.as_deref(),
+                    )?;
+                }
+            }
+            let overview = Store::open_default()?.storage_overview()?;
+            let _ = app.emit("agentkib:storage-updated", &overview);
+            coordinator.set_progress(
+                app,
+                RefreshKind::Storage,
+                request_id,
+                index as u64 + 1,
+                total,
+            );
+        }
+        let overview = Store::open_default()?.storage_overview()?;
+        let _ = app.emit("agentkib:storage-updated", &overview);
+        Ok(overview)
+    })();
+    state.running.store(false, Ordering::SeqCst);
+    result.map_err(format_error)
+}
+
+fn storage_path_is_too_broad(path: &Path) -> bool {
+    if path.parent().is_none() {
+        return true;
+    }
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    path == home
+        || path
+            .canonicalize()
+            .ok()
+            .zip(home.canonicalize().ok())
+            .is_some_and(|(candidate, home)| candidate == home)
+}
+
 fn run_refresh_job(
     app: &AppHandle,
     kind: RefreshKind,
+    request_id: &str,
     write_lock: &Mutex<()>,
 ) -> anyhow::Result<()> {
     let result = match kind {
@@ -2251,6 +2410,10 @@ fn run_refresh_job(
         RefreshKind::Quota => {
             let state = app.state::<Arc<QuotaRuntime>>();
             perform_quota(app, state.inner(), write_lock).map(|_| ())
+        }
+        RefreshKind::Storage => {
+            let state = app.state::<Arc<StorageRuntime>>();
+            perform_storage(app, state.inner(), request_id, write_lock).map(|_| ())
         }
     };
     result.map_err(|error| anyhow::anyhow!(error.detail.unwrap_or(error.key)))
@@ -2423,6 +2586,7 @@ pub fn run() {
     let discovery = Arc::new(DiscoveryRuntime::default());
     let insights = Arc::new(InsightsRuntime::default());
     let quota = Arc::new(QuotaRuntime::default());
+    let storage = Arc::new(StorageRuntime::default());
     let refresh = Arc::new(RefreshCoordinator::default());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -2433,6 +2597,7 @@ pub fn run() {
         .manage(discovery)
         .manage(insights)
         .manage(quota)
+        .manage(storage)
         .manage(refresh)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -2494,6 +2659,8 @@ pub fn run() {
             validate_workspace,
             request_refresh,
             get_refresh_status,
+            get_storage_overview,
+            cancel_storage_scan,
             discover_workspaces,
             list_workspaces,
             get_workspace,
@@ -2660,6 +2827,16 @@ mod tests {
             preferences.quota_popover,
             QuotaPopoverPreferences::default()
         );
+    }
+
+    #[test]
+    fn storage_scan_rejects_root_and_home_but_accepts_workspace() {
+        let workspace = tempdir().unwrap();
+        assert!(!storage_path_is_too_broad(workspace.path()));
+        assert!(storage_path_is_too_broad(Path::new("/")));
+        if let Some(home) = dirs::home_dir() {
+            assert!(storage_path_is_too_broad(&home));
+        }
     }
 
     #[test]

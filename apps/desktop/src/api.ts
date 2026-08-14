@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, StorageOverview, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -43,6 +43,8 @@ export const api = {
   planMcpMigration: (project: string, candidateIds: string[]) => invoke<ChangeSet>("plan_mcp_migration", { project, candidateIds }),
   requestRefresh: (kind: RefreshKind, force = false) => invoke<RefreshReceipt>("request_refresh", { kind, force }),
   refreshStatus: () => invoke<RefreshJobStatus[]>("get_refresh_status"),
+  storageOverview: () => invoke<StorageOverview>("get_storage_overview"),
+  cancelStorageScan: () => invoke<boolean>("cancel_storage_scan"),
   discoverWorkspaces: () => invoke<RefreshReceipt>("discover_workspaces"),
   workspaces: () => invoke<WorkspaceSummary[]>("list_workspaces"),
   workspace: (id: string) => invoke<WorkspaceSummary | undefined>("get_workspace", { id }),

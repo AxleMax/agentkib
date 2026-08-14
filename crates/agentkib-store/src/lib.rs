@@ -16,6 +16,7 @@ use agentkib_insights::{
     RepositoryCommitBreakdown, UsageBatch, UsageQuality, WorkspaceUsageBreakdown,
 };
 use agentkib_quota::{QuotaBackend, QuotaCollectorStatus, QuotaSnapshot, sanitize_diagnostic};
+use agentkib_storage::{StorageMeasurement, StorageOverview, StorageQuality, WorkspaceStorage};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Days, Local, NaiveDate, TimeZone, Timelike, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -338,6 +339,21 @@ impl Store {
                    error_detail TEXT
                  );
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '7');
+                 COMMIT;",
+            )?;
+        }
+        if current_version.is_none_or(|version| version < 8) {
+            self.connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS workspace_storage (
+                   workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+                   snapshot_json TEXT,
+                   last_attempt_at TEXT NOT NULL,
+                   last_success_at TEXT,
+                   error_key TEXT,
+                   error_detail TEXT
+                 );
+                 INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '8');
                  COMMIT;",
             )?;
         }
@@ -863,6 +879,116 @@ impl Store {
             .optional()?
             .flatten();
         value.map(|value| parse_time(&value)).transpose()
+    }
+
+    pub fn storage_overview(&self) -> Result<StorageOverview> {
+        let total_workspace_count: usize =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))?;
+        let mut statement = self.connection.prepare(
+            "SELECT w.id, w.name, w.canonical_path, s.snapshot_json, s.last_attempt_at, s.last_success_at, s.error_key, s.error_detail
+             FROM workspace_storage s JOIN workspaces w ON w.id = s.workspace_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+            ))
+        })?;
+        let mut workspaces = Vec::new();
+        for row in rows {
+            let (
+                workspace_id,
+                name,
+                path,
+                snapshot,
+                attempted_at,
+                success_at,
+                error_key,
+                error_detail,
+            ) = row?;
+            let mut value = if let Some(snapshot) = snapshot {
+                serde_json::from_str::<WorkspaceStorage>(&snapshot)?
+            } else {
+                WorkspaceStorage {
+                    workspace_id,
+                    name,
+                    path: PathBuf::from(path),
+                    measurement: default_storage_measurement(),
+                    quality: StorageQuality::Unavailable,
+                    allocated_bytes: 0,
+                    logical_bytes: 0,
+                    regenerable_bytes: 0,
+                    agent_asset_bytes: 0,
+                    file_count: 0,
+                    directory_count: 0,
+                    breakdown: Vec::new(),
+                    last_attempt_at: parse_time(&attempted_at)?,
+                    last_success_at: None,
+                    error_key: error_key.clone(),
+                    error_detail: error_detail.clone(),
+                }
+            };
+            value.last_attempt_at = parse_time(&attempted_at)?;
+            value.last_success_at = success_at.as_deref().map(parse_time).transpose()?;
+            if error_key.is_some() {
+                if value.last_success_at.is_some() {
+                    value.quality = StorageQuality::Partial;
+                }
+                value.error_key = error_key;
+                value.error_detail = error_detail;
+            }
+            workspaces.push(value);
+        }
+        workspaces.sort_by(|left, right| {
+            right
+                .allocated_bytes
+                .cmp(&left.allocated_bytes)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        Ok(StorageOverview::from_workspaces(
+            total_workspace_count,
+            workspaces,
+        ))
+    }
+
+    pub fn save_workspace_storage(&self, storage: &WorkspaceStorage) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO workspace_storage(workspace_id, snapshot_json, last_attempt_at, last_success_at, error_key, error_detail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(workspace_id) DO UPDATE SET snapshot_json = excluded.snapshot_json, last_attempt_at = excluded.last_attempt_at, last_success_at = excluded.last_success_at, error_key = excluded.error_key, error_detail = excluded.error_detail",
+            params![
+                storage.workspace_id,
+                serde_json::to_string(storage)?,
+                storage.last_attempt_at.to_rfc3339(),
+                storage.last_success_at.map(|value| value.to_rfc3339()),
+                storage.error_key,
+                storage.error_detail,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_workspace_storage_failure(
+        &self,
+        workspace_id: &str,
+        attempted_at: DateTime<Utc>,
+        error_key: &str,
+        error_detail: Option<&str>,
+    ) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO workspace_storage(workspace_id, snapshot_json, last_attempt_at, error_key, error_detail)
+             VALUES (?1, NULL, ?2, ?3, ?4)
+             ON CONFLICT(workspace_id) DO UPDATE SET last_attempt_at = excluded.last_attempt_at, error_key = excluded.error_key, error_detail = excluded.error_detail",
+            params![workspace_id, attempted_at.to_rfc3339(), error_key, error_detail],
+        )?;
+        Ok(())
     }
 
     pub fn save_quota_snapshot(&self, snapshot: &QuotaSnapshot) -> Result<()> {
@@ -2671,6 +2797,14 @@ fn row_to_memory(row: &Row<'_>) -> rusqlite::Result<MemoryRecord> {
 fn parse_time(value: &str) -> Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
 }
+#[cfg(unix)]
+fn default_storage_measurement() -> StorageMeasurement {
+    StorageMeasurement::AllocatedExact
+}
+#[cfg(not(unix))]
+fn default_storage_measurement() -> StorageMeasurement {
+    StorageMeasurement::LogicalEstimate
+}
 fn enum_string<T: serde::Serialize>(value: T) -> Result<String> {
     Ok(serde_json::to_value(value)?
         .as_str()
@@ -2929,6 +3063,82 @@ mod tests {
             .unwrap();
         assert!(quota_table);
         assert_eq!(token_total, 42);
+    }
+
+    #[test]
+    fn version_eight_adds_workspace_storage_cache() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO schema_meta(key, value) VALUES ('schema_version', '7');
+                 CREATE TABLE workspaces(id TEXT PRIMARY KEY);",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&database).unwrap();
+        let exists: bool = store
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workspace_storage')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+    }
+
+    #[test]
+    fn storage_failure_preserves_last_good_and_workspace_removal_cascades() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        let now = Utc::now();
+        let snapshot = WorkspaceStorage {
+            workspace_id: registered.id.clone(),
+            name: registered.name,
+            path: registered.path,
+            measurement: agentkib_storage::StorageMeasurement::AllocatedExact,
+            quality: StorageQuality::Complete,
+            allocated_bytes: 4096,
+            logical_bytes: 1024,
+            regenerable_bytes: 2048,
+            agent_asset_bytes: 128,
+            file_count: 2,
+            directory_count: 1,
+            breakdown: Vec::new(),
+            last_attempt_at: now,
+            last_success_at: Some(now),
+            error_key: None,
+            error_detail: None,
+        };
+        store.save_workspace_storage(&snapshot).unwrap();
+        store
+            .record_workspace_storage_failure(
+                &registered.id,
+                Utc::now(),
+                "storage.scanUnavailable",
+                Some("permission denied"),
+            )
+            .unwrap();
+
+        let overview = store.storage_overview().unwrap();
+        assert_eq!(overview.allocated_bytes, 4096);
+        assert_eq!(overview.workspaces[0].quality, StorageQuality::Partial);
+
+        store.exclude_workspace(&registered.id).unwrap();
+        let rows: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM workspace_storage", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 0);
     }
 
     #[test]

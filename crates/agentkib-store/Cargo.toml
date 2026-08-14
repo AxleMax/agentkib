@@ -8,6 +8,7 @@ license.workspace = true
 agentkib-core.workspace = true
 agentkib-insights.workspace = true
 agentkib-quota.workspace = true
+agentkib-storage.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 dirs.workspace = true

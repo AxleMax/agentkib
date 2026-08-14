@@ -17,6 +17,7 @@ pub enum RefreshKind {
     Insights,
     Gateways,
     Quota,
+    Storage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -114,6 +115,7 @@ impl RefreshCoordinator {
             RefreshKind::Insights,
             RefreshKind::Gateways,
             RefreshKind::Quota,
+            RefreshKind::Storage,
         ]
         .into_iter()
         .map(|kind| (kind, JobRecord::idle(kind)))
@@ -282,7 +284,10 @@ impl RefreshCoordinator {
                 .await
                 .map_err(|_| anyhow::anyhow!("background refresh lane is closed"))?;
             _background_permit = Some(permit);
-            if matches!(kind, RefreshKind::Discovery | RefreshKind::Insights) {
+            if matches!(
+                kind,
+                RefreshKind::Discovery | RefreshKind::Insights | RefreshKind::Storage
+            ) {
                 let permit = Arc::clone(&self.disk_heavy_lane)
                     .acquire_owned()
                     .await
@@ -303,9 +308,10 @@ impl RefreshCoordinator {
         self.schedule_tray_refresh(&app);
 
         let blocking_app = app.clone();
+        let blocking_request_id = request_id.to_string();
         let write_lock = Arc::clone(&self.write_lock);
         tauri::async_runtime::spawn_blocking(move || {
-            super::run_refresh_job(&blocking_app, kind, &write_lock)
+            super::run_refresh_job(&blocking_app, kind, &blocking_request_id, &write_lock)
         })
         .await
         .map_err(|error| anyhow::anyhow!("refresh worker join failed: {error}"))
@@ -326,6 +332,61 @@ impl RefreshCoordinator {
         self.schedule_tray_refresh(app);
     }
 
+    pub fn set_progress(
+        &self,
+        app: &AppHandle,
+        kind: RefreshKind,
+        request_id: &str,
+        current: u64,
+        total: u64,
+    ) {
+        if self.update_active(kind, request_id, |record| {
+            record.status.progress_current = Some(current);
+            record.status.progress_total = Some(total);
+        }) {
+            self.emit_status(app, kind);
+        }
+    }
+
+    pub fn is_active(&self, kind: RefreshKind) -> bool {
+        self.jobs
+            .lock()
+            .expect("refresh job state lock is poisoned")
+            .get(&kind)
+            .is_some_and(|record| {
+                matches!(
+                    record.status.state,
+                    RefreshState::Queued | RefreshState::Running
+                )
+            })
+    }
+
+    pub fn cancel_queued(self: &Arc<Self>, app: &AppHandle, kind: RefreshKind) -> bool {
+        let cancelled = {
+            let mut jobs = self
+                .jobs
+                .lock()
+                .expect("refresh job state lock is poisoned");
+            let record = jobs
+                .get_mut(&kind)
+                .expect("refresh kind must be registered");
+            if record.status.state != RefreshState::Queued {
+                false
+            } else {
+                record.status.state = RefreshState::Succeeded;
+                record.status.request_id = None;
+                record.status.finished_at = Some(Utc::now());
+                record.status.error = None;
+                true
+            }
+        };
+        if cancelled {
+            self.emit_status(app, kind);
+            self.schedule_tray_refresh(app);
+        }
+        cancelled
+    }
+
     fn complete_active(
         &self,
         kind: RefreshKind,
@@ -338,7 +399,9 @@ impl RefreshCoordinator {
                 record.failure_count = 0;
                 record.status.state = RefreshState::Succeeded;
                 record.status.finished_at = Some(now);
-                record.status.progress_current = Some(1);
+                if kind != RefreshKind::Storage {
+                    record.status.progress_current = record.status.progress_total;
+                }
                 record.status.error = None;
                 record.status.next_allowed_at = None;
             }
@@ -531,6 +594,30 @@ mod tests {
         assert_eq!(background_concurrency(4), 1);
         assert_eq!(background_concurrency(5), 2);
         assert_eq!(background_concurrency(64), 2);
+    }
+
+    #[test]
+    fn storage_refresh_is_registered_and_coalesced() {
+        let coordinator = RefreshCoordinator::default();
+        let now = Utc::now();
+        assert!(
+            coordinator
+                .statuses()
+                .iter()
+                .any(|status| status.kind == RefreshKind::Storage)
+        );
+        assert_eq!(
+            coordinator
+                .reserve(RefreshKind::Storage, "storage".into(), now, true)
+                .disposition,
+            RefreshDisposition::Queued,
+        );
+        assert_eq!(
+            coordinator
+                .reserve(RefreshKind::Storage, "duplicate".into(), now, true)
+                .disposition,
+            RefreshDisposition::AlreadyRunning,
+        );
     }
 
     #[test]

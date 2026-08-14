@@ -38,6 +38,8 @@ vi.mock("./api", () => ({
     setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark" })),
     requestRefresh: vi.fn().mockResolvedValue({ kind: "discovery", disposition: "queued", request_id: "test-refresh" }),
     refreshStatus: vi.fn().mockResolvedValue([]),
+    storageOverview: vi.fn().mockResolvedValue({ total_workspace_count: 1, scanned_workspace_count: 0, allocated_bytes: 0, logical_bytes: 0, regenerable_bytes: 0, agent_asset_bytes: 0, workspaces: [] }),
+    cancelStorageScan: vi.fn().mockResolvedValue(true),
     discoverWorkspaces: vi.fn().mockResolvedValue({ kind: "discovery", disposition: "queued", request_id: "test-refresh" }),
     insightsSummary: vi.fn().mockResolvedValue({ total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" }),
     insightsHeatmap: vi.fn().mockResolvedValue([{ date: "2026-08-13", tokens: 120000, my_commits: 8, all_commits: 20, attributed_commits: 3, sessions: 12, quality: "exact" }]),
@@ -151,6 +153,20 @@ describe("AgentKib desktop", () => {
 
     await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledWith("discovery", true));
     expect(screen.getByRole("button", { name: /Project \/tmp\/project/ })).toBeInTheDocument();
+  });
+
+  it("opens workspace storage from cache and only scans after confirmation", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*1/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Space" }));
+
+    expect(await screen.findByText("Workspace space has not been scanned")).toBeInTheDocument();
+    expect(api.requestRefresh).not.toHaveBeenCalledWith("storage", true);
+    fireEvent.click(screen.getByRole("button", { name: "Start Scan" }));
+    await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledWith("storage", true));
   });
 
   it("defers discovery cache reads while the window is hidden", async () => {

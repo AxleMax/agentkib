@@ -17,6 +17,7 @@ agentkib-adapters.workspace = true
 agentkib-discovery.workspace = true
 agentkib-insights.workspace = true
 agentkib-quota.workspace = true
+agentkib-storage.workspace = true
 agentkib-gateways.workspace = true
 agentkib-mcp.workspace = true
 agentkib-store.workspace = true

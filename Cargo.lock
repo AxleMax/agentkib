@@ -65,6 +65,7 @@ dependencies = [
  "agentkib-insights",
  "agentkib-mcp",
  "agentkib-quota",
+ "agentkib-storage",
  "agentkib-store",
  "anyhow",
  "chrono",
@@ -173,12 +174,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentkib-storage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
 name = "agentkib-store"
 version = "0.1.0"
 dependencies = [
  "agentkib-core",
  "agentkib-insights",
  "agentkib-quota",
+ "agentkib-storage",
  "anyhow",
  "chrono",
  "dirs",

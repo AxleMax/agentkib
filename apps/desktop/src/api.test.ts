@@ -58,6 +58,17 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("refresh_quota");
   });
 
+  it("keeps workspace storage scanning explicit", async () => {
+    vi.mocked(invoke).mockResolvedValue({ total_workspace_count: 2, scanned_workspace_count: 0, workspaces: [] });
+
+    await api.storageOverview();
+    expect(invoke).toHaveBeenCalledWith("get_storage_overview");
+
+    vi.mocked(invoke).mockResolvedValue({ kind: "storage", disposition: "queued", request_id: "storage-1", status: { kind: "storage", state: "queued" } });
+    await api.requestRefresh("storage", true);
+    expect(invoke).toHaveBeenCalledWith("request_refresh", { kind: "storage", force: true });
+  });
+
   it("persists quota popover display preferences through desktop preferences", async () => {
     const preferences = {
       hidden_providers: ["claude"],

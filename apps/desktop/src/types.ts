@@ -66,10 +66,16 @@ export interface RepositoryCommitBreakdown { repository_group_id: string; name: 
 export interface Achievement { code: string; category: string; threshold: number; progress: number; unlocked_at?: string }
 export interface ProviderStatus { agent: AgentKind; available: boolean; quality: UsageQuality; coverage_from?: string; coverage_to?: string; imported_events: number; error_key?: string; error_params?: Record<string, string>; error?: string }
 export interface InsightsStatus { providers: ProviderStatus[]; refreshed_at?: string; running: boolean }
-export type RefreshKind = "discovery" | "insights" | "gateways" | "quota";
+export type RefreshKind = "discovery" | "insights" | "gateways" | "quota" | "storage";
 export type RefreshState = "idle" | "queued" | "running" | "succeeded" | "failed" | "backoff";
 export interface RefreshReceipt { kind: RefreshKind; disposition: "queued" | "already-running" | "backoff"; request_id: string; status: RefreshJobStatus }
 export interface RefreshJobStatus { kind: RefreshKind; state: RefreshState; request_id?: string; queued_at?: string; started_at?: string; finished_at?: string; progress_current?: number; progress_total?: number; error?: string; next_allowed_at?: string }
+export type StorageMeasurement = "allocated-exact" | "logical-estimate";
+export type StorageQuality = "complete" | "partial" | "unavailable";
+export type StorageBreakdownKind = "directory" | "root-files";
+export interface StorageBreakdown { name: string; relative_path: string; kind: StorageBreakdownKind; allocated_bytes: number; logical_bytes: number; regenerable_bytes: number; agent_asset_bytes: number }
+export interface WorkspaceStorage { workspace_id: string; name: string; path: string; measurement: StorageMeasurement; quality: StorageQuality; allocated_bytes: number; logical_bytes: number; regenerable_bytes: number; agent_asset_bytes: number; file_count: number; directory_count: number; breakdown: StorageBreakdown[]; last_attempt_at: string; last_success_at?: string; error_key?: string; error_detail?: string }
+export interface StorageOverview { total_workspace_count: number; scanned_workspace_count: number; allocated_bytes: number; logical_bytes: number; regenerable_bytes: number; agent_asset_bytes: number; last_scanned_at?: string; workspaces: WorkspaceStorage[] }
 export interface InsightsView { summary: InsightsSummary; heatmap: HeatmapPoint[]; agents: AgentUsageBreakdown[]; models: ModelUsageBreakdown[]; workspaces: WorkspaceUsageBreakdown[]; repositories: RepositoryCommitBreakdown[]; achievements: Achievement[]; status: InsightsStatus }
 export interface GitIdentitySummary { id: string; label: string; source: string; enabled: boolean }
 export type QuotaBackend = "codex-bar-cli" | "win-codex-bar";

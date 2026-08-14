@@ -1,0 +1,13 @@
+[package]
+name = "agentkib-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
