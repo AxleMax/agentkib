@@ -69,6 +69,7 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup();
   vi.mocked(api.workspaces).mockResolvedValue([]);
+  vi.mocked(api.achievements).mockResolvedValue([]);
 });
 
 describe("AgentKib desktop", () => {
@@ -193,6 +194,29 @@ describe("AgentKib desktop", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Token" }));
     expect(await screen.findByText("Agent Usage")).toBeInTheDocument();
     expect(screen.queryByText("Activity Heatmap")).not.toBeInTheDocument();
+  });
+
+  it("groups achievements into expandable milestone paths", async () => {
+    vi.mocked(api.achievements).mockResolvedValue([
+      { code: "token-100000", category: "token", threshold: 100_000, progress: 120_000, unlocked_at: "2026-08-01T00:00:00Z" },
+      { code: "token-1000000", category: "token", threshold: 1_000_000, progress: 120_000 },
+      { code: "commit-1", category: "commit", threshold: 1, progress: 8, unlocked_at: "2026-08-01T00:00:00Z" },
+      { code: "commit-10", category: "commit", threshold: 10, progress: 8 },
+      { code: "streak-3", category: "streak", threshold: 3, progress: 4, unlocked_at: "2026-08-01T00:00:00Z" },
+      { code: "agents-2", category: "agents", threshold: 2, progress: 1 },
+    ]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Achievements" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Milestones" }));
+
+    expect(await screen.findByRole("heading", { name: "Achievement Milestones" })).toBeInTheDocument();
+    expect(screen.getAllByText("Token Launch")).toHaveLength(2);
+    expect(screen.getByText("Next · 1M Token")).toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(4);
+    expect(screen.queryByText("Record 100K Token")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByText("Milestone history")[0]);
+    expect(screen.getAllByText(/Unlocked/)).toHaveLength(3);
   });
 
   it.each([

@@ -1,0 +1,47 @@
+import { describe, expect, it } from "vitest";
+import { buildAchievementTracks, calculateAchievementTrackProgress } from "./achievements";
+import type { Achievement } from "./types";
+
+function achievement(category: string, threshold: number, progress: number, unlocked = false): Achievement {
+  return { code: `${category}-${threshold}`, category, threshold, progress, unlocked_at: unlocked ? "2026-01-01T00:00:00Z" : undefined };
+}
+
+describe("achievement milestone tracks", () => {
+  it("groups milestones in a stable category and threshold order", () => {
+    const tracks = buildAchievementTracks([
+      achievement("commit", 10, 12, true),
+      achievement("token", 1_000_000, 2_000_000, true),
+      achievement("token", 100_000, 2_000_000, true),
+      achievement("agents", 2, 1),
+    ]);
+
+    expect(tracks.map((track) => track.category)).toEqual(["token", "commit", "streak", "agents"]);
+    expect(tracks[0].milestones.map((milestone) => milestone.threshold)).toEqual([100_000, 1_000_000]);
+    expect(tracks[0].completed).toBe(2);
+    expect(tracks[3].next?.threshold).toBe(2);
+  });
+
+  it("calculates progress inside the current threshold segment", () => {
+    const milestones = [
+      achievement("streak", 3, 19, true),
+      achievement("streak", 7, 19, true),
+      achievement("streak", 30, 19),
+      achievement("streak", 100, 19),
+    ];
+
+    expect(calculateAchievementTrackProgress(milestones, 19)).toBeCloseTo((2 + 12 / 23) / 4);
+  });
+
+  it("handles not-started and completed tracks", () => {
+    const milestones = [achievement("agents", 2, 0), achievement("agents", 4, 0)];
+    expect(calculateAchievementTrackProgress(milestones, 0)).toBe(0);
+    expect(calculateAchievementTrackProgress(milestones.map((item) => ({ ...item, progress: 5 })), 5)).toBe(1);
+  });
+
+  it("retains a permanently unlocked milestone if current progress drops", () => {
+    const milestones = [achievement("commit", 10, 5, true), achievement("commit", 100, 5)];
+    const track = buildAchievementTracks(milestones).find((value) => value.category === "commit")!;
+    expect(track.completed).toBe(1);
+    expect(track.next?.threshold).toBe(100);
+  });
+});

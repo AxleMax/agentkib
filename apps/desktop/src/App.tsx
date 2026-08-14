@@ -3,8 +3,9 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Activity, Award, Bot, Boxes, Brain, CalendarDays, Check, ChevronRight, CircleAlert, Code2, Copy, FileCode2, Flame, FolderGit2, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, MoreHorizontal, Pencil, PlugZap, RefreshCw, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
+import { Activity, Award, Bot, Boxes, Brain, CalendarDays, Check, ChevronRight, CircleAlert, Code2, Copy, FileCode2, Flame, FolderGit2, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, MoreHorizontal, Network, Pencil, PlugZap, RefreshCw, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 import { api } from "./api";
+import { achievementReached, buildAchievementTracks, type AchievementCategory, type AchievementTrack } from "./achievements";
 import { AgentIcon } from "./components/AgentIcon";
 import { AppSidebar, type SidebarEntry } from "./components/AppSidebar";
 import { SettingsSidebar, settingsSectionLabel, type SettingsSection } from "./components/SettingsSidebar";
@@ -205,7 +206,7 @@ export function App() {
     {globalPage === "workspaces" && <WorkspacesPage workspaces={workspaces} assetCounts={assetCounts} onOpen={openWorkspace} onRefresh={async (id) => { await api.refreshWorkspace(id); await loadGlobal(); }} onExclude={async (id) => { if (!window.confirm(tr("workspace.ignoreConfirm"))) return; await api.excludeWorkspace(id); await loadGlobal(); }} />}
     {globalPage === "agents" && <AgentsPage installations={installations} assets={catalog.filter((asset) => asset.scope === "agent-home")} workspaces={workspaces} remoteGateways={remoteGateways} insightsStatus={insightsStatus} onOpen={openWorkspace} />}
     {globalPage === "catalog" && <GlobalAssetsPage section={assetSection} onSection={setAssetSection} assets={catalog} workspaces={workspaces} memories={globalMemories} runtime={runtime} onReload={loadGlobal} onRuntimeChanged={setRuntime} onOpen={(id) => { const workspace = workspaces.find((item) => item.id === id); if (workspace) void openWorkspace(workspace); }} onMigrationPlanned={async (workspacePath, planned) => { const workspace = workspaces.find((item) => item.path === workspacePath); if (!workspace) return; await openWorkspace(workspace); setChangeSet(planned); setPage("changes"); }} />}
-    {globalPage === "insights" && <div className="insights-host" data-view={insightsSection}><div className="section-tabs insights-section-tabs" role="tablist" aria-label={tr("nav.insights")} onKeyDown={handleTabKey}>{(["overview", "tokens", "commits", "badges", "sources"] as InsightsSection[]).map((section) => <button key={section} role="tab" aria-selected={insightsSection === section} className={insightsSection === section ? "active" : ""} onClick={() => setInsightsSection(section)}>{tr(`insights.section.${section}`)}</button>)}</div><InsightsPage section={insightsSection} workspaces={workspaces} onSummary={setInsightsSummary} /></div>}
+    {globalPage === "insights" && <div className="insights-host" data-view={insightsSection}><div className="section-tabs insights-section-tabs" role="tablist" aria-label={tr("nav.insights")} onKeyDown={handleTabKey}>{(["overview", "tokens", "commits", "milestones", "sources"] as InsightsSection[]).map((section) => <button key={section} role="tab" aria-selected={insightsSection === section} className={insightsSection === section ? "active" : ""} onClick={() => setInsightsSection(section)}>{tr(`insights.section.${section}`)}</button>)}</div><InsightsPage section={insightsSection} workspaces={workspaces} onSummary={setInsightsSummary} /></div>}
   </section></main></div>;
 
   async function addScanRootFromDialog() { const selected = await open({ directory: true, multiple: false, title: tr("dialog.addScanRoot") }); if (typeof selected === "string") { await api.addScanRoot(selected, 5); await refreshDiscovery(); } }
@@ -292,7 +293,7 @@ function CatalogPage({ assets, workspaces, onOpen }: { assets: CatalogAssetGroup
 }
 
 type HeatmapMetric = "tokens" | "my_commits" | "all_commits" | "attributed_commits" | "sessions";
-type InsightsSection = "overview" | "tokens" | "commits" | "badges" | "sources";
+type InsightsSection = "overview" | "tokens" | "commits" | "milestones" | "sources";
 
 function InsightsPage({ section, workspaces, onSummary }: { section: InsightsSection; workspaces: WorkspaceSummary[]; onSummary: (summary: InsightsSummary) => void }) {
   const [agent, setAgent] = useState<"all" | AgentKind>("all");
@@ -339,7 +340,7 @@ function InsightsPage({ section, workspaces, onSummary }: { section: InsightsSec
   const repositoryOptions = [...new Map(workspaces.filter((value) => value.repository_group_id).map((value) => [value.repository_group_id!, value.name])).entries()];
   const showTokenFilters = section === "overview" || section === "tokens";
   const showCommitFilters = section === "overview" || section === "commits";
-  const showRange = !["badges", "sources"].includes(section);
+  const showRange = !["milestones", "sources"].includes(section);
   return <div className="stack insights-page">
     {error && <div className="alert"><CircleAlert size={16} />{error}</div>}
     <div className="insights-filters">
@@ -361,7 +362,7 @@ function InsightsPage({ section, workspaces, onSummary }: { section: InsightsSec
     </>}
     {summary && section === "tokens" && <><div className="panel"><div className="panel-head"><h2>{tr("insights.agentUsage")}</h2></div><div className="agent-usage-list">{agents.map((value) => <div key={value.agent}><AgentIcon agent={value.agent} /><span><strong>{agentLabels[value.agent]}</strong><small>{value.session_count} {tr("common.sessions")} · {qualityLabel(value.quality)}</small></span><div><strong>{formatCompact(value.total_tokens)}</strong><small>Token</small></div></div>)}{!agents.length && <p>{tr("insights.noToken")}</p>}</div></div><div className="two-col insight-columns"><BreakdownPanel title={tr("insights.modelUsage")} subtitle="" values={models.map((value) => ({ key: value.model, label: value.model, detail: `${value.session_count} ${tr("common.sessions")}`, value: value.total_tokens }))} /><BreakdownPanel title={tr("insights.workspaceUsage")} subtitle="" values={workspaceUsage.map((value) => ({ key: value.workspace_id ?? "unlinked", label: value.name, detail: `${value.session_count} ${tr("common.sessions")}`, value: value.total_tokens }))} /></div></>}
     {summary && section === "commits" && <div className="panel"><div className="panel-head"><h2>{tr("insights.repositoryCommits")}</h2></div><div className="repository-usage-list">{repositories.slice(0, 20).map((value) => <div key={value.repository_group_id}><span><strong>{value.name}</strong><small>{tr("insights.repositoryDetail", { all: value.all_commits, attributed: value.attributed_commits })}</small></span><strong>{value.my_commits}</strong></div>)}{!repositories.length && <p>{tr("insights.noCommits")}</p>}</div></div>}
-    {section === "badges" && <div className="panel"><div className="panel-head"><h2>{tr("insights.badges")}</h2><span className="badge">{achievements.filter((value) => value.unlocked_at).length} / {achievements.length}</span></div><div className="achievement-grid">{achievements.map((value) => { const key = achievementTranslationKey(value.code); return <div key={value.code} className={value.unlocked_at ? "achievement-card unlocked" : "achievement-card"}><div><Award size={20} /></div><strong>{tr(`achievements.${key}.title`)}</strong><span>{tr(`achievements.${key}.description`)}</span><small>{value.unlocked_at ? tr("insights.unlockedAt", { date: formatDateTime(value.unlocked_at) }) : `${formatCompact(Math.min(value.progress, value.threshold))} / ${formatCompact(value.threshold)}`}</small></div>; })}</div></div>}
+    {section === "milestones" && <MilestonePaths achievements={achievements} />}
     {section === "sources" && <div className="panel provider-panel"><div className="panel-head"><h2>{tr("insights.providers")}</h2><span className="badge">{status?.refreshed_at ? tr("home.updated", { time: relativeTime(status.refreshed_at) }) : tr("insights.notRefreshed")}</span></div><div className="provider-grid">{status?.providers.map((provider) => <ProviderRow key={provider.agent} provider={provider} />)}</div></div>}
   </div>;
 }
@@ -370,6 +371,60 @@ function HeatmapMonths({ points, padding }: { points: HeatmapPoint[]; padding: n
   const columns = Math.max(1, Math.ceil((padding + points.length) / 7));
   const markers = buildHeatmapMonthMarkers(points, padding, document.documentElement.lang || "en-US");
   return <div className="heatmap-months" style={{ gridTemplateColumns: `repeat(${columns}, 11px)` }}>{markers.map((marker) => <span key={marker.key} style={{ gridColumn: marker.column, gridRow: 1 }}>{marker.label}</span>)}</div>;
+}
+
+const milestoneIcons: Record<AchievementCategory, typeof Activity> = {
+  token: Sparkles,
+  commit: GitCommitHorizontal,
+  streak: Flame,
+  agents: Network,
+};
+
+function MilestonePaths({ achievements }: { achievements: Achievement[] }) {
+  if (!achievements.length) return <div className="panel"><Empty compact icon={Award} title={tr("insights.preparing")} text="" /></div>;
+  const tracks = buildAchievementTracks(achievements).filter((track) => track.milestones.length);
+  const completed = tracks.reduce((count, track) => count + track.completed, 0);
+  return <div className="panel milestone-panel">
+    <div className="panel-head"><h2>{tr("insights.milestones")}</h2><span className="badge">{completed} / {achievements.length}</span></div>
+    <div className="milestone-paths">{tracks.map((track) => <MilestonePath key={track.category} track={track} />)}</div>
+  </div>;
+}
+
+function MilestonePath({ track }: { track: AchievementTrack }) {
+  const Icon = milestoneIcons[track.category];
+  const progressPercent = Math.round(track.progressRatio * 100);
+  return <article className={`milestone-path ${track.next ? "in-progress" : "complete"}`}>
+    <header>
+      <span className="milestone-path-icon"><Icon size={19} /></span>
+      <div className="milestone-path-title"><h3>{tr(`milestones.category.${track.category}`)}</h3><strong>{formatMilestoneValue(track.category, track.progress)}</strong></div>
+      <div className="milestone-path-next"><span>{tr("milestones.completed", { completed: track.completed, total: track.milestones.length })}</span><strong>{track.next ? tr("milestones.next", { target: formatMilestoneValue(track.category, track.next.threshold) }) : tr("milestones.highest")}</strong></div>
+    </header>
+    <div className="milestone-rail-scroll">
+      <div className="milestone-rail" style={{ gridTemplateColumns: `repeat(${Math.max(1, track.milestones.length)}, minmax(92px, 1fr))` }}>
+        <div className="milestone-progress" role="progressbar" aria-label={tr("milestones.progress", { category: tr(`milestones.category.${track.category}`) })} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><i style={{ width: `${progressPercent}%` }} /></div>
+        {track.milestones.map((milestone) => {
+          const reached = achievementReached(milestone);
+          const current = track.next?.code === milestone.code;
+          return <div className={`milestone-node${reached ? " reached" : ""}${current ? " current" : ""}`} key={milestone.code}>
+            <span>{reached ? <Check size={13} /> : ""}</span>
+            <strong>{formatMilestoneValue(track.category, milestone.threshold)}</strong>
+            <small>{tr(`achievements.${achievementTranslationKey(milestone.code)}.title`)}</small>
+          </div>;
+        })}
+      </div>
+    </div>
+    <details className="milestone-history">
+      <summary>{tr("milestones.history")}<ChevronRight size={14} /></summary>
+      <div>{track.milestones.map((milestone) => {
+        const current = track.next?.code === milestone.code;
+        return <div key={milestone.code}><span className={achievementReached(milestone) ? "reached" : current ? "current" : "locked"}>{achievementReached(milestone) ? <Check size={13} /> : null}</span><strong>{tr(`achievements.${achievementTranslationKey(milestone.code)}.title`)}</strong><small>{formatMilestoneValue(track.category, milestone.threshold)}</small><time>{milestone.unlocked_at ? tr("insights.unlockedAt", { date: formatDateTime(milestone.unlocked_at) }) : current ? tr("milestones.currentProgress", { progress: formatMilestoneValue(track.category, track.progress) }) : tr("milestones.locked")}</time></div>;
+      })}</div>
+    </details>
+  </article>;
+}
+
+function formatMilestoneValue(category: AchievementCategory, value: number) {
+  return tr(`milestones.value.${category}`, { value: formatCompact(value) });
 }
 
 function ProviderRow({ provider }: { provider: NonNullable<InsightsStatus["providers"]>[number] }) {
@@ -564,9 +619,10 @@ function localizedAssetSummary(asset: CatalogAsset | CatalogAssetGroup | Workspa
 function achievementTranslationKey(code: string) {
   return ({
     "token-100000": "token_100k", "token-1000000": "token_1m", "token-10000000": "token_10m", "token-100000000": "token_100m",
-    "commit-1": "commit_1", "commit-10": "commit_10", "commit-100": "commit_100", "commit-1000": "commit_1000",
-    "streak-3": "streak_3", "streak-7": "streak_7", "streak-30": "streak_30", "streak-100": "streak_100",
-    "agents-2": "agents_2", "agents-4": "agents_4",
+    "token-1000000000": "token_1b", "token-10000000000": "token_10b", "token-100000000000": "token_100b", "token-1000000000000": "token_1t",
+    "commit-1": "commit_1", "commit-10": "commit_10", "commit-100": "commit_100", "commit-1000": "commit_1000", "commit-5000": "commit_5000", "commit-10000": "commit_10000",
+    "streak-3": "streak_3", "streak-7": "streak_7", "streak-30": "streak_30", "streak-100": "streak_100", "streak-365": "streak_365",
+    "agents-2": "agents_2", "agents-4": "agents_4", "agents-5": "agents_5",
   } as Record<string, string>)[code] ?? code;
 }
 function formatBytes(bytes: number) { return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`; }

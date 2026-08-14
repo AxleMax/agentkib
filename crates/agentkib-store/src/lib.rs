@@ -1897,16 +1897,25 @@ fn calculate_streaks(active: &BTreeSet<NaiveDate>, today: NaiveDate) -> (u64, u6
 
 fn achievement_definitions(summary: &InsightsSummary, agent_count: u64) -> Vec<Achievement> {
     let mut output = Vec::new();
-    for threshold in [100_000, 1_000_000, 10_000_000, 100_000_000] {
+    for threshold in [
+        100_000,
+        1_000_000,
+        10_000_000,
+        100_000_000,
+        1_000_000_000,
+        10_000_000_000,
+        100_000_000_000,
+        1_000_000_000_000,
+    ] {
         output.push(achievement("token", threshold, summary.total_tokens));
     }
-    for threshold in [1, 10, 100, 1_000] {
+    for threshold in [1, 10, 100, 1_000, 5_000, 10_000] {
         output.push(achievement("commit", threshold, summary.my_commits));
     }
-    for threshold in [3, 7, 30, 100] {
+    for threshold in [3, 7, 30, 100, 365] {
         output.push(achievement("streak", threshold, summary.longest_streak));
     }
-    for threshold in [2, 4] {
+    for threshold in [2, 4, 5] {
         output.push(achievement("agents", threshold, agent_count));
     }
     output
@@ -2647,5 +2656,78 @@ mod tests {
         .into_iter()
         .collect();
         assert_eq!(calculate_streaks(&active, today), (3, 3));
+    }
+
+    #[test]
+    fn achievement_definitions_are_ordered_milestone_tracks() {
+        let summary = InsightsSummary {
+            total_tokens: 150_000_000_000,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_tokens: 0,
+            reasoning_tokens: 0,
+            session_count: 0,
+            my_commits: 1_763,
+            all_commits: 0,
+            attributed_commits: 0,
+            active_days: 0,
+            current_streak: 0,
+            longest_streak: 19,
+            quality: UsageQuality::Exact,
+            coverage_from: None,
+            coverage_to: None,
+            refreshed_at: None,
+        };
+        let definitions = achievement_definitions(&summary, 4);
+        let thresholds = |category: &str| {
+            definitions
+                .iter()
+                .filter(|value| value.category == category)
+                .map(|value| (value.threshold, value.progress))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            thresholds("token"),
+            vec![
+                (100_000, summary.total_tokens),
+                (1_000_000, summary.total_tokens),
+                (10_000_000, summary.total_tokens),
+                (100_000_000, summary.total_tokens),
+                (1_000_000_000, summary.total_tokens),
+                (10_000_000_000, summary.total_tokens),
+                (100_000_000_000, summary.total_tokens),
+                (1_000_000_000_000, summary.total_tokens),
+            ]
+        );
+        assert_eq!(thresholds("commit").last(), Some(&(10_000, 1_763)));
+        assert_eq!(thresholds("streak").last(), Some(&(365, 19)));
+        assert_eq!(thresholds("agents"), vec![(2, 4), (4, 4), (5, 4)]);
+    }
+
+    #[test]
+    fn achievement_refresh_does_not_overwrite_existing_unlocks() {
+        let dir = tempdir().unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let original = "2025-01-02T00:00:00+00:00";
+        store
+            .connection
+            .execute(
+                "INSERT INTO achievement_unlocks(code, unlocked_at, rule_version) VALUES ('commit-1', ?1, 1)",
+                params![original],
+            )
+            .unwrap();
+
+        store.refresh_achievement_unlocks().unwrap();
+
+        let unlocked_at: String = store
+            .connection
+            .query_row(
+                "SELECT unlocked_at FROM achievement_unlocks WHERE code = 'commit-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unlocked_at, original);
     }
 }
