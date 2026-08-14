@@ -2,6 +2,10 @@ import type { QuotaAccount, QuotaPopoverPreferences, QuotaProvider, QuotaWindow,
 
 export type QuotaSeverity = "healthy" | "warning" | "danger";
 
+// CodexBar may report providers that AgentKib has not verified end to end yet.
+// Keep parsing their data, but do not present them as broken integrations.
+const unsupportedQuotaProviderIds = new Set(["antigravity", "gemini", "kiro"]);
+
 export interface QuotaDisplayWindow {
   key: string;
   selector: QuotaWindowSelector;
@@ -10,6 +14,10 @@ export interface QuotaDisplayWindow {
   account?: QuotaAccount;
   accountLabel?: string;
   window: QuotaWindow;
+}
+
+export function isQuotaProviderSupported(provider: Pick<QuotaProvider, "id">) {
+  return !unsupportedQuotaProviderIds.has(provider.id.trim().toLocaleLowerCase());
 }
 
 export function quotaWindowKey(selector: QuotaWindowSelector) {

@@ -79,6 +79,30 @@ describe("QuotaPage", () => {
     expect(screen.getByRole("tab")).toHaveTextContent("Claude Code");
   });
 
+  it("hides providers that AgentKib has not verified", async () => {
+    quotaSnapshot.mockResolvedValue({
+      schema_version: 1,
+      backend: "codex-bar-cli",
+      generated_at: "2026-08-14T02:00:00Z",
+      fetched_at: "2026-08-14T02:00:00Z",
+      stale_after_seconds: 180,
+      freshness: "fresh",
+      providers: [
+        provider("codex", "Codex", 72, "codex@example.com"),
+        provider("antigravity", "Antigravity", 60, "antigravity@example.com"),
+        provider("gemini", "Gemini", 50, "gemini@example.com"),
+        provider("kiro", "Kiro", 40, "kiro@example.com"),
+      ],
+    });
+
+    render(<QuotaPage />);
+
+    expect(await screen.findByRole("tab", { name: /Codex/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Antigravity/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Gemini/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Kiro/ })).not.toBeInTheDocument();
+  });
+
   it("restores an already queued quota refresh without starting another one", async () => {
     quotaSnapshot.mockResolvedValue(undefined);
     refreshStatus.mockResolvedValue([{ kind: "quota", state: "queued", request_id: "existing" }]);

@@ -36,7 +36,7 @@ beforeEach(async () => {
     fetched_at: "2026-08-14T02:00:00Z",
     stale_after_seconds: 300,
     freshness: "fresh",
-    providers: [provider("codex", "Codex", 72), provider("claude", "Claude", 8), { ...provider("gemini", "Gemini", 50), windows: [] }],
+    providers: [provider("codex", "Codex", 72), provider("claude", "Claude", 8), provider("gemini", "Gemini", 50)],
   });
 });
 

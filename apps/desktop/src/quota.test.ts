@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flattenQuotaWindows, providerHasPartialData, providerIsUnavailable, visibleQuotaWindows } from "./quota";
+import { flattenQuotaWindows, isQuotaProviderSupported, providerHasPartialData, providerIsUnavailable, visibleQuotaWindows } from "./quota";
 import type { QuotaProvider } from "./types";
 
 describe("quota display model", () => {
@@ -18,6 +18,14 @@ describe("quota display model", () => {
 
     expect(providerHasPartialData(provider)).toBe(true);
     expect(providerIsUnavailable(provider)).toBe(false);
+  });
+
+  it.each(["antigravity", "gemini", "kiro"])("does not expose unsupported provider %s", (id) => {
+    expect(isQuotaProviderSupported({ id })).toBe(false);
+  });
+
+  it("keeps unknown providers available for future dashboard-v1 integrations", () => {
+    expect(isQuotaProviderSupported({ id: "custom-coding-plan" })).toBe(true);
   });
 });
 

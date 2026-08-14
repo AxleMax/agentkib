@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { ExternalLink, Gauge, RefreshCw, Settings2 } from "lucide-react";
 import { api } from "../api";
 import { changeLocale, formatRelativeTime, localizeMessage, tr } from "../i18n";
-import { compareQuotaProviders, lowestRemaining, visibleQuotaWindows } from "../quota";
+import { compareQuotaProviders, isQuotaProviderSupported, lowestRemaining, visibleQuotaWindows } from "../quota";
 import { applyTheme } from "../theme";
 import type { EffectiveTheme, QuotaPopoverPreferences, QuotaProvider, QuotaSnapshot, RefreshJobStatus } from "../types";
 import { ProviderIcon, QuotaWindowRow } from "./QuotaDisplay";
@@ -119,6 +119,7 @@ export function QuotaPopover() {
   }, []);
 
   const providers = useMemo(() => (snapshot?.providers ?? [])
+    .filter(isQuotaProviderSupported)
     .filter((provider) => visibleQuotaWindows(provider, preferences).length > 0)
     .sort(compareQuotaProviders), [preferences, snapshot]);
 

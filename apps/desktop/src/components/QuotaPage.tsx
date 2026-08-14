@@ -6,6 +6,7 @@ import { formatRelativeTime, localizeMessage, tr } from "../i18n";
 import {
   compareQuotaProviders,
   flattenQuotaWindows,
+  isQuotaProviderSupported,
   lowestRemaining,
   providerHasPartialData,
   providerIsUnavailable,
@@ -152,6 +153,7 @@ export function QuotaPage({
   const providers = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return [...(snapshot?.providers ?? [])]
+      .filter(isQuotaProviderSupported)
       .filter((provider) => {
         const haystack = [provider.name, provider.id, provider.identity?.account_email, provider.identity?.plan]
           .filter(Boolean).join(" ").toLocaleLowerCase();
@@ -313,7 +315,7 @@ function QuotaDisplaySettings({ snapshot, preferences, onChange, onClose }: { sn
   return <aside className="quota-display-settings" role="dialog" aria-modal="false" aria-label={tr("quota.popoverSettings")}>
     <header><div><strong>{tr("quota.popoverSettings")}</strong><span>{tr("quota.popoverSettingsHint")}</span></div><button className="ghost icon-only" type="button" onClick={onClose} aria-label={tr("common.close")}><X size={15} /></button></header>
     <div className="quota-display-options">
-      {snapshot.providers.map((provider) => <QuotaDisplayProviderOption
+      {snapshot.providers.filter(isQuotaProviderSupported).map((provider) => <QuotaDisplayProviderOption
         key={provider.id}
         provider={provider}
         preferences={preferences}
