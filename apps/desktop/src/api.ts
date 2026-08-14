@@ -18,6 +18,7 @@ export const api = {
   reviewMemory: (id: string, status: MemoryStatus, editedContent?: string) => invoke<MemoryRecord>("review_memory", { id, status, editedContent }),
   runtime: () => invoke<RuntimeInfo>("runtime_info"),
   openFilesAndFoldersSettings: () => invoke<void>("open_files_and_folders_settings"),
+  quitApp: () => invoke<void>("quit_app"),
   setCloseBehavior: (behavior?: CloseBehavior) => invoke<void>("set_close_behavior", { behavior: behavior ?? null }),
   setLocale: (preference: LocalePreference) => invoke<RuntimeInfo>("set_locale", { preference }),
   setThemePreference: (preference: ThemePreference) => invoke<RuntimeInfo>("set_theme_preference", { preference }),

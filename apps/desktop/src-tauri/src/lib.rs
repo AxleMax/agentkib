@@ -1545,6 +1545,15 @@ fn request_real_exit(app: &AppHandle, lifecycle: &LifecycleState) {
     app.exit(0);
 }
 
+fn request_guarded_exit(app: &AppHandle) {
+    let _ = app.emit("agentkib:quit-requested", ());
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle, lifecycle: tauri::State<'_, Arc<LifecycleState>>) {
+    request_real_exit(&app, lifecycle.inner());
+}
+
 fn handle_close_request(window: &tauri::Window, api: &tauri::CloseRequestApi) {
     let app = window.app_handle().clone();
     let lifecycle = app.state::<Arc<LifecycleState>>().inner().clone();
@@ -1554,7 +1563,7 @@ fn handle_close_request(window: &tauri::Window, api: &tauri::CloseRequestApi) {
     api.prevent_close();
     match lifecycle.close_behavior() {
         Some(CloseBehavior::MinimizeToTray) => hide_to_tray(&app),
-        Some(CloseBehavior::Quit) => request_real_exit(&app, &lifecycle),
+        Some(CloseBehavior::Quit) => request_guarded_exit(&app),
         None => show_first_close_prompt(window, app, lifecycle),
     }
 }
@@ -1590,7 +1599,7 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
                     let _ = update_preferences(|preferences| {
                         preferences.close_behavior = Some(CloseBehavior::Quit);
                     });
-                    request_real_exit(&app, &lifecycle);
+                    request_guarded_exit(&app);
                 }
                 _ => {}
             }
@@ -2017,8 +2026,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
             "quota_all" => show_quota_page(app, None, None, false),
             "settings" => show_settings_page(app),
             "quit" => {
-                let lifecycle = app.state::<Arc<LifecycleState>>();
-                request_real_exit(app, lifecycle.inner());
+                request_guarded_exit(app);
             }
             _ => {}
         });
@@ -2714,6 +2722,7 @@ pub fn run() {
             review_memory,
             runtime_info,
             open_files_and_folders_settings,
+            quit_app,
             set_close_behavior,
             set_locale,
             set_theme_preference,
@@ -2742,11 +2751,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Failed to build AgentKib");
     app.run(|app, event| match event {
-        tauri::RunEvent::ExitRequested { api, code, .. } => {
+        tauri::RunEvent::ExitRequested { api, .. } => {
             let lifecycle = app.state::<Arc<LifecycleState>>();
-            if code.is_none() && !lifecycle.quitting.load(Ordering::SeqCst) {
+            if !lifecycle.quitting.load(Ordering::SeqCst) {
                 api.prevent_exit();
-                hide_to_tray(app);
+                request_guarded_exit(app);
             }
         }
         tauri::RunEvent::Reopen { .. } => show_main_window(app),

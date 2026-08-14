@@ -79,6 +79,7 @@ export function App() {
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("list");
   const [insightsSection, setInsightsSection] = useState<InsightsSection>("overview");
   const pendingRefreshKinds = useRef(new Set<string>());
+  const quitPromptOpen = useRef(false);
   const groupedCatalog = useMemo(() => groupCatalogAssets(catalog), [catalog]);
   const assetCounts = useMemo(() => workspaceAssetCounts(groupedCatalog), [groupedCatalog]);
 
@@ -167,6 +168,32 @@ export function App() {
   };
 
   const hasUnsavedDraft = Boolean(manifest && baselineManifest && JSON.stringify(manifest) !== baselineManifest);
+  const hasAnyUnsavedDraft = hasUnsavedDraft || Object.keys(workspaceDrafts).length > 0;
+  const [applyingChanges, setApplyingChanges] = useState(false);
+  const quitState = useRef({ hasUnsavedDraft: hasAnyUnsavedDraft, applyingChanges });
+  quitState.current = { hasUnsavedDraft: hasAnyUnsavedDraft, applyingChanges };
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen("agentkib:quit-requested", async () => {
+      if (quitPromptOpen.current) return;
+      quitPromptOpen.current = true;
+      try {
+        if (quitState.current.applyingChanges) {
+          window.alert(tr("dialog.quit.changesApplying"));
+          return;
+        }
+        if (quitState.current.hasUnsavedDraft && !window.confirm(tr("dialog.quit.discardDraft"))) return;
+        await api.quitApp();
+      } finally {
+        quitPromptOpen.current = false;
+      }
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
   useEffect(() => {
     if (!navigationRequest) return;
     if (navigationRequest.page === "settings") {
@@ -248,7 +275,7 @@ export function App() {
           {page === "overview" && <Overview workspace={selectedWorkspace} scan={scan} manifest={manifest} />}
           {page === "assets" && <Assets section={workspaceAssetSection} onSection={setWorkspaceAssetSection} scan={scan} manifest={manifest} onChange={setManifest} />}
           {page === "context" && <ContextPage project={project} onOpenInstructions={() => { setWorkspaceAssetSection("instructions"); setPage("assets"); }} />}
-          {page === "changes" && <Changes changeSet={changeSet} onPlanHome={() => plan(true)} onApplied={async () => { await load(); await loadGlobal(); }} onRejected={() => setChangeSet(undefined)} />}
+          {page === "changes" && <Changes changeSet={changeSet} onPlanHome={() => plan(true)} onApplied={async () => { await load(); await loadGlobal(); }} onRejected={() => setChangeSet(undefined)} onApplyingChange={setApplyingChanges} />}
         </section>
       </main>
     </div>
@@ -419,7 +446,7 @@ function ThemeSetting({ runtime, onChanged }: { runtime?: RuntimeInfo; onChanged
 }
 
 function CloseBehaviorSelect({ value, onChange }: { value?: CloseBehavior; onChange: (behavior?: CloseBehavior) => Promise<void> }) {
-  return <select className="setting-select" value={value ?? "ask"} onChange={(event) => void onChange(event.target.value === "ask" ? undefined : event.target.value as CloseBehavior)}><option value="ask">{tr("settings.close.ask")}</option><option value="minimize-to-tray">{tr("settings.close.tray")}</option><option value="quit">{tr("settings.close.quit")}</option></select>;
+  return <select className="setting-select" title={tr("settings.close.commandQ")} value={value ?? "ask"} onChange={(event) => void onChange(event.target.value === "ask" ? undefined : event.target.value as CloseBehavior)}><option value="ask">{tr("settings.close.ask")}</option><option value="minimize-to-tray">{tr("settings.close.tray")}</option><option value="quit">{tr("settings.close.quit")}</option></select>;
 }
 
 function GitIdentitySettings() {
@@ -471,11 +498,11 @@ function ContextPage({ project, onOpenInstructions }: { project: string; onOpenI
   return <div className={`context-layout${empty ? " is-empty" : ""}`}><div className="panel config-panel"><h2>{tr("context.environment")}</h2><label>Agent<select value={agent} onChange={(event) => setAgent(event.target.value as AgentKind)}>{Object.entries(agentLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>{tr("context.workingDirectory")}<input value={cwd} onChange={(event) => setCwd(event.target.value)} /></label><button className="ghost" onClick={() => void run()} disabled={resolving}><RefreshCw size={14} className={resolving ? "spin" : ""} />{tr("context.resolve")}</button><div className="separator" /><h3>{tr("context.capabilities")}</h3><Pills values={preview?.visible_skills ?? []} empty={tr("context.noSkill")} /><Pills values={preview?.visible_connections ?? []} empty={tr("context.noConnection")} /></div><div className="panel context-preview"><div className="panel-head"><h2>{tr("context.effective")}</h2>{preview && <span className="badge">{preview.sections.length} {tr("common.sections")}</span>}</div>{error && <div className="alert">{error}</div>}{preview?.warnings.map((warning) => <div className="warning" key={warning}><CircleAlert size={15} />{contextWarningLabel(warning)}</div>)}{empty && <div className="compact-state"><FileCode2 size={18} /><span>{tr("context.noInstructions")}</span><button className="ghost" onClick={onOpenInstructions}>{tr("context.openInstructions")}</button></div>}<div className="timeline">{preview?.sections.map((contextSection, index) => <article key={`${contextSection.source}-${index}`}><span className="step">{index + 1}</span><div><header><strong>{shortPath(contextSection.source)}</strong><span>{contextSection.scope || tr("status.scope.project")}</span></header><details><summary>{tr("context.showContent")}</summary><pre>{contextSection.content}</pre></details></div></article>)}</div>{preview?.approved_memories.length ? <div className="memory-context"><h3>{tr("context.approvedMemory")}</h3>{preview.approved_memories.map((item) => <p key={item}>{item}</p>)}</div> : null}</div></div>;
 }
 
-function Changes({ changeSet, onPlanHome, onApplied, onRejected }: { changeSet?: ChangeSet; onPlanHome: () => void; onApplied: () => void; onRejected: () => void }) {
+function Changes({ changeSet, onPlanHome, onApplied, onRejected, onApplyingChange }: { changeSet?: ChangeSet; onPlanHome: () => void; onApplied: () => void; onRejected: () => void; onApplyingChange: (applying: boolean) => void }) {
   const [selected, setSelected] = useState(0); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [homeApproved, setHomeApproved] = useState(false);
   const change = changeSet?.changes[selected];
   if (!changeSet) return <Empty compact icon={GitCompareArrows} title={tr("changes.empty")} text={tr("changes.emptyText")} />;
-  const apply = async () => { setBusy(true); try { await api.apply(changeSet, homeApproved); await onApplied(); } catch (value) { setError(String(value)); } finally { setBusy(false); } };
+  const apply = async () => { setBusy(true); onApplyingChange(true); try { await api.apply(changeSet, homeApproved); await onApplied(); } catch (value) { setError(String(value)); } finally { onApplyingChange(false); setBusy(false); } };
   return <div className="changes-layout"><div className="panel file-list"><div className="panel-head"><div><h2>ChangeSet</h2><p>{changeSet.id.slice(0, 8)} · {changeSet.changes.length} {tr("common.files")}</p></div></div>{changeSet.changes.map((file, index) => <button key={file.target} className={index === selected ? "active" : ""} onClick={() => setSelected(index)}><FileCode2 size={16} /><div><strong>{file.target.split("/").pop()}</strong><span>{shortPath(file.target)}</span></div><span className={`risk ${file.risk}`}>{tr(`status.risk.${file.risk}`)}</span></button>)}<div className="home-toggle"><p>{tr("changes.homeQuestion")}</p><button className="ghost" onClick={onPlanHome}>{tr("changes.includeHome")}</button>{changeSet.requires_home_approval && <label className="home-approval"><input type="checkbox" checked={homeApproved} onChange={(event) => setHomeApproved(event.target.checked)} />{tr("changes.homeApproval")}</label>}</div></div><div className="panel diff-panel">{change ? <><div className="panel-head"><div><h2>{change.target.split("/").pop()}</h2><p>{change.target} · {tr(`status.scope.${change.scope}`)}</p></div><span className={`risk ${change.risk}`}>{tr(`status.risk.${change.risk}`)}</span></div><Diff before={change.before} after={change.after} /></> : <Empty icon={Check} title={tr("changes.synced")} text={tr("changes.syncedText")} />}{error && <div className="alert">{error}</div>}<div className="apply-bar"><div><ShieldCheck size={17} /><span>{tr("changes.hashValidation")}</span></div><div className="apply-actions"><button className="ghost" onClick={onRejected} disabled={busy}>{tr("changes.reject")}</button><button className="primary" onClick={apply} disabled={busy || !changeSet.changes.length || (changeSet.requires_home_approval && !homeApproved)}>{tr(busy ? "changes.applying" : "changes.apply", { count: changeSet.changes.length })}</button></div></div></div></div>;
 }
 

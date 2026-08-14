@@ -33,6 +33,7 @@ vi.mock("./api", () => ({
     refreshRemoteGateway: vi.fn(),
     removeRemoteGateway: vi.fn(),
     runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark" }),
+    quitApp: vi.fn().mockResolvedValue(undefined),
     openFilesAndFoldersSettings: vi.fn().mockResolvedValue(undefined),
     setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale, theme_preference: "system", effective_theme: "dark" })),
     setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark" })),
@@ -86,6 +87,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   cleanup();
+  vi.mocked(api.quitApp).mockClear();
   vi.mocked(api.workspaces).mockResolvedValue([]);
   vi.mocked(api.agentInstallations).mockResolvedValue([]);
   vi.mocked(api.insightsView).mockResolvedValue({
@@ -253,6 +255,43 @@ describe("AgentKib desktop", () => {
     const navigation = within(screen.getByRole("navigation", { name: "Primary navigation" }));
     expect(navigation.getAllByRole("button")).toHaveLength(6);
     expect(screen.getByRole("button", { name: "Review changes" })).toBeDisabled();
+  });
+
+  it("treats the native quit request as a real app exit", async () => {
+    render(<App />);
+    await waitFor(() => expect(tauriListeners.has("agentkib:quit-requested")).toBe(true));
+
+    await act(async () => {
+      await tauriListeners.get("agentkib:quit-requested")?.({ payload: undefined });
+    });
+
+    expect(api.quitApp).toHaveBeenCalledOnce();
+  });
+
+  it("asks before quitting with an unsaved workspace draft", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project",
+      path: "/tmp/project",
+      name: "Project",
+      status: "healthy",
+      asset_count: 0,
+      warning_count: 0,
+      sources: [{ agent: "codex", evidence: "session-cwd", session_count: 1 }],
+    }]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Shared Project Instructions" }), { target: { value: "Keep this draft" } });
+    await waitFor(() => expect(tauriListeners.has("agentkib:quit-requested")).toBe(true));
+
+    await act(async () => {
+      await tauriListeners.get("agentkib:quit-requested")?.({ payload: undefined });
+    });
+
+    expect(confirm).toHaveBeenCalledWith("Discard unsaved workspace drafts and quit AgentKib?");
+    expect(api.quitApp).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 
   it("returns from the dedicated Settings shell to the active workspace", async () => {
