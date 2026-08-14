@@ -9,13 +9,15 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => undefined),
 }));
 
-const { quotaSnapshot, quotaCollectorStatus, refreshQuota } = vi.hoisted(() => ({
+const { quotaSnapshot, quotaCollectorStatus, refreshQuota, refreshStatus, requestRefresh } = vi.hoisted(() => ({
   quotaSnapshot: vi.fn(),
   quotaCollectorStatus: vi.fn(),
   refreshQuota: vi.fn(),
+  refreshStatus: vi.fn(),
+  requestRefresh: vi.fn(),
 }));
 vi.mock("../api", () => ({
-  api: { quotaSnapshot, quotaCollectorStatus, refreshQuota },
+  api: { quotaSnapshot, quotaCollectorStatus, refreshQuota, refreshStatus, requestRefresh },
 }));
 
 beforeEach(async () => {
@@ -26,6 +28,13 @@ beforeEach(async () => {
     sidecar_available: true,
     config_source: "codexbar",
     running: false,
+  });
+  refreshStatus.mockResolvedValue([]);
+  requestRefresh.mockResolvedValue({
+    kind: "quota",
+    disposition: "queued",
+    request_id: "quota-auto",
+    status: { kind: "quota", state: "queued", request_id: "quota-auto", queued_at: "2026-08-14T02:00:00Z" },
   });
   quotaSnapshot.mockResolvedValue({
     schema_version: 1,
@@ -65,6 +74,34 @@ describe("QuotaPage", () => {
 
     expect(screen.getAllByRole("option")).toHaveLength(1);
     expect(screen.getByRole("option")).toHaveTextContent("Claude Code");
+  });
+
+  it("restores an already queued quota refresh without starting another one", async () => {
+    quotaSnapshot.mockResolvedValue(undefined);
+    refreshStatus.mockResolvedValue([{ kind: "quota", state: "queued", request_id: "existing" }]);
+
+    render(<QuotaPage />);
+
+    expect(await screen.findAllByText("Waiting for the quota collector…")).toHaveLength(2);
+    expect(requestRefresh).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("button", { name: "Refresh quota" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
+  });
+
+  it("requests a stale snapshot without forcing a duplicate collector", async () => {
+    quotaSnapshot.mockResolvedValue({
+      schema_version: 1,
+      backend: "codex-bar-cli",
+      generated_at: "2026-08-14T01:00:00Z",
+      fetched_at: "2026-08-14T01:00:00Z",
+      stale_after_seconds: 180,
+      freshness: "stale",
+      providers: [],
+    });
+
+    render(<QuotaPage />);
+
+    await waitFor(() => expect(requestRefresh).toHaveBeenCalledWith("quota", false));
+    expect(await screen.findByText("Waiting for the quota collector…")).toBeInTheDocument();
   });
 });
 

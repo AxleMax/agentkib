@@ -20,8 +20,8 @@ use agentkib_core::{
 use agentkib_discovery::discover as discover_local_workspaces;
 use agentkib_gateways::{RemoteGatewayInput, RemoteGatewaySummary};
 use agentkib_insights::{
-    Achievement, AgentUsageBreakdown, GitIdentitySummary, HeatmapPoint, InsightsQuery,
-    InsightsStatus, InsightsSummary, ModelUsageBreakdown, RepositoryCommitBreakdown,
+    Achievement, AgentUsageBreakdown, GitIdentitySummary, HeatmapPoint, InsightsCollectionPolicy,
+    InsightsQuery, InsightsStatus, InsightsSummary, ModelUsageBreakdown, RepositoryCommitBreakdown,
     WorkspaceUsageBreakdown, collect_git, collect_usage, shutdown_external_commands,
 };
 use agentkib_mcp::{HubController, config as mcp_config, installation_root};
@@ -32,6 +32,7 @@ use agentkib_quota::{
 };
 use agentkib_store::{Store, default_backup_dir, default_data_dir};
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Theme, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
@@ -1987,9 +1988,17 @@ fn perform_insights(
         let workspaces = store.list_workspaces()?;
         let fingerprints = store.insight_git_fingerprints()?;
         let usage_cursors = store.insight_usage_cursors()?;
+        let parallelism = std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(2);
+        let window_visible = app
+            .get_webview_window("main")
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false);
+        let policy = InsightsCollectionPolicy::for_parallelism(parallelism, window_visible);
         // 文件、Agent CLI 和 Git 读取均发生在数据库事务之外，避免后台刷新长期占锁。
-        let usage = collect_usage(&usage_cursors);
-        let repositories = collect_git(&workspaces, &fingerprints);
+        let usage = collect_usage(&usage_cursors, policy);
+        let repositories = collect_git(&workspaces, &fingerprints, policy);
         let _write = write_lock
             .lock()
             .map_err(|_| anyhow::anyhow!("refresh database write lock is poisoned"))?;
@@ -2040,43 +2049,152 @@ fn start_refresh_scheduler(
     app: AppHandle,
     kind: RefreshKind,
     initial_delay: Duration,
-    interval: Duration,
+    max_age: chrono::Duration,
 ) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(initial_delay).await;
         loop {
             let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
-            coordinator.request(app.clone(), kind, false);
-            tokio::time::sleep(interval).await;
+            if kind != RefreshKind::Gateways || remote_gateways_configured() {
+                coordinator.request_if_stale(app.clone(), kind, max_age);
+            }
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
+}
+
+fn start_quota_scheduler(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        loop {
+            request_quota_if_due(&app);
+            tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
 }
 
 fn start_refresh_schedulers(app: AppHandle) {
-    start_refresh_scheduler(
-        app.clone(),
-        RefreshKind::Gateways,
-        Duration::from_secs(1),
-        Duration::from_secs(15 * 60),
-    );
+    start_quota_scheduler(app.clone());
     start_refresh_scheduler(
         app.clone(),
         RefreshKind::Discovery,
-        Duration::from_secs(2),
-        Duration::from_secs(15 * 60),
+        Duration::from_secs(3),
+        chrono::Duration::minutes(15),
     );
     start_refresh_scheduler(
         app.clone(),
-        RefreshKind::Quota,
-        Duration::from_secs(3),
-        Duration::from_secs(5 * 60),
+        RefreshKind::Gateways,
+        Duration::from_secs(5),
+        chrono::Duration::minutes(15),
     );
     start_refresh_scheduler(
         app,
         RefreshKind::Insights,
-        Duration::from_secs(4),
-        Duration::from_secs(30 * 60),
+        Duration::from_secs(30),
+        chrono::Duration::minutes(30),
     );
+}
+
+fn seed_refresh_freshness(app: &AppHandle) {
+    let coordinator = app.state::<Arc<RefreshCoordinator>>().inner();
+    if let Ok(store) = Store::open_default() {
+        coordinator.seed_finished_at(
+            RefreshKind::Discovery,
+            store.latest_discovery_finished_at().ok().flatten(),
+        );
+        coordinator.seed_finished_at(
+            RefreshKind::Insights,
+            store.latest_activity_at("insights.refresh").ok().flatten(),
+        );
+        coordinator.seed_finished_at(
+            RefreshKind::Quota,
+            store.quota_last_success_at().ok().flatten(),
+        );
+    }
+    let gateway_finished_at = remote_gateway_registry_path()
+        .ok()
+        .and_then(|path| agentkib_gateways::list(&path).ok())
+        .and_then(|gateways| {
+            (!gateways.is_empty()
+                && gateways
+                    .iter()
+                    .all(|value| value.last_connected_at.is_some()))
+            .then(|| {
+                gateways
+                    .into_iter()
+                    .filter_map(|value| value.last_connected_at)
+                    .min()
+            })
+            .flatten()
+        });
+    coordinator.seed_finished_at(RefreshKind::Gateways, gateway_finished_at);
+}
+
+fn remote_gateways_configured() -> bool {
+    remote_gateway_registry_path()
+        .ok()
+        .and_then(|path| agentkib_gateways::list(&path).ok())
+        .is_some_and(|gateways| !gateways.is_empty())
+}
+
+fn request_quota_if_due(app: &AppHandle) {
+    let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
+    let (snapshot, last_success) = Store::open_default()
+        .map(|store| {
+            (
+                store.quota_snapshot().ok().flatten(),
+                store.quota_last_success_at().ok().flatten(),
+            )
+        })
+        .unwrap_or_default();
+    let window_visible = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    let low_remaining = snapshot.as_ref().is_some_and(|snapshot| {
+        snapshot
+            .providers
+            .iter()
+            .filter_map(|provider| provider.lowest_remaining_percent())
+            .reduce(f64::min)
+            .is_some_and(|remaining| remaining <= 20.0)
+    });
+    let max_age = if window_visible || low_remaining {
+        chrono::Duration::minutes(5)
+    } else {
+        chrono::Duration::minutes(15)
+    };
+    if snapshot
+        .as_ref()
+        .is_some_and(|snapshot| quota_reset_due(snapshot, last_success, Utc::now()))
+    {
+        coordinator.request(app.clone(), RefreshKind::Quota, false);
+    } else {
+        coordinator.request_if_stale(app.clone(), RefreshKind::Quota, max_age);
+    }
+}
+
+fn quota_reset_due(
+    snapshot: &QuotaSnapshot,
+    last_success: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> bool {
+    let reset_cutoff = now - chrono::Duration::minutes(1);
+    snapshot.providers.iter().any(|provider| {
+        provider
+            .windows
+            .iter()
+            .chain(
+                provider
+                    .accounts
+                    .iter()
+                    .flat_map(|account| account.windows.iter()),
+            )
+            .filter_map(|window| window.reset_at)
+            .any(|reset| {
+                reset <= reset_cutoff && last_success.is_none_or(|success| success < reset)
+            })
+    })
 }
 
 fn format_error(error: impl std::fmt::Display) -> LocalizedMessage {
@@ -2113,6 +2231,7 @@ pub fn run() {
             apply_native_theme(app.handle(), theme)?;
             setup_tray(app)?;
             app.state::<Arc<HubController>>().start()?;
+            seed_refresh_freshness(app.handle());
             start_refresh_schedulers(app.handle().clone());
             Ok(())
         })
@@ -2123,18 +2242,23 @@ pub fn run() {
                     WindowEvent::Focused(true) => {
                         let app = window.app_handle();
                         let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
-                        for (kind, minutes) in [
-                            (RefreshKind::Discovery, 15),
-                            (RefreshKind::Insights, 30),
-                            (RefreshKind::Gateways, 15),
-                            (RefreshKind::Quota, 5),
-                        ] {
+                        for (kind, minutes) in
+                            [(RefreshKind::Discovery, 15), (RefreshKind::Insights, 30)]
+                        {
                             coordinator.request_if_stale(
                                 app.clone(),
                                 kind,
                                 chrono::Duration::minutes(minutes),
                             );
                         }
+                        if remote_gateways_configured() {
+                            coordinator.request_if_stale(
+                                app.clone(),
+                                RefreshKind::Gateways,
+                                chrono::Duration::minutes(15),
+                            );
+                        }
+                        request_quota_if_due(app);
                     }
                     _ => {}
                 }
@@ -2295,5 +2419,39 @@ mod tests {
         assert_eq!(ThemePreference::System.native(), None);
         assert_eq!(ThemePreference::Light.native(), Some(Theme::Light));
         assert_eq!(ThemePreference::Dark.native(), Some(Theme::Dark));
+    }
+
+    #[test]
+    fn quota_reset_is_due_once_after_the_reset_window() {
+        let now = Utc::now();
+        let reset = now - chrono::Duration::minutes(2);
+        let snapshot: QuotaSnapshot = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "backend": "codex-bar-cli",
+            "generated_at": now,
+            "fetched_at": now,
+            "stale_after_seconds": 300,
+            "freshness": "fresh",
+            "providers": [{
+                "id": "codex",
+                "name": "Codex",
+                "enabled": true,
+                "windows": [{
+                    "kind": "session",
+                    "label": "5 hour",
+                    "used_percent": 20.0,
+                    "remaining_percent": 80.0,
+                    "reset_at": reset
+                }],
+                "accounts": []
+            }]
+        }))
+        .unwrap();
+        assert!(quota_reset_due(
+            &snapshot,
+            Some(now - chrono::Duration::minutes(10)),
+            now,
+        ));
+        assert!(!quota_reset_due(&snapshot, Some(now), now));
     }
 }

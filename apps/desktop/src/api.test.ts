@@ -43,7 +43,7 @@ describe("AgentKib API boundary", () => {
   });
 
   it("queues refresh work without waiting for collector results", async () => {
-    vi.mocked(invoke).mockResolvedValue({ kind: "insights", disposition: "queued", request_id: "refresh-1" });
+    vi.mocked(invoke).mockResolvedValue({ kind: "insights", disposition: "queued", request_id: "refresh-1", status: { kind: "insights", state: "queued" } });
 
     await expect(api.requestRefresh("insights", true)).resolves.toMatchObject({ disposition: "queued" });
 
@@ -51,7 +51,7 @@ describe("AgentKib API boundary", () => {
   });
 
   it("exposes quota refresh as a non-blocking IPC request", async () => {
-    vi.mocked(invoke).mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-1" });
+    vi.mocked(invoke).mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-1", status: { kind: "quota", state: "queued" } });
 
     await expect(api.refreshQuota()).resolves.toMatchObject({ kind: "quota", disposition: "queued" });
 

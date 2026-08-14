@@ -834,6 +834,37 @@ impl Store {
             .map_err(Into::into)
     }
 
+    pub fn latest_discovery_finished_at(&self) -> Result<Option<DateTime<Utc>>> {
+        let value: Option<String> = self.connection.query_row(
+            "SELECT MAX(finished_at) FROM discovery_runs",
+            [],
+            |row| row.get(0),
+        )?;
+        value.map(|value| parse_time(&value)).transpose()
+    }
+
+    pub fn latest_activity_at(&self, action: &str) -> Result<Option<DateTime<Utc>>> {
+        let value: Option<String> = self.connection.query_row(
+            "SELECT MAX(created_at) FROM audit_events WHERE action = ?1",
+            params![action],
+            |row| row.get(0),
+        )?;
+        value.map(|value| parse_time(&value)).transpose()
+    }
+
+    pub fn quota_last_success_at(&self) -> Result<Option<DateTime<Utc>>> {
+        let value: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT last_success_at FROM quota_snapshot WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        value.map(|value| parse_time(&value)).transpose()
+    }
+
     pub fn save_quota_snapshot(&self, snapshot: &QuotaSnapshot) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.connection.execute(

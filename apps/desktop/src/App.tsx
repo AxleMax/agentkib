@@ -138,7 +138,6 @@ export function App() {
         }
         await loadGlobal();
         if (!disposed) setRefreshJobs(await api.refreshStatus());
-        await api.requestRefresh("discovery");
       } catch (error) { if (!disposed) setMessage(localizeMessage(error)); }
     })();
     return () => { disposed = true; window.clearTimeout(refreshReloadTimer); unlisten?.(); unlistenRefresh?.(); unlistenInsights?.(); unlistenGateways?.(); unlistenQuota?.(); unlistenNavigate?.(); unlistenTheme?.(); };

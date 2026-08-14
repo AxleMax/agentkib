@@ -33,6 +33,7 @@ pub enum RefreshState {
 pub enum RefreshDisposition {
     Queued,
     AlreadyRunning,
+    Backoff,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +41,7 @@ pub struct RefreshReceipt {
     pub kind: RefreshKind,
     pub disposition: RefreshDisposition,
     pub request_id: String,
+    pub status: RefreshJobStatus,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,6 +49,7 @@ pub struct RefreshJobStatus {
     pub kind: RefreshKind,
     pub state: RefreshState,
     pub request_id: Option<String>,
+    pub queued_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub progress_current: Option<u64>,
@@ -68,6 +71,7 @@ impl JobRecord {
                 kind,
                 state: RefreshState::Idle,
                 request_id: None,
+                queued_at: None,
                 started_at: None,
                 finished_at: None,
                 progress_current: None,
@@ -82,7 +86,9 @@ impl JobRecord {
 
 pub struct RefreshCoordinator {
     jobs: Mutex<BTreeMap<RefreshKind, JobRecord>>,
-    concurrency: Arc<Semaphore>,
+    quota_lane: Arc<Semaphore>,
+    background_lane: Arc<Semaphore>,
+    disk_heavy_lane: Arc<Semaphore>,
     write_lock: Arc<Mutex<()>>,
     accepting: AtomicBool,
     sequence: AtomicU64,
@@ -90,6 +96,16 @@ pub struct RefreshCoordinator {
 
 impl Default for RefreshCoordinator {
     fn default() -> Self {
+        Self::with_parallelism(
+            std::thread::available_parallelism()
+                .map(|value| value.get())
+                .unwrap_or(2),
+        )
+    }
+}
+
+impl RefreshCoordinator {
+    fn with_parallelism(parallelism: usize) -> Self {
         let jobs = [
             RefreshKind::Discovery,
             RefreshKind::Insights,
@@ -101,15 +117,15 @@ impl Default for RefreshCoordinator {
         .collect();
         Self {
             jobs: Mutex::new(jobs),
-            concurrency: Arc::new(Semaphore::new(2)),
+            quota_lane: Arc::new(Semaphore::new(1)),
+            background_lane: Arc::new(Semaphore::new(background_concurrency(parallelism))),
+            disk_heavy_lane: Arc::new(Semaphore::new(1)),
             write_lock: Arc::new(Mutex::new(())),
             accepting: AtomicBool::new(true),
             sequence: AtomicU64::new(1),
         }
     }
-}
 
-impl RefreshCoordinator {
     pub fn request(
         self: &Arc<Self>,
         app: AppHandle,
@@ -122,12 +138,8 @@ impl RefreshCoordinator {
             now.timestamp_millis(),
             self.sequence.fetch_add(1, Ordering::Relaxed)
         );
-        let disposition = self.reserve(kind, request_id.clone(), now, force);
-        let receipt = RefreshReceipt {
-            kind,
-            disposition,
-            request_id,
-        };
+        let receipt = self.reserve(kind, request_id, now, force);
+        let disposition = receipt.disposition;
         if disposition == RefreshDisposition::Queued {
             let coordinator = Arc::clone(self);
             tauri::async_runtime::spawn(async move {
@@ -152,22 +164,41 @@ impl RefreshCoordinator {
         kind: RefreshKind,
         max_age: chrono::Duration,
     ) -> Option<RefreshReceipt> {
-        let fresh = self
+        let should_request = self
             .jobs
             .lock()
             .expect("refresh job state lock is poisoned")
             .get(&kind)
-            .and_then(|record| record.status.finished_at)
-            .is_some_and(|finished| Utc::now() - finished < max_age);
-        (!fresh).then(|| self.request(app, kind, false))
+            .is_some_and(|record| {
+                matches!(
+                    record.status.state,
+                    RefreshState::Failed | RefreshState::Backoff
+                ) || record
+                    .status
+                    .finished_at
+                    .is_none_or(|finished| Utc::now() - finished >= max_age)
+            });
+        should_request.then(|| self.request(app, kind, false))
     }
 
     pub fn shutdown(&self) {
         self.accepting.store(false, Ordering::SeqCst);
+        self.quota_lane.close();
+        self.background_lane.close();
+        self.disk_heavy_lane.close();
     }
 
     pub fn is_accepting(&self) -> bool {
         self.accepting.load(Ordering::SeqCst)
+    }
+
+    pub fn seed_finished_at(&self, kind: RefreshKind, finished_at: Option<DateTime<Utc>>) {
+        if let Some(finished_at) = finished_at {
+            self.update(kind, |record| {
+                record.status.state = RefreshState::Succeeded;
+                record.status.finished_at = Some(finished_at);
+            });
+        }
     }
 
     fn reserve(
@@ -176,7 +207,7 @@ impl RefreshCoordinator {
         request_id: String,
         now: DateTime<Utc>,
         force: bool,
-    ) -> RefreshDisposition {
+    ) -> RefreshReceipt {
         let mut jobs = self
             .jobs
             .lock()
@@ -184,34 +215,59 @@ impl RefreshCoordinator {
         let record = jobs
             .get_mut(&kind)
             .expect("refresh kind must be registered");
-        if !self.accepting.load(Ordering::SeqCst)
-            || matches!(
-                record.status.state,
-                RefreshState::Queued | RefreshState::Running
-            )
-        {
-            return RefreshDisposition::AlreadyRunning;
+        if !self.accepting.load(Ordering::SeqCst) {
+            return receipt(kind, RefreshDisposition::AlreadyRunning, request_id, record);
+        }
+        if matches!(
+            record.status.state,
+            RefreshState::Queued | RefreshState::Running
+        ) {
+            let active_request_id = record.status.request_id.clone().unwrap_or(request_id);
+            return receipt(
+                kind,
+                RefreshDisposition::AlreadyRunning,
+                active_request_id,
+                record,
+            );
         }
         if !force && record.status.next_allowed_at.is_some_and(|next| next > now) {
             record.status.state = RefreshState::Backoff;
-            return RefreshDisposition::AlreadyRunning;
+            return receipt(kind, RefreshDisposition::Backoff, request_id, record);
         }
         record.status.state = RefreshState::Queued;
-        record.status.request_id = Some(request_id);
+        record.status.request_id = Some(request_id.clone());
+        record.status.queued_at = Some(now);
         record.status.started_at = None;
         record.status.finished_at = None;
         record.status.progress_current = Some(0);
         record.status.progress_total = Some(1);
         record.status.error = None;
-        RefreshDisposition::Queued
+        receipt(kind, RefreshDisposition::Queued, request_id, record)
     }
 
     async fn run(self: Arc<Self>, app: AppHandle, kind: RefreshKind) {
         self.emit_status(&app, kind);
         let _ = super::refresh_tray_status(&app);
-        let Ok(_permit) = Arc::clone(&self.concurrency).acquire_owned().await else {
-            return;
-        };
+        let mut _quota_permit = None;
+        let mut _background_permit = None;
+        let mut _disk_permit = None;
+        if kind == RefreshKind::Quota {
+            let Ok(permit) = Arc::clone(&self.quota_lane).acquire_owned().await else {
+                return;
+            };
+            _quota_permit = Some(permit);
+        } else {
+            let Ok(permit) = Arc::clone(&self.background_lane).acquire_owned().await else {
+                return;
+            };
+            _background_permit = Some(permit);
+            if matches!(kind, RefreshKind::Discovery | RefreshKind::Insights) {
+                let Ok(permit) = Arc::clone(&self.disk_heavy_lane).acquire_owned().await else {
+                    return;
+                };
+                _disk_permit = Some(permit);
+            }
+        }
         if !self.accepting.load(Ordering::SeqCst) {
             return;
         }
@@ -280,6 +336,24 @@ impl RefreshCoordinator {
     }
 }
 
+fn receipt(
+    kind: RefreshKind,
+    disposition: RefreshDisposition,
+    request_id: String,
+    record: &JobRecord,
+) -> RefreshReceipt {
+    RefreshReceipt {
+        kind,
+        disposition,
+        request_id,
+        status: record.status.clone(),
+    }
+}
+
+fn background_concurrency(parallelism: usize) -> usize {
+    if parallelism <= 4 { 1 } else { 2 }
+}
+
 fn backoff_delay(failure_count: u32) -> Duration {
     match failure_count {
         0 | 1 => Duration::from_secs(5 * 60),
@@ -298,12 +372,16 @@ mod tests {
         let coordinator = RefreshCoordinator::default();
         let now = Utc::now();
         assert_eq!(
-            coordinator.reserve(RefreshKind::Insights, "first".into(), now, true),
-            RefreshDisposition::Queued
+            coordinator
+                .reserve(RefreshKind::Insights, "first".into(), now, true)
+                .disposition,
+            RefreshDisposition::Queued,
         );
         assert_eq!(
-            coordinator.reserve(RefreshKind::Insights, "second".into(), now, true),
-            RefreshDisposition::AlreadyRunning
+            coordinator
+                .reserve(RefreshKind::Insights, "second".into(), now, true)
+                .disposition,
+            RefreshDisposition::AlreadyRunning,
         );
     }
 
@@ -324,8 +402,10 @@ mod tests {
             record.status.next_allowed_at = Some(now + chrono::Duration::minutes(5));
         });
         assert_eq!(
-            coordinator.reserve(RefreshKind::Discovery, "automatic".into(), now, false),
-            RefreshDisposition::AlreadyRunning
+            coordinator
+                .reserve(RefreshKind::Discovery, "automatic".into(), now, false)
+                .disposition,
+            RefreshDisposition::Backoff
         );
         assert_eq!(
             coordinator
@@ -337,8 +417,29 @@ mod tests {
             RefreshState::Backoff
         );
         assert_eq!(
-            coordinator.reserve(RefreshKind::Discovery, "manual".into(), now, true),
-            RefreshDisposition::Queued
+            coordinator
+                .reserve(RefreshKind::Discovery, "manual".into(), now, true)
+                .disposition,
+            RefreshDisposition::Queued,
         );
+    }
+
+    #[test]
+    fn background_concurrency_is_conservative() {
+        assert_eq!(background_concurrency(1), 1);
+        assert_eq!(background_concurrency(4), 1);
+        assert_eq!(background_concurrency(5), 2);
+        assert_eq!(background_concurrency(64), 2);
+    }
+
+    #[test]
+    fn duplicate_receipt_uses_the_active_request() {
+        let coordinator = RefreshCoordinator::default();
+        let now = Utc::now();
+        coordinator.reserve(RefreshKind::Quota, "active".into(), now, false);
+        let duplicate = coordinator.reserve(RefreshKind::Quota, "duplicate".into(), now, true);
+        assert_eq!(duplicate.disposition, RefreshDisposition::AlreadyRunning);
+        assert_eq!(duplicate.request_id, "active");
+        assert_eq!(duplicate.status.state, RefreshState::Queued);
     }
 }

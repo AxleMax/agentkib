@@ -14,21 +14,35 @@ export function QuotaPage({ initialProvider }: { initialProvider?: string }) {
   const [selectedId, setSelectedId] = useState(initialProvider ?? "");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<QuotaFilter>("all");
-  const [busy, setBusy] = useState(false);
+  const [refreshJob, setRefreshJob] = useState<RefreshJobStatus>();
+  const [requestPending, setRequestPending] = useState(false);
   const [error, setError] = useState("");
   const pendingRefresh = useRef(false);
+  const requestedInitialRefresh = useRef(false);
 
   const load = async () => {
-    const [nextSnapshot, nextStatus] = await Promise.all([
+    const [nextSnapshot, nextStatus, refreshJobs] = await Promise.all([
       api.quotaSnapshot(),
       api.quotaCollectorStatus(),
+      api.refreshStatus(),
     ]);
     setSnapshot(nextSnapshot);
     setStatus(nextStatus);
+    const nextJob = refreshJobs.find((job) => job.kind === "quota");
+    setRefreshJob(nextJob);
+    return { snapshot: nextSnapshot, job: nextJob };
   };
 
   useEffect(() => {
-    void load().catch((reason) => setError(localizeMessage(reason)));
+    void load()
+      .then(async ({ snapshot: initialSnapshot, job }) => {
+        if (requestedInitialRefresh.current || (job && (job.state === "queued" || job.state === "running" || job.state === "backoff"))) return;
+        if (initialSnapshot?.freshness === "fresh") return;
+        requestedInitialRefresh.current = true;
+        const receipt = await api.requestRefresh("quota", false);
+        setRefreshJob(receipt.status);
+      })
+      .catch((reason) => setError(localizeMessage(reason)));
     const unlistenQuota = listen<QuotaSnapshot>("agentkib:quota-updated", ({ payload }) => {
       setSnapshot(payload);
       if (document.visibilityState === "visible") void api.quotaCollectorStatus().then(setStatus);
@@ -36,13 +50,13 @@ export function QuotaPage({ initialProvider }: { initialProvider?: string }) {
     });
     const unlistenRefresh = listen<RefreshJobStatus>("agentkib:refresh-state", ({ payload }) => {
       if (payload.kind !== "quota") return;
-      if (payload.state === "queued" || payload.state === "running") setBusy(true);
+      setRefreshJob(payload);
       if (payload.state === "succeeded") {
-        setBusy(false); setError("");
+        setError("");
         if (document.visibilityState === "visible") void load().catch((reason) => setError(localizeMessage(reason)));
         else pendingRefresh.current = true;
       }
-      if (payload.state === "failed") { setBusy(false); setError(payload.error ?? tr("errors.quotaUnavailable")); }
+      if (payload.state === "failed") setError(payload.error ?? tr("errors.quotaUnavailable"));
     });
     return () => {
       void unlistenQuota.then((dispose) => dispose());
@@ -81,15 +95,30 @@ export function QuotaPage({ initialProvider }: { initialProvider?: string }) {
   }, [providers, selectedId]);
 
   const selected = providers.find((provider) => provider.id === selectedId);
+  const busy = requestPending || refreshJob?.state === "queued" || refreshJob?.state === "running";
   const refresh = async () => {
-    setBusy(true); setError("");
+    setRequestPending(true); setError("");
     try {
-      await api.refreshQuota();
+      const receipt = await api.refreshQuota();
+      setRefreshJob(receipt.status);
     } catch (reason) {
-      setBusy(false);
       setError(localizeMessage(reason));
+    } finally {
+      setRequestPending(false);
     }
   };
+  const refreshLabel = refreshJob?.state === "queued"
+    ? tr("quota.refreshQueued")
+    : refreshJob?.state === "running"
+      ? tr("quota.refreshRunning")
+      : undefined;
+  const emptyLabel = refreshJob?.state === "queued"
+    ? tr("quota.refreshQueued")
+    : refreshJob?.state === "running"
+      ? tr("quota.refreshRunning")
+      : refreshJob?.state === "backoff" && refreshJob.next_allowed_at
+        ? tr("quota.refreshBackoff", { time: formatDateTime(refreshJob.next_allowed_at) })
+        : status?.error_key ? tr(status.error_key) : tr("quota.empty");
 
   return <div className="quota-page">
     {error && <div className="alert"><CircleAlert size={16} />{error}</div>}
@@ -98,11 +127,11 @@ export function QuotaPage({ initialProvider }: { initialProvider?: string }) {
       <div className="quota-filter" role="group" aria-label={tr("quota.filterLabel")}>
         {(["all", "healthy", "warning", "unavailable"] as QuotaFilter[]).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{tr(`quota.filter.${value}`)}</button>)}
       </div>
-      {busy && <span className="badge">{tr("tray.refreshing")}</span>}
-      <button className="ghost icon-only" onClick={() => void refresh()} disabled={busy || status?.running} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy || status?.running ? "spin" : ""} /></button>
+      {refreshLabel && <span className="badge">{refreshLabel}</span>}
+      <button className="ghost icon-only" onClick={() => void refresh()} disabled={busy} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></button>
     </div>
 
-    {!snapshot && <div className="quota-empty"><Gauge size={28} /><strong>{status?.error_key ? tr(status.error_key) : tr("quota.empty")}</strong><button className="primary" onClick={() => void refresh()} disabled={busy}>{tr("quota.refresh")}</button></div>}
+    {!snapshot && <div className="quota-empty"><Gauge size={28} /><strong>{emptyLabel}</strong><button className="primary" onClick={() => void refresh()} disabled={busy}>{tr("quota.refresh")}</button></div>}
     {snapshot && <>
       <div className={`quota-freshness ${snapshot.freshness}`}>
         <span>{tr(`quota.freshness.${snapshot.freshness}`)}</span>

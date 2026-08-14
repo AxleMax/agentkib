@@ -68,8 +68,8 @@ export interface ProviderStatus { agent: AgentKind; available: boolean; quality:
 export interface InsightsStatus { providers: ProviderStatus[]; refreshed_at?: string; running: boolean }
 export type RefreshKind = "discovery" | "insights" | "gateways" | "quota";
 export type RefreshState = "idle" | "queued" | "running" | "succeeded" | "failed" | "backoff";
-export interface RefreshReceipt { kind: RefreshKind; disposition: "queued" | "already-running"; request_id: string }
-export interface RefreshJobStatus { kind: RefreshKind; state: RefreshState; request_id?: string; started_at?: string; finished_at?: string; progress_current?: number; progress_total?: number; error?: string; next_allowed_at?: string }
+export interface RefreshReceipt { kind: RefreshKind; disposition: "queued" | "already-running" | "backoff"; request_id: string; status: RefreshJobStatus }
+export interface RefreshJobStatus { kind: RefreshKind; state: RefreshState; request_id?: string; queued_at?: string; started_at?: string; finished_at?: string; progress_current?: number; progress_total?: number; error?: string; next_allowed_at?: string }
 export interface InsightsView { summary: InsightsSummary; heatmap: HeatmapPoint[]; agents: AgentUsageBreakdown[]; models: ModelUsageBreakdown[]; workspaces: WorkspaceUsageBreakdown[]; repositories: RepositoryCommitBreakdown[]; achievements: Achievement[]; status: InsightsStatus }
 export interface GitIdentitySummary { id: string; label: string; source: string; enabled: boolean }
 export type QuotaBackend = "codex-bar-cli" | "win-codex-bar";

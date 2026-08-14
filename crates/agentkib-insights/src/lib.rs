@@ -226,7 +226,33 @@ pub struct GitIdentitySummary {
     pub enabled: bool,
 }
 
-pub fn collect_usage(cursors: &BTreeMap<AgentKind, String>) -> Vec<UsageBatch> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InsightsCollectionPolicy {
+    pub provider_concurrency: usize,
+    pub repository_concurrency: usize,
+}
+
+impl InsightsCollectionPolicy {
+    pub fn for_parallelism(parallelism: usize, window_visible: bool) -> Self {
+        let (provider_concurrency, mut repository_concurrency) = match parallelism {
+            0..=4 => (1, 1),
+            5..=8 => (2, 2),
+            _ => (2, 3),
+        };
+        if window_visible {
+            repository_concurrency = 1;
+        }
+        Self {
+            provider_concurrency,
+            repository_concurrency,
+        }
+    }
+}
+
+pub fn collect_usage(
+    cursors: &BTreeMap<AgentKind, String>,
+    policy: InsightsCollectionPolicy,
+) -> Vec<UsageBatch> {
     let home = dirs::home_dir();
     parallel_map_bounded(
         vec![
@@ -235,7 +261,7 @@ pub fn collect_usage(cursors: &BTreeMap<AgentKind, String>) -> Vec<UsageBatch> {
             AgentKind::OpenClaw,
             AgentKind::Hermes,
         ],
-        3,
+        policy.provider_concurrency,
         |agent| {
             let provider: Box<dyn UsageProvider> = match agent {
                 AgentKind::Codex => Box::new(CodexProvider::new(home.as_deref())),
@@ -271,6 +297,7 @@ pub fn collect_usage(cursors: &BTreeMap<AgentKind, String>) -> Vec<UsageBatch> {
 pub fn collect_git(
     workspaces: &[WorkspaceSummary],
     known_fingerprints: &BTreeMap<String, String>,
+    policy: InsightsCollectionPolicy,
 ) -> Vec<GitRepositorySnapshot> {
     let mut repositories = BTreeMap::<String, PathBuf>::new();
     for workspace in workspaces {
@@ -280,8 +307,10 @@ pub fn collect_git(
                 .or_insert_with(|| workspace.path.clone());
         }
     }
-    parallel_map_bounded(repositories.into_iter().collect(), 4, |(group, path)| {
-        match collect_git_repository(&group, &path, known_fingerprints) {
+    parallel_map_bounded(
+        repositories.into_iter().collect(),
+        policy.repository_concurrency,
+        |(group, path)| match collect_git_repository(&group, &path, known_fingerprints) {
             Ok(value) => value,
             Err(error) => GitRepositorySnapshot {
                 repository_group_id: group,
@@ -292,8 +321,8 @@ pub fn collect_git(
                 identities: Vec::new(),
                 error: Some(error.to_string()),
             },
-        }
-    })
+        },
+    )
 }
 
 fn parallel_map_bounded<T, R, F>(items: Vec<T>, concurrency: usize, operation: F) -> Vec<R>
@@ -1349,6 +1378,35 @@ mod tests {
     #[test]
     fn quality_orders_incomplete_as_worst() {
         assert!(quality_rank(UsageQuality::Incomplete) > quality_rank(UsageQuality::Exact));
+    }
+
+    #[test]
+    fn collection_policy_adapts_to_parallelism_and_visibility() {
+        assert_eq!(
+            InsightsCollectionPolicy::for_parallelism(4, false),
+            InsightsCollectionPolicy {
+                provider_concurrency: 1,
+                repository_concurrency: 1,
+            }
+        );
+        assert_eq!(
+            InsightsCollectionPolicy::for_parallelism(8, false),
+            InsightsCollectionPolicy {
+                provider_concurrency: 2,
+                repository_concurrency: 2,
+            }
+        );
+        assert_eq!(
+            InsightsCollectionPolicy::for_parallelism(12, false),
+            InsightsCollectionPolicy {
+                provider_concurrency: 2,
+                repository_concurrency: 3,
+            }
+        );
+        assert_eq!(
+            InsightsCollectionPolicy::for_parallelism(12, true).repository_concurrency,
+            1
+        );
     }
 
     #[test]

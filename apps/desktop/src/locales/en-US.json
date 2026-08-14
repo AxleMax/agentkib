@@ -123,6 +123,7 @@
   "agents.version": "Version", "agents.provider": "Usage provider", "context.showContent": "Show content",
   "common.localControlPlane": "Local control plane",
   "common.assetControlPlane": "Agent asset control plane",
+  "quota.refreshQueued": "Waiting for the quota collector…", "quota.refreshRunning": "Reading quota · up to 35 seconds", "quota.refreshBackoff": "Retry scheduled after {{time}}",
   "common.add": "Add",
   "common.approve": "Approve",
   "common.assets": "assets",
