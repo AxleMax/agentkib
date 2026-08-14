@@ -247,7 +247,7 @@ describe("AgentKib desktop", () => {
     expect(screen.queryByText("Activity Heatmap")).not.toBeInTheDocument();
   });
 
-  it("groups achievements into expandable milestone paths", async () => {
+  it("renders a unified achievement wall and opens track and secret details", async () => {
     const view = await api.insightsView();
     vi.mocked(api.insightsView).mockResolvedValue({ ...view, achievements: [
       { code: "token-100000", category: "token", threshold: 100_000, progress: 120_000, unlocked_at: "2026-08-01T00:00:00Z" },
@@ -266,25 +266,41 @@ describe("AgentKib desktop", () => {
     ] });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Achievements" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Milestones" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Achievement Wall" }));
 
-    expect(await screen.findByRole("heading", { name: "Achievement Milestones" })).toBeInTheDocument();
-    expect(screen.getAllByText("Token Launch")).toHaveLength(2);
-    expect(screen.getByText("Next · 1M Token")).toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar")).toHaveLength(7);
-    expect(screen.queryByText("Record 100K Token")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Special Achievements" })).toBeInTheDocument();
-    expect(screen.getByText("Product Achievements")).toBeInTheDocument();
-    expect(screen.getByText("Secret Discoveries")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Achievement Wall" })).toBeInTheDocument();
+    expect(screen.getByText("Milestones 6 / 9")).toBeInTheDocument();
+    expect(screen.getByText("Special 2 / 4")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Token achievement path" })).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.getByText("Safe Landing")).toBeInTheDocument();
     expect(screen.getByText("Welcome Back")).toBeInTheDocument();
     expect(screen.getByText("Mystery Achievement")).toBeInTheDocument();
     expect(screen.queryByText("Night Owl")).not.toBeInTheDocument();
 
-    const history = screen.getAllByText("Milestone history")[0].closest("details");
-    expect(history).not.toBeNull();
-    fireEvent.click(within(history!).getByText("Milestone history"));
-    expect(within(history!).getAllByText(/Unlocked/)).toHaveLength(1);
+    const tokenCard = screen.getByRole("button", { name: "View Token achievement path" });
+    tokenCard.focus();
+    fireEvent.click(tokenCard);
+    const trackDialog = screen.getByRole("dialog", { name: "Token" });
+    expect(within(trackDialog).getByRole("progressbar")).toBeInTheDocument();
+    expect(within(trackDialog).getByText("Next target")).toBeInTheDocument();
+    expect(within(trackDialog).getAllByText("Token Launch").length).toBeGreaterThan(0);
+    expect(within(trackDialog).getByRole("button", { name: "Close" })).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(within(trackDialog).getAllByRole("button").at(-1)).toHaveFocus();
+    const nextMilestone = within(trackDialog).getByRole("button", { name: /Million Context/ });
+    fireEvent.click(nextMilestone);
+    expect(nextMilestone).toHaveAttribute("aria-pressed", "true");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(tokenCard).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "View achievement details: Mystery Achievement" }));
+    const secretDialog = screen.getByRole("dialog", { name: "Mystery Achievement" });
+    expect(within(secretDialog).getByText("Unlock condition is secret")).toBeInTheDocument();
+    expect(within(secretDialog).queryByText("Night Owl")).not.toBeInTheDocument();
+    fireEvent.mouseDown(secretDialog.parentElement!);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it.each([

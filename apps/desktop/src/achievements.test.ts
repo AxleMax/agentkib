@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAchievementTracks,
+  buildAchievementWallItems,
   buildSpecialAchievements,
   calculateAchievementTrackProgress,
+  selectDefaultTrackMilestone,
+  selectTrackCover,
 } from "./achievements";
 import type { Achievement } from "./types";
 
@@ -70,6 +73,56 @@ describe("achievement milestone tracks", () => {
       expect.objectContaining({ achievement: expect.objectContaining({ code: "special-first-changeset" }), secret: false, unlocked: true }),
       expect.objectContaining({ achievement: expect.objectContaining({ code: "special-first-memory" }), secret: false, unlocked: true }),
       expect.objectContaining({ achievement: expect.objectContaining({ code: "special-night-owl" }), secret: true, unlocked: false }),
+    ]);
+  });
+
+  it("uses the highest unlocked milestone as the track cover and the first target before progress starts", () => {
+    const progressed = buildAchievementTracks([
+      achievement("token", 100_000, 2_000_000, true),
+      achievement("token", 1_000_000, 2_000_000, true),
+      achievement("token", 10_000_000, 2_000_000),
+    ])[0];
+    expect(selectTrackCover(progressed).threshold).toBe(1_000_000);
+    expect(selectDefaultTrackMilestone(progressed).threshold).toBe(1_000_000);
+
+    const unstarted = buildAchievementTracks([
+      achievement("agents", 1, 0),
+      achievement("agents", 2, 0),
+    ]).find((track) => track.category === "agents")!;
+    expect(selectTrackCover(unstarted).threshold).toBe(1);
+  });
+
+  it("combines tracks and special achievements and sorts them by recent unlock", () => {
+    const items = buildAchievementWallItems([
+      { ...achievement("token", 100_000, 100_000, true), unlocked_at: "2026-01-02T00:00:00Z" },
+      { ...achievement("commit", 1, 1, true), unlocked_at: "2026-01-01T00:00:00Z" },
+      achievement("agents", 1, 1),
+      { code: "special-first-changeset", category: "special", threshold: 1, progress: 1, unlocked_at: "2026-01-03T00:00:00Z" },
+      { code: "special-night-owl", category: "special", threshold: 1, progress: 0 },
+    ]);
+
+    expect(items.map((item) => item.id)).toEqual([
+      "special:special-first-changeset",
+      "track:token",
+      "track:commit",
+      "track:agents",
+      "special:special-night-owl",
+    ]);
+  });
+
+  it("keeps unlocked items with unknown dates before locked items in stable order", () => {
+    const items = buildAchievementWallItems([
+      achievement("token", 100_000, 100_000),
+      achievement("commit", 1, 0),
+      { code: "special-first-memory", category: "special", threshold: 1, progress: 1 },
+      { code: "special-night-owl", category: "special", threshold: 1, progress: 0 },
+    ]);
+
+    expect(items.map((item) => item.id)).toEqual([
+      "track:token",
+      "special:special-first-memory",
+      "track:commit",
+      "special:special-night-owl",
     ]);
   });
 });

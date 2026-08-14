@@ -5,7 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Activity, Award, Bot, Boxes, Brain, CalendarCheck2, CalendarDays, Check, ChevronRight, CircleAlert, Code2, Copy, FileCode2, Flame, FolderGit2, Gauge, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, LockKeyhole, MessageSquareText, Moon, MoreHorizontal, Network, Pencil, PlugZap, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Trash2, Workflow, X } from "lucide-react";
 import { api } from "./api";
-import { achievementReached, buildAchievementTracks, buildSpecialAchievements, type AchievementCategory, type AchievementTrack, type SpecialAchievement } from "./achievements";
+import { achievementReached, buildAchievementWallItems, selectDefaultTrackMilestone, type AchievementCategory, type AchievementTrack, type AchievementWallItem } from "./achievements";
 import { AgentIcon } from "./components/AgentIcon";
 import { AppSidebar, type SidebarEntry } from "./components/AppSidebar";
 import { SettingsSidebar, settingsSectionLabel, type SettingsSection } from "./components/SettingsSidebar";
@@ -428,7 +428,7 @@ function InsightsPage({ section, workspaces, onSummary }: { section: InsightsSec
     </>}
     {summary && section === "tokens" && <><div className="panel"><div className="panel-head"><h2>{tr("insights.agentUsage")}</h2></div><div className="agent-usage-list">{agents.map((value) => <div key={value.agent}><AgentIcon agent={value.agent} /><span><strong>{agentLabels[value.agent]}</strong><small>{value.session_count} {tr("common.sessions")} · {qualityLabel(value.quality)}</small></span><div><strong>{formatCompact(value.total_tokens)}</strong><small>Token</small></div></div>)}{!agents.length && <p>{tr("insights.noToken")}</p>}</div></div><div className="two-col insight-columns"><BreakdownPanel title={tr("insights.modelUsage")} subtitle="" values={models.map((value) => ({ key: value.model, label: value.model, detail: `${value.session_count} ${tr("common.sessions")}`, value: value.total_tokens }))} /><BreakdownPanel title={tr("insights.workspaceUsage")} subtitle="" values={workspaceUsage.map((value) => ({ key: value.workspace_id ?? "unlinked", label: value.name, detail: `${value.session_count} ${tr("common.sessions")}`, value: value.total_tokens }))} /></div></>}
     {summary && section === "commits" && <div className="panel"><div className="panel-head"><h2>{tr("insights.repositoryCommits")}</h2></div><div className="repository-usage-list">{repositories.slice(0, 20).map((value) => <div key={value.repository_group_id}><span><strong>{value.name}</strong><small>{tr("insights.repositoryDetail", { all: value.all_commits, attributed: value.attributed_commits })}</small></span><strong>{value.my_commits}</strong></div>)}{!repositories.length && <p>{tr("insights.noCommits")}</p>}</div></div>}
-    {section === "milestones" && <MilestonePaths achievements={achievements} />}
+    {section === "milestones" && <AchievementWall achievements={achievements} />}
     {section === "sources" && <div className="panel provider-panel"><div className="panel-head"><h2>{tr("insights.providers")}</h2><span className="badge">{status?.refreshed_at ? tr("home.updated", { time: relativeTime(status.refreshed_at) }) : tr("insights.notRefreshed")}</span></div><div className="provider-grid">{status?.providers.map((provider) => <ProviderRow key={provider.agent} provider={provider} />)}</div></div>}
   </div>;
 }
@@ -460,77 +460,131 @@ const specialAchievementIcons: Record<string, typeof Activity> = {
   "special-same-day-delivery": Workflow,
 };
 
-function MilestonePaths({ achievements }: { achievements: Achievement[] }) {
+function AchievementWall({ achievements }: { achievements: Achievement[] }) {
+  const [selected, setSelected] = useState<AchievementWallItem>();
   if (!achievements.length) return <div className="panel"><Empty compact icon={Award} title={tr("insights.preparing")} text="" /></div>;
-  const tracks = buildAchievementTracks(achievements).filter((track) => track.milestones.length);
-  const specials = buildSpecialAchievements(achievements);
-  const completed = tracks.reduce((count, track) => count + track.completed, 0);
-  const milestoneCount = tracks.reduce((count, track) => count + track.milestones.length, 0);
-  return <div className="milestone-layout">
-    <div className="panel milestone-panel">
-      <div className="panel-head"><h2>{tr("insights.milestones")}</h2><span className="badge">{completed} / {milestoneCount}</span></div>
-      <div className="milestone-paths">{tracks.map((track) => <MilestonePath key={track.category} track={track} />)}</div>
-    </div>
-    {!!specials.length && <SpecialAchievements achievements={specials} />}
-  </div>;
-}
-
-function MilestonePath({ track }: { track: AchievementTrack }) {
-  const Icon = milestoneIcons[track.category];
-  const progressPercent = Math.round(track.progressRatio * 100);
-  return <article className={`milestone-path ${track.next ? "in-progress" : "complete"}`}>
-    <header>
-      <span className="milestone-path-icon"><Icon size={19} /></span>
-      <div className="milestone-path-title"><h3>{tr(`milestones.category.${track.category}`)}</h3><strong>{formatMilestoneValue(track.category, track.progress)}</strong></div>
-      <div className="milestone-path-next"><span>{tr("milestones.completed", { completed: track.completed, total: track.milestones.length })}</span><strong>{track.next ? tr("milestones.next", { target: formatMilestoneValue(track.category, track.next.threshold) }) : tr("milestones.highest")}</strong></div>
-    </header>
-    <div className="milestone-rail-scroll">
-      <div className="milestone-rail" style={{ gridTemplateColumns: `repeat(${Math.max(1, track.milestones.length)}, minmax(92px, 1fr))` }}>
-        <div className="milestone-progress" role="progressbar" aria-label={tr("milestones.progress", { category: tr(`milestones.category.${track.category}`) })} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><i style={{ width: `${progressPercent}%` }} /></div>
-        {track.milestones.map((milestone) => {
-          const reached = achievementReached(milestone);
-          const current = track.next?.code === milestone.code;
-          return <div className={`milestone-node${reached ? " reached" : ""}${current ? " current" : ""}`} key={milestone.code}>
-            <span>{reached ? <Check size={13} /> : ""}</span>
-            <strong>{formatMilestoneValue(track.category, milestone.threshold)}</strong>
-            <small>{tr(`achievements.${achievementTranslationKey(milestone.code)}.title`)}</small>
-          </div>;
-        })}
+  const items = buildAchievementWallItems(achievements);
+  const tracks = items.filter((item) => item.kind === "track");
+  const specials = items.filter((item) => item.kind === "special");
+  const completedMilestones = tracks.reduce((count, item) => count + item.track.completed, 0);
+  const milestoneCount = tracks.reduce((count, item) => count + item.track.milestones.length, 0);
+  const completedSpecials = specials.filter((item) => item.unlocked).length;
+  return <section className="panel achievement-wall-panel">
+    <div className="panel-head">
+      <h2>{tr("insights.milestones")}</h2>
+      <div className="achievement-wall-counts">
+        <span className="badge">{tr("achievementWall.milestones", { completed: completedMilestones, total: milestoneCount })}</span>
+        <span className="badge">{tr("achievementWall.specials", { completed: completedSpecials, total: specials.length })}</span>
       </div>
     </div>
-    <details className="milestone-history">
-      <summary>{tr("milestones.history")}<ChevronRight size={14} /></summary>
-      <div>{track.milestones.map((milestone) => {
-        const current = track.next?.code === milestone.code;
-        return <div key={milestone.code}><span className={achievementReached(milestone) ? "reached" : current ? "current" : "locked"}>{achievementReached(milestone) ? <Check size={13} /> : null}</span><strong>{tr(`achievements.${achievementTranslationKey(milestone.code)}.title`)}</strong><small>{formatMilestoneValue(track.category, milestone.threshold)}</small><time>{milestone.unlocked_at ? tr("insights.unlockedAt", { date: formatDateTime(milestone.unlocked_at) }) : current ? tr("milestones.currentProgress", { progress: formatMilestoneValue(track.category, track.progress) }) : tr("milestones.locked")}</time></div>;
-      })}</div>
-    </details>
-  </article>;
+    <div className="achievement-wall-grid">{items.map((item) => <AchievementWallCard key={item.id} item={item} onOpen={() => setSelected(item)} />)}</div>
+    {selected && <AchievementDetailDialog key={selected.id} item={selected} onClose={() => setSelected(undefined)} />}
+  </section>;
+}
+
+function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOpen: () => void }) {
+  if (item.kind === "track") {
+    const Icon = milestoneIcons[item.track.category];
+    const title = tr(`achievements.${achievementTranslationKey(item.cover.code)}.title`);
+    return <button className={`achievement-wall-card track${item.unlocked ? " unlocked" : " locked"}`} onClick={onOpen} aria-label={tr("achievementWall.openTrack", { category: tr(`milestones.category.${item.track.category}`) })}>
+      <span className="achievement-wall-icon"><Icon size={20} /></span>
+      <span className="achievement-wall-kind">{tr(`milestones.category.${item.track.category}`)}</span>
+      <strong>{title}</strong>
+      <small>{formatMilestoneValue(item.track.category, item.cover.threshold)}</small>
+      <span className="achievement-wall-footer"><span>{tr("milestones.completed", { completed: item.track.completed, total: item.track.milestones.length })}</span><ChevronRight size={15} /></span>
+    </button>;
+  }
+  const { achievement, secret, unlocked } = item.special;
+  const hidden = secret && !unlocked;
+  const Icon = hidden ? LockKeyhole : specialAchievementIcons[achievement.code] ?? Award;
+  const title = hidden ? tr("special.mystery") : tr(`achievements.${achievementTranslationKey(achievement.code)}.title`);
+  const status = achievement.unlocked_at
+    ? tr("insights.unlockedAt", { date: formatDateTime(achievement.unlocked_at) })
+    : unlocked ? tr("special.reachedDateUnknown") : tr("milestones.locked");
+  return <button className={`achievement-wall-card special${unlocked ? " unlocked" : " locked"}${hidden ? " secret" : ""}`} onClick={onOpen} aria-label={tr("achievementWall.openSpecial", { title })}>
+    <span className="achievement-wall-icon"><Icon size={20} /></span>
+    <span className="achievement-wall-kind">{tr("special.title")}</span>
+    <strong>{title}</strong>
+    <small>{status}</small>
+    <span className="achievement-wall-footer"><span>{unlocked ? tr("achievementWall.unlocked") : tr("milestones.locked")}</span><ChevronRight size={15} /></span>
+  </button>;
 }
 
 function formatMilestoneValue(category: AchievementCategory, value: number) {
   return tr(`milestones.value.${category}`, { value: formatCompact(value) });
 }
 
-function SpecialAchievements({ achievements }: { achievements: SpecialAchievement[] }) {
-  const product = achievements.filter((value) => !value.secret);
-  const secrets = achievements.filter((value) => value.secret);
-  const unlocked = achievements.filter((value) => value.unlocked).length;
-  return <section className="panel special-achievements">
-    <div className="panel-head"><h2>{tr("special.title")}</h2><span className="badge">{unlocked} / {achievements.length}</span></div>
-    <div className="special-achievement-columns">
-      <SpecialAchievementGroup title={tr("special.product")} achievements={product} />
-      <SpecialAchievementGroup title={tr("special.secrets")} achievements={secrets} />
+function AchievementDetailDialog({ item, onClose }: { item: AchievementWallItem; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialogRef.current?.querySelector<HTMLElement>("button")?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
+      if (!focusable.length) return;
+      const first = focusable[0]; const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus();
+    };
+  }, [onClose]);
+  const title = item.kind === "track"
+    ? tr(`milestones.category.${item.track.category}`)
+    : item.special.secret && !item.special.unlocked
+      ? tr("special.mystery")
+      : tr(`achievements.${achievementTranslationKey(item.special.achievement.code)}.title`);
+  return <div className="achievement-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="achievement-dialog" role="dialog" aria-modal="true" aria-labelledby="achievement-dialog-title" ref={dialogRef}>
+      <header><div><span>{item.kind === "track" ? tr("achievementWall.track") : tr("special.title")}</span><h2 id="achievement-dialog-title">{title}</h2></div><button className="ghost icon-only" onClick={onClose} aria-label={tr("common.close")}><X size={17} /></button></header>
+      {item.kind === "track" ? <AchievementTrackDetail track={item.track} /> : <SpecialAchievementDetail item={item} />}
     </div>
-  </section>;
+  </div>;
 }
 
-function SpecialAchievementGroup({ title, achievements }: { title: string; achievements: SpecialAchievement[] }) {
-  return <section className="special-achievement-group"><h3>{title}</h3><div>{achievements.map((value) => <SpecialAchievementItem key={value.achievement.code} value={value} />)}</div></section>;
+function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
+  const [selected, setSelected] = useState(() => selectDefaultTrackMilestone(track));
+  const progressPercent = Math.round(track.progressRatio * 100);
+  const selectedReached = achievementReached(selected);
+  const selectedCurrent = track.next?.code === selected.code;
+  return <div className="achievement-dialog-content">
+    <div className="achievement-track-summary">
+      <span><small>{tr("achievementWall.currentValue")}</small><strong>{formatMilestoneValue(track.category, track.progress)}</strong></span>
+      <span><small>{tr("achievementWall.completedStages")}</small><strong>{track.completed} / {track.milestones.length}</strong></span>
+      <span><small>{tr("achievementWall.nextTarget")}</small><strong>{track.next ? formatMilestoneValue(track.category, track.next.threshold) : tr("milestones.highest")}</strong></span>
+    </div>
+    <div className="milestone-rail-scroll dialog-rail">
+      <div className="milestone-rail" style={{ gridTemplateColumns: `repeat(${Math.max(1, track.milestones.length)}, minmax(112px, 1fr))` }}>
+        <div className="milestone-progress" role="progressbar" aria-label={tr("milestones.progress", { category: tr(`milestones.category.${track.category}`) })} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><i style={{ width: `${progressPercent}%` }} /></div>
+        {track.milestones.map((milestone) => {
+          const reached = achievementReached(milestone);
+          const current = track.next?.code === milestone.code;
+          return <button className={`milestone-node${reached ? " reached" : ""}${current ? " current" : ""}${selected.code === milestone.code ? " selected" : ""}`} key={milestone.code} onClick={() => setSelected(milestone)} aria-pressed={selected.code === milestone.code}>
+            <span>{reached ? <Check size={13} /> : ""}</span>
+            <strong>{formatMilestoneValue(track.category, milestone.threshold)}</strong>
+            <small>{tr(`achievements.${achievementTranslationKey(milestone.code)}.title`)}</small>
+          </button>;
+        })}
+      </div>
+    </div>
+    <section className="achievement-stage-detail">
+      <div><span className={selectedReached ? "reached" : selectedCurrent ? "current" : "locked"}>{selectedReached ? <Check size={14} /> : <LockKeyhole size={13} />}</span><div><small>{tr("achievementWall.stageDetail")}</small><h3>{tr(`achievements.${achievementTranslationKey(selected.code)}.title`)}</h3></div></div>
+      <strong>{formatMilestoneValue(track.category, selected.threshold)}</strong>
+      <p>{selected.unlocked_at ? tr("insights.unlockedAt", { date: formatDateTime(selected.unlocked_at) }) : selectedReached ? tr("special.reachedDateUnknown") : selectedCurrent ? tr("milestones.currentProgress", { progress: formatMilestoneValue(track.category, track.progress) }) : tr("milestones.locked")}</p>
+    </section>
+  </div>;
 }
 
-function SpecialAchievementItem({ value }: { value: SpecialAchievement }) {
-  const { achievement, secret, unlocked } = value;
+function SpecialAchievementDetail({ item }: { item: Extract<AchievementWallItem, { kind: "special" }> }) {
+  const { achievement, secret, unlocked } = item.special;
   const hidden = secret && !unlocked;
   const key = achievementTranslationKey(achievement.code);
   const Icon = hidden ? LockKeyhole : specialAchievementIcons[achievement.code] ?? Award;
@@ -538,13 +592,12 @@ function SpecialAchievementItem({ value }: { value: SpecialAchievement }) {
   const status = achievement.unlocked_at
     ? tr("insights.unlockedAt", { date: formatDateTime(achievement.unlocked_at) })
     : unlocked ? tr("special.reachedDateUnknown") : tr("milestones.locked");
-  if (hidden) {
-    return <div className="special-achievement-item hidden" aria-label={`${title} · ${status}`}><span><Icon size={16} /></span><strong>{title}</strong><small>{status}</small></div>;
-  }
-  return <details className={`special-achievement-item${unlocked ? " unlocked" : ""}`}>
-    <summary><span><Icon size={16} /></span><strong>{title}</strong><small>{status}</small><ChevronRight size={14} /></summary>
-    <div><p>{tr(`achievements.${key}.description`)}</p>{achievement.unlocked_at && <time>{tr("insights.unlockedAt", { date: formatDateTime(achievement.unlocked_at) })}</time>}</div>
-  </details>;
+  return <div className="achievement-dialog-content special-detail">
+    <span className={`special-detail-icon${unlocked ? " unlocked" : ""}`}><Icon size={28} /></span>
+    <h3>{title}</h3>
+    <p>{hidden ? tr("achievementWall.secretCondition") : tr(`achievements.${key}.description`)}</p>
+    <span className="badge">{status}</span>
+  </div>;
 }
 
 function ProviderRow({ provider }: { provider: NonNullable<InsightsStatus["providers"]>[number] }) {

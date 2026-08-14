@@ -632,84 +632,83 @@ main { grid-row: 1; height: 100%; }
 :root[data-theme="light"] .workspace-row small, :root[data-theme="light"] .workspace-row div > span, :root[data-theme="light"] .catalog-row .asset-name small, :root[data-theme="light"] .activity-row small, :root[data-theme="light"] .activity-row time, :root[data-theme="light"] .agent-home-path, :root[data-theme="light"] .workspace-overview-meta { color: #626874; }
 :root[data-theme="light"] .workspace-column-head { color: #626874; border-color: #d0d1d7; }
 
-.milestone-panel > .panel-head { min-height: 52px; }
-.milestone-paths { display: grid; }
-.milestone-path { padding: 18px 20px 0; border-bottom: 1px solid var(--border); }
-.milestone-path:last-child { border-bottom: 0; }
-.milestone-path > header { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(180px, auto); gap: 12px; align-items: center; }
-.milestone-path-icon { width: 36px; height: 36px; display: grid; place-items: center; color: var(--purple); background: color-mix(in srgb, var(--purple) 12%, var(--panel-2)); border-radius: 9px; }
-.milestone-path-title h3 { margin: 0 0 3px; color: var(--text); font-size: var(--section-title-size); }
-.milestone-path-title strong { color: var(--muted); font-size: var(--metadata-size); font-weight: 600; }
-.milestone-path-next { display: grid; justify-items: end; gap: 3px; text-align: right; }
-.milestone-path-next span { color: var(--muted); font-size: var(--metadata-size); }
-.milestone-path-next strong { color: var(--text); font-size: var(--body-size); }
-.milestone-path.complete .milestone-path-next strong { color: var(--green); }
-.milestone-rail-scroll { margin-top: 16px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.achievement-wall-panel > .panel-head { min-height: 52px; }
+.achievement-wall-counts { display: flex; align-items: center; gap: 7px; }
+.achievement-wall-grid { padding: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.achievement-wall-card { position: relative; min-width: 0; min-height: 156px; padding: 16px; display: grid; grid-template-columns: 38px minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; gap: 5px 11px; color: var(--muted); text-align: left; background: var(--panel-2); border: 1px solid var(--border); border-radius: 11px; transition: border-color 140ms ease, background 140ms ease, transform 140ms ease; }
+.achievement-wall-card:hover { background: var(--surface-hover); border-color: var(--border-strong); transform: translateY(-1px); }
+.achievement-wall-card:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.achievement-wall-card.unlocked { background: color-mix(in srgb, var(--purple) 5%, var(--panel-2)); border-color: color-mix(in srgb, var(--purple) 30%, var(--border)); }
+.achievement-wall-icon { grid-row: 1 / span 2; width: 38px; height: 38px; display: grid; place-items: center; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.achievement-wall-card.unlocked .achievement-wall-icon { color: var(--purple); background: color-mix(in srgb, var(--purple) 12%, var(--panel)); border-color: color-mix(in srgb, var(--purple) 22%, var(--border)); }
+.achievement-wall-kind { align-self: end; overflow: hidden; color: var(--muted); font-size: var(--label-size); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.achievement-wall-card > strong { align-self: start; overflow: hidden; color: var(--text); font-size: var(--section-title-size); text-overflow: ellipsis; white-space: nowrap; }
+.achievement-wall-card > small { grid-column: 1 / -1; align-self: center; overflow: hidden; color: var(--muted); font-size: var(--metadata-size); text-overflow: ellipsis; white-space: nowrap; }
+.achievement-wall-footer { grid-column: 1 / -1; min-width: 0; padding-top: 9px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); border-top: 1px solid var(--border); font-size: var(--metadata-size); }
+.achievement-wall-card.unlocked .achievement-wall-footer { color: var(--purple); }
+.achievement-wall-footer > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.achievement-dialog-backdrop { position: fixed; z-index: 80; inset: 0; padding: 24px; display: grid; place-items: center; background: rgba(0, 0, 0, .58); backdrop-filter: blur(4px); }
+.achievement-dialog { width: min(960px, 100%); max-height: min(760px, calc(100vh - 48px)); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); color: var(--text); background: var(--panel); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: 0 24px 70px rgba(0, 0, 0, .42); }
+.achievement-dialog > header { min-height: 68px; padding: 12px 16px 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--border); }
+.achievement-dialog > header > div { min-width: 0; }
+.achievement-dialog > header span { display: block; margin-bottom: 2px; color: var(--muted); font-size: var(--label-size); font-weight: 650; }
+.achievement-dialog > header h2 { margin: 0; overflow: hidden; font-size: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.achievement-dialog-content { min-height: 0; overflow: auto; }
+.achievement-track-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--border); }
+.achievement-track-summary > span { min-width: 0; min-height: 68px; padding: 12px 18px; display: grid; align-content: center; gap: 4px; }
+.achievement-track-summary > span + span { border-left: 1px solid var(--border); }
+.achievement-track-summary small { color: var(--muted); font-size: var(--metadata-size); }
+.achievement-track-summary strong { overflow: hidden; color: var(--text); font-size: var(--body-size); text-overflow: ellipsis; white-space: nowrap; }
+.milestone-rail-scroll { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.dialog-rail { padding: 28px 20px 18px; border-bottom: 1px solid var(--border); }
 .milestone-rail { position: relative; min-width: max-content; padding: 0 0 8px; display: grid; }
-.milestone-progress { position: absolute; top: 10px; right: 46px; left: 46px; height: 3px; overflow: hidden; background: var(--border-strong); border-radius: 2px; }
+.milestone-progress { position: absolute; top: 10px; right: 56px; left: 56px; height: 3px; overflow: hidden; background: var(--border-strong); border-radius: 2px; }
 .milestone-progress i { height: 100%; display: block; background: var(--purple); border-radius: inherit; transition: width 180ms ease; }
-.milestone-node { position: relative; z-index: 1; min-width: 92px; display: grid; justify-items: center; gap: 5px; color: var(--muted); text-align: center; }
+.milestone-node { position: relative; z-index: 1; min-width: 112px; padding: 0 5px; display: grid; justify-items: center; gap: 6px; color: var(--muted); text-align: center; background: transparent; border-radius: 8px; }
+.milestone-node:hover { color: var(--text); }
+.milestone-node:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 .milestone-node > span { width: 22px; height: 22px; display: grid; place-items: center; color: var(--muted); background: var(--panel); border: 2px solid var(--border-strong); border-radius: 50%; }
 .milestone-node > strong { color: var(--muted); font-size: var(--label-size); white-space: nowrap; }
-.milestone-node > small { max-width: 100px; overflow: hidden; color: var(--muted); font-size: var(--label-size); text-overflow: ellipsis; white-space: nowrap; }
+.milestone-node > small { max-width: 108px; overflow: hidden; color: var(--muted); font-size: var(--label-size); text-overflow: ellipsis; white-space: nowrap; }
 .milestone-node.reached > span { color: white; background: var(--purple-2); border-color: var(--purple); }
 .milestone-node.reached > strong, .milestone-node.reached > small { color: var(--text); }
 .milestone-node.current > span { background: var(--panel); border-color: var(--purple); box-shadow: 0 0 0 4px color-mix(in srgb, var(--purple) 14%, transparent); }
 .milestone-node.current > strong { color: var(--purple); }
-.milestone-history { margin: 8px -20px 0; border-top: 1px solid var(--border); }
-.milestone-history > summary { min-height: 40px; padding: 0 20px; display: flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--muted); cursor: pointer; list-style: none; font-size: var(--metadata-size); }
-.milestone-history > summary::-webkit-details-marker { display: none; }
-.milestone-history > summary:hover { color: var(--text); }
-.milestone-history > summary svg { transition: transform 150ms ease; }
-.milestone-history[open] > summary svg { transform: rotate(90deg); }
-.milestone-history > div { border-top: 1px solid var(--border); }
-.milestone-history > div > div { min-height: 42px; padding: 7px 20px; display: grid; grid-template-columns: 22px minmax(160px, 1fr) 130px minmax(180px, auto); gap: 10px; align-items: center; border-bottom: 1px solid var(--border); }
-.milestone-history > div > div:last-child { border-bottom: 0; }
-.milestone-history > div span { width: 18px; height: 18px; display: grid; place-items: center; color: var(--muted); border: 1px solid var(--border-strong); border-radius: 50%; }
-.milestone-history > div span.reached { color: white; background: var(--purple-2); border-color: var(--purple); }
-.milestone-history > div span.current { border-color: var(--purple); }
-.milestone-history > div strong { color: var(--text); font-size: var(--body-size); }
-.milestone-history > div small, .milestone-history > div time { color: var(--muted); font-size: var(--metadata-size); }
-.milestone-history > div time { text-align: right; }
-:root[data-theme="light"] .milestone-path-icon { color: #5e48c9; background: #eeeafb; }
-:root[data-theme="light"] .milestone-node.reached > span, :root[data-theme="light"] .milestone-history > div span.reached { color: white; background: #6752ce; }
+.milestone-node.selected { background: color-mix(in srgb, var(--purple) 8%, transparent); }
+.achievement-stage-detail { min-height: 96px; padding: 16px 20px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 20px; }
+.achievement-stage-detail > div { min-width: 0; display: flex; align-items: center; gap: 11px; }
+.achievement-stage-detail > div > span { width: 30px; height: 30px; display: grid; flex: 0 0 auto; place-items: center; color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); border-radius: 50%; }
+.achievement-stage-detail > div > span.reached { color: white; background: var(--purple-2); border-color: var(--purple); }
+.achievement-stage-detail small { display: block; margin-bottom: 2px; color: var(--muted); font-size: var(--label-size); }
+.achievement-stage-detail h3 { margin: 0; color: var(--text); font-size: var(--section-title-size); }
+.achievement-stage-detail > strong { color: var(--text); font-size: var(--body-size); }
+.achievement-stage-detail > p { grid-column: 1 / -1; margin: 0 0 0 41px; color: var(--muted); font-size: var(--metadata-size); }
+.special-detail { padding: 36px 28px 40px; display: grid; justify-items: center; text-align: center; }
+.special-detail-icon { width: 64px; height: 64px; display: grid; place-items: center; color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); border-radius: 16px; }
+.special-detail-icon.unlocked { color: var(--purple); background: color-mix(in srgb, var(--purple) 12%, var(--panel)); border-color: color-mix(in srgb, var(--purple) 24%, var(--border)); }
+.special-detail h3 { margin: 14px 0 0; font-size: 20px; }
+.special-detail p { max-width: 560px; margin: 8px 0 16px; color: var(--muted); font-size: var(--body-size); line-height: 1.6; }
+:root[data-theme="light"] .achievement-wall-card.unlocked { background: #faf9ff; border-color: #d8d0f8; }
+:root[data-theme="light"] .achievement-wall-card.unlocked .achievement-wall-icon, :root[data-theme="light"] .special-detail-icon.unlocked { color: #5e48c9; background: #eeeafb; border-color: #d8d0f8; }
+:root[data-theme="light"] .milestone-node.reached > span, :root[data-theme="light"] .achievement-stage-detail > div > span.reached { color: white; background: #6752ce; }
 :root[data-theme="light"] .milestone-node.current > span { background: var(--panel); box-shadow: 0 0 0 4px rgba(103,82,206,.11); }
 :root[data-theme="light"] .milestone-progress { background: #d7d7de; }
-.milestone-layout { display: grid; gap: 14px; }
-.special-achievement-columns { display: grid; grid-template-columns: 1fr 1fr; }
-.special-achievement-group { min-width: 0; padding: 14px 18px 18px; }
-.special-achievement-group + .special-achievement-group { border-left: 1px solid var(--border); }
-.special-achievement-group > h3 { margin: 0 0 9px; color: var(--muted); font-size: var(--label-size); font-weight: 650; }
-.special-achievement-group > div { border: 1px solid var(--border); border-radius: 9px; }
-.special-achievement-item { display: block; color: var(--muted); border-bottom: 1px solid var(--border); }
-.special-achievement-item:last-child { border-bottom: 0; }
-.special-achievement-item > summary, .special-achievement-item.hidden { min-height: 48px; padding: 7px 10px; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; list-style: none; }
-.special-achievement-item > summary { cursor: pointer; }
-.special-achievement-item > summary::-webkit-details-marker { display: none; }
-.special-achievement-item > summary:hover { background: var(--surface-hover); }
-.special-achievement-item > summary > span, .special-achievement-item.hidden > span { width: 28px; height: 28px; display: grid; place-items: center; color: var(--muted); background: var(--panel-2); border-radius: 7px; }
-.special-achievement-item strong { min-width: 0; overflow: hidden; color: var(--text); font-size: var(--body-size); text-overflow: ellipsis; white-space: nowrap; }
-.special-achievement-item small { color: var(--muted); font-size: var(--metadata-size); white-space: nowrap; }
-.special-achievement-item > summary > svg { transition: transform 150ms ease; }
-.special-achievement-item[open] > summary > svg { transform: rotate(90deg); }
-.special-achievement-item > div { padding: 0 46px 11px; }
-.special-achievement-item > div p { margin: 0; color: var(--muted); font-size: var(--metadata-size); line-height: 1.5; }
-.special-achievement-item > div time { display: block; margin-top: 5px; color: var(--purple); font-size: var(--metadata-size); }
-.special-achievement-item.unlocked > summary > span { color: white; background: var(--purple-2); }
-.special-achievement-item.hidden { cursor: default; }
-.special-achievement-item.hidden strong, .special-achievement-item.hidden small { color: var(--muted); }
-:root[data-theme="light"] .special-achievement-item > summary > span, :root[data-theme="light"] .special-achievement-item.hidden > span { background: #f0f0f3; }
-:root[data-theme="light"] .special-achievement-item.unlocked > summary > span { background: #6752ce; }
 
 @media (max-width: 760px) {
-  .milestone-path > header { grid-template-columns: auto minmax(0, 1fr); }
-  .milestone-path-next { grid-column: 2; justify-items: start; text-align: left; }
-  .milestone-history > div > div { grid-template-columns: 22px minmax(0, 1fr) auto; }
-  .milestone-history > div time { grid-column: 2 / -1; text-align: left; }
-  .special-achievement-columns { grid-template-columns: 1fr; }
-  .special-achievement-group + .special-achievement-group { border-top: 1px solid var(--border); border-left: 0; }
-  .special-achievement-item > summary, .special-achievement-item.hidden { grid-template-columns: 28px minmax(0, 1fr) auto; }
-  .special-achievement-item > summary > svg { display: none; }
+  .achievement-wall-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .achievement-dialog-backdrop { padding: 12px; }
+  .achievement-dialog { max-height: calc(100vh - 24px); }
+  .achievement-track-summary { grid-template-columns: 1fr; }
+  .achievement-track-summary > span { min-height: 54px; }
+  .achievement-track-summary > span + span { border-top: 1px solid var(--border); border-left: 0; }
+  .achievement-stage-detail { grid-template-columns: 1fr; }
+  .achievement-stage-detail > p { margin-left: 41px; }
+}
+
+@media (max-width: 520px) {
+  .achievement-wall-counts { align-items: flex-end; flex-direction: column; }
+  .achievement-wall-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 980px) {
