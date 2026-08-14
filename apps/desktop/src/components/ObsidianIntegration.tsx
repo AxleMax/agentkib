@@ -133,6 +133,8 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
     }
   };
 
+  if (integration && !integration.installation.installed && !link) return null;
+
   return (
     <div className="panel obsidian-card workspace-obsidian-card">
       <div className="panel-head">

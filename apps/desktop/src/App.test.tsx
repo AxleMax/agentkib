@@ -91,6 +91,29 @@ describe("AgentKib desktop", () => {
     expect(screen.queryByText("选择本地项目")).not.toBeInTheDocument();
   });
 
+  it("keeps unavailable usage providers out of Home attention", async () => {
+    vi.mocked(api.insightsStatus).mockResolvedValueOnce({
+      running: false,
+      providers: [{ agent: "open-claw", available: false, quality: "incomplete", imported_events: 0, error: "gateway offline" }],
+    });
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    expect(screen.getByText("Everything is in order")).toBeInTheDocument();
+    expect(screen.queryByText("gateway offline")).not.toBeInTheDocument();
+  });
+
+  it("hides the empty recent activity panel and links every Home metric", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    expect(screen.queryByText("Recent Activity")).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*1/ }));
+    expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
+  });
+
   it("keeps low-frequency tasks out of the global navigation", async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
@@ -107,10 +130,10 @@ describe("AgentKib desktop", () => {
     expect(navigation.queryByRole("button", { name: "Activity" })).not.toBeInTheDocument();
 
     fireEvent.click(navigation.getByRole("button", { name: "Assets" }));
-    expect(await screen.findByRole("button", { name: "Instructions" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Skills" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Memory" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "MCP" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: /Instructions/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Skills/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Memory/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^MCP\s*0$/ })).toBeInTheDocument();
   });
 
   it("keeps the global sidebar when opening a workspace without a manifest", async () => {
@@ -127,7 +150,7 @@ describe("AgentKib desktop", () => {
     const project = await screen.findByRole("button", { name: /Project \/tmp\/project/ });
     fireEvent.click(project);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Project" })).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
     const navigation = within(screen.getByRole("navigation", { name: "Primary navigation" }));
     expect(navigation.getAllByRole("button")).toHaveLength(5);
     expect(screen.getByRole("button", { name: "Review changes" })).toBeDisabled();
@@ -156,9 +179,20 @@ describe("AgentKib desktop", () => {
     render(<App />);
     await waitFor(() => expect(screen.getByText(/120K Token/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Achievements" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Overview" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument());
     expect(screen.getByText("Activity Heatmap")).toBeInTheDocument();
     expect(screen.getAllByText("My Commits")).toHaveLength(2);
+  });
+
+  it("renders only the panels for the selected achievement section", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Achievements" }));
+    expect(await screen.findByText("Activity Heatmap")).toBeInTheDocument();
+    expect(screen.queryByText("Agent Usage")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Token" }));
+    expect(await screen.findByText("Agent Usage")).toBeInTheDocument();
+    expect(screen.queryByText("Activity Heatmap")).not.toBeInTheDocument();
   });
 
   it.each([
