@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use agentkib_platform::fs::{ExpectedFile, atomic_replace_checked, atomic_write};
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
@@ -60,17 +61,22 @@ pub fn apply_changeset(
         let mut temp = NamedTempFile::new_in(parent)?;
         use std::io::Write;
         temp.write_all(change.after.as_bytes())?;
+        if let Ok(metadata) = fs::metadata(&change.target) {
+            temp.as_file_mut().set_permissions(metadata.permissions())?;
+        }
         temp.as_file().sync_all()?;
         prepared.push(temp);
     }
 
     let mut applied = Vec::new();
     for (index, (change, temp)) in changeset.changes.iter().zip(prepared).enumerate() {
-        let write_result = temp
-            .persist(&change.target)
-            .map_err(|error| {
-                anyhow::anyhow!("Failed to write {}: {}", change.target.display(), error)
-            })
+        let expected = change
+            .original_hash
+            .as_deref()
+            .map(ExpectedFile::Sha256)
+            .unwrap_or(ExpectedFile::Missing);
+        let write_result = atomic_replace_checked(temp.path(), &change.target, expected)
+            .with_context(|| format!("Failed to write {}", change.target.display()))
             .and_then(|_| {
                 let written = fs::read_to_string(&change.target)?;
                 validate_written(&change.validator, &written).with_context(|| {
@@ -95,7 +101,9 @@ fn rollback(changeset: &ChangeSet, backup_dir: &Path, last_index: usize) {
         let target = &changeset.changes[index].target;
         let backup = backup_dir.join(format!("{index}.bak"));
         if backup.exists() {
-            let _ = fs::copy(backup, target);
+            if let Ok(content) = fs::read(backup) {
+                let _ = atomic_write(target, &content);
+            }
         } else {
             let _ = fs::remove_file(target);
         }

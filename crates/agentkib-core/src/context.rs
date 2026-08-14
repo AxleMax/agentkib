@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use agentkib_platform::path::{canonicalize, equivalent, starts_with as path_starts_with};
 use anyhow::{Context, Result, bail};
 
 use crate::{AgentKind, ContextPreview, ContextSection, Manifest, canonical_project};
@@ -24,10 +25,9 @@ pub fn resolve_context(
     } else {
         root.join(cwd)
     };
-    let cwd = cwd
-        .canonicalize()
+    let cwd = canonicalize(&cwd)
         .with_context(|| format!("Working directory does not exist: {}", cwd.display()))?;
-    if !cwd.starts_with(&root) {
+    if !path_starts_with(&cwd, &root) {
         bail!("Working directory must be inside the project");
     }
 
@@ -144,12 +144,12 @@ fn deepseek_project_root(workspace: &Path, cwd: &Path) -> PathBuf {
         if current.join(".git").exists() {
             return current.to_path_buf();
         }
-        if current == workspace {
+        if equivalent(current, workspace) {
             return cwd.to_path_buf();
         }
         let Some(parent) = current
             .parent()
-            .filter(|parent| parent.starts_with(workspace))
+            .filter(|parent| path_starts_with(parent, workspace))
         else {
             return cwd.to_path_buf();
         };
@@ -348,13 +348,18 @@ fn deepseek_harness_skills(root: &Path) -> Vec<String> {
 }
 
 fn directory_chain(root: &Path, cwd: &Path) -> Result<Vec<PathBuf>> {
-    let relative = cwd.strip_prefix(root)?;
-    let mut dirs = vec![root.to_path_buf()];
-    let mut current = root.to_path_buf();
-    for part in relative.components() {
-        current.push(part);
-        dirs.push(current.clone());
+    let mut dirs = Vec::new();
+    let mut current = cwd;
+    loop {
+        dirs.push(current.to_path_buf());
+        if equivalent(current, root) {
+            break;
+        }
+        current = current
+            .parent()
+            .context("Working directory must be inside the project")?;
     }
+    dirs.reverse();
     Ok(dirs)
 }
 
@@ -479,8 +484,8 @@ fn load_with_imports(
     if depth > 5 {
         bail!("Instruction import depth exceeds 5: {}", path.display());
     }
-    let canonical = path.canonicalize()?;
-    if !canonical.starts_with(project) {
+    let canonical = canonicalize(path)?;
+    if !path_starts_with(&canonical, project) {
         bail!(
             "Refusing to import instructions outside the project: {}",
             path.display()
@@ -631,7 +636,7 @@ mod tests {
             vec!["must not be shared".into()],
         )
         .unwrap();
-        let project = dir.path().canonicalize().unwrap();
+        let project = canonicalize(dir.path()).unwrap();
         let project_sections: Vec<_> = preview
             .sections
             .iter()

@@ -4,6 +4,7 @@ use agentkib_core::{
     AgentKind, ChangeScope, ChangeSet, FileChange, McpConfigDocument, McpMigrationCandidate,
     McpServerConfig, McpServerTransport, RiskLevel, hash_content,
 };
+use agentkib_platform::path::{canonicalize, starts_with as path_starts_with};
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde_json::Value;
@@ -88,7 +89,7 @@ pub fn plan_migration(
     servers: &[McpServerConfig],
     gateway_url: &str,
 ) -> Result<ChangeSet> {
-    let project = project.canonicalize()?;
+    let project = canonicalize(project)?;
     let candidates = scan_native_candidates(Some(&project))?;
     let selected: Vec<_> = candidates
         .iter()
@@ -150,7 +151,7 @@ pub fn plan_migration(
             .collect();
         let before = std::fs::read_to_string(&source)?;
         let after = remove_native_candidates(&before, &source_candidates, gateway_url)?;
-        let in_project = source.starts_with(&project);
+        let in_project = path_starts_with(&source, &project);
         changes.push(file_change(
             &source,
             &before,
@@ -339,7 +340,7 @@ fn candidate(
     endpoint: &str,
     has_secret_values: bool,
 ) -> McpMigrationCandidate {
-    let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let source_path = canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let digest = Sha256::digest(format!("{}:{name}", source_path.display()));
     let supported = matches!(transport, "stdio" | "http" | "streamable-http" | "sse");
     McpMigrationCandidate {

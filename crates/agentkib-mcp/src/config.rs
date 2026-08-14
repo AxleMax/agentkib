@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use agentkib_core::{AgentKind, McpConfigDocument, McpServerConfig};
+use agentkib_platform::fs::atomic_write;
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 
@@ -93,17 +94,15 @@ pub fn save_document(path: &Path, document: &McpConfigDocument, private: bool) -
     validate_document_with_secrets(document, private)?;
     let parent = path.parent().context("MCP config path has no parent")?;
     fs::create_dir_all(parent)?;
-    let temp = path.with_extension("tmp");
-    fs::write(
-        &temp,
-        format!("{}\n", serde_json::to_string_pretty(document)?),
+    atomic_write(
+        path,
+        format!("{}\n", serde_json::to_string_pretty(document)?).as_bytes(),
     )?;
     #[cfg(unix)]
     if private {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     }
-    fs::rename(&temp, path)?;
     if private {
         ensure_project_local_ignored(path)?;
     }

@@ -13,6 +13,7 @@ name = "agentkib-adapters"
 version = "0.1.0"
 dependencies = [
  "agentkib-core",
+ "agentkib-platform",
  "anyhow",
  "chrono",
  "dirs",
@@ -40,6 +41,7 @@ dependencies = [
 name = "agentkib-core"
 version = "0.1.0"
 dependencies = [
+ "agentkib-platform",
  "anyhow",
  "chrono",
  "hex",
@@ -64,6 +66,7 @@ dependencies = [
  "agentkib-gateways",
  "agentkib-insights",
  "agentkib-mcp",
+ "agentkib-platform",
  "agentkib-quota",
  "agentkib-storage",
  "agentkib-store",
@@ -88,6 +91,7 @@ name = "agentkib-discovery"
 version = "0.1.0"
 dependencies = [
  "agentkib-core",
+ "agentkib-platform",
  "anyhow",
  "chrono",
  "dirs",
@@ -103,6 +107,7 @@ dependencies = [
 name = "agentkib-gateways"
 version = "0.1.0"
 dependencies = [
+ "agentkib-platform",
  "anyhow",
  "base64 0.22.1",
  "chrono",
@@ -124,6 +129,7 @@ name = "agentkib-insights"
 version = "0.1.0"
 dependencies = [
  "agentkib-core",
+ "agentkib-platform",
  "anyhow",
  "chrono",
  "dirs",
@@ -140,6 +146,7 @@ name = "agentkib-mcp"
 version = "0.1.0"
 dependencies = [
  "agentkib-core",
+ "agentkib-platform",
  "agentkib-store",
  "anyhow",
  "async-trait",
@@ -163,9 +170,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentkib-platform"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "sha2",
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "agentkib-quota"
 version = "0.1.0"
 dependencies = [
+ "agentkib-platform",
  "anyhow",
  "chrono",
  "serde",
@@ -177,6 +195,7 @@ dependencies = [
 name = "agentkib-storage"
 version = "0.1.0"
 dependencies = [
+ "agentkib-platform",
  "chrono",
  "serde",
  "tempfile",
@@ -189,6 +208,7 @@ version = "0.1.0"
 dependencies = [
  "agentkib-core",
  "agentkib-insights",
+ "agentkib-platform",
  "agentkib-quota",
  "agentkib-storage",
  "anyhow",

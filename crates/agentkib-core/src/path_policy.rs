@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use agentkib_platform::path::{canonicalize, canonicalize_allow_missing, equivalent, starts_with};
 use anyhow::{Context, Result, bail};
 
 pub fn canonical_project(path: &Path) -> Result<PathBuf> {
-    let canonical = path
-        .canonicalize()
+    let canonical = canonicalize(path)
         .with_context(|| format!("Project directory does not exist: {}", path.display()))?;
     if !canonical.is_dir() {
         bail!("Project path is not a directory: {}", canonical.display());
@@ -18,22 +18,15 @@ pub fn ensure_allowed_target(
     approved_home_files: &[PathBuf],
 ) -> Result<()> {
     let project = canonical_project(project)?;
-    let candidate = if target.exists() {
-        target.canonicalize()?
-    } else {
-        let parent = target
-            .parent()
-            .context("Target file has no parent directory")?;
-        let existing = nearest_existing(parent).context("Target parent cannot be resolved")?;
-        let canonical_parent = existing.canonicalize()?;
-        canonical_parent
-            .join(parent.strip_prefix(&existing).unwrap_or(Path::new("")))
-            .join(target.file_name().context("Target filename is invalid")?)
-    };
-    if candidate.starts_with(&project) {
+    let candidate = canonicalize_allow_missing(target)?;
+    if starts_with(&candidate, &project) {
         return Ok(());
     }
-    if approved_home_files.iter().any(|path| path == &candidate) {
+    if approved_home_files
+        .iter()
+        .filter_map(|path| canonicalize_allow_missing(path).ok())
+        .any(|path| equivalent(&path, &candidate))
+    {
         return Ok(());
     }
     bail!(
@@ -42,12 +35,17 @@ pub fn ensure_allowed_target(
     )
 }
 
-fn nearest_existing(path: &Path) -> Option<PathBuf> {
-    let mut current = path;
-    loop {
-        if current.exists() {
-            return Some(current.to_path_buf());
-        }
-        current = current.parent()?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn missing_target_cannot_escape_with_parent_components() {
+        let directory = tempdir().unwrap();
+        let project = directory.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        let target = project.join("missing/../../outside/config.json");
+        assert!(ensure_allowed_target(&project, &target, &[]).is_err());
     }
 }

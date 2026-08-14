@@ -5,6 +5,7 @@ use std::sync::Arc;
 use agentkib_core::{
     McpRuntimeState, McpRuntimeStatus, McpServerConfig, McpServerTransport, McpToolDescriptor,
 };
+use agentkib_platform::process::ProcessTree;
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use http::{HeaderName, HeaderValue};
@@ -33,6 +34,7 @@ struct RuntimeInstance {
     call_lock: Mutex<()>,
     parallel: bool,
     service: Mutex<Option<RunningService<RoleClient, ()>>>,
+    _process_tree: Option<ProcessTree>,
 }
 
 impl RuntimeManager {
@@ -264,7 +266,9 @@ async fn restart_limit_reached(failures: &Mutex<FailureWindow>, hash: &str) -> b
 async fn start_instance(server: &McpServerConfig) -> Result<RuntimeInstance> {
     match &server.transport {
         McpServerTransport::Stdio { command, args, cwd } => {
-            let mut process = tokio::process::Command::new(command);
+            // Windows cannot execute npm/pnpm-generated .cmd or .bat shims directly.
+            // Resolve PATHEXT first and route batch shims through cmd.exe.
+            let mut process = crate::process::command_for_tokio(command, cwd.as_deref());
             process.args(args);
             if let Some(cwd) = cwd {
                 process.current_dir(cwd);
@@ -273,6 +277,11 @@ async fn start_instance(server: &McpServerConfig) -> Result<RuntimeInstance> {
             let transport = TokioChildProcess::new(process.configure(|command| {
                 command.kill_on_drop(true);
             }))?;
+            let process_tree = ProcessTree::attach_pid(
+                transport
+                    .id()
+                    .context("MCP child process ID is unavailable")?,
+            )?;
             let running = ().serve(transport).await?;
             let peer = running.peer().clone();
             Ok(RuntimeInstance {
@@ -280,6 +289,7 @@ async fn start_instance(server: &McpServerConfig) -> Result<RuntimeInstance> {
                 call_lock: Mutex::new(()),
                 parallel: server.supports_parallel_tool_calls,
                 service: Mutex::new(Some(running)),
+                _process_tree: Some(process_tree),
             })
         }
         McpServerTransport::StreamableHttp { url } => {
@@ -295,6 +305,7 @@ async fn start_instance(server: &McpServerConfig) -> Result<RuntimeInstance> {
                     call_lock: Mutex::new(()),
                     parallel: server.supports_parallel_tool_calls,
                     service: Mutex::new(Some(running)),
+                    _process_tree: None,
                 });
             }
             let running = ().serve(StreamableHttpClientTransport::from_config(config)).await?;
@@ -304,6 +315,7 @@ async fn start_instance(server: &McpServerConfig) -> Result<RuntimeInstance> {
                 call_lock: Mutex::new(()),
                 parallel: server.supports_parallel_tool_calls,
                 service: Mutex::new(Some(running)),
+                _process_tree: None,
             })
         }
         McpServerTransport::Sse { .. } => {

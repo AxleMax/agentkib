@@ -1,17 +1,22 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::{Duration, Instant};
 
 use agentkib_core::{
     McpInstallation, McpPackageKind, McpPackageReference, McpRegistryEntry, McpServerConfig,
     McpServerTransport,
 };
+use agentkib_platform::fs::move_path;
+use agentkib_platform::path::{equivalent, starts_with as path_starts_with};
+use agentkib_platform::process::ProcessTree;
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const REGISTRY_BASE: &str = "https://registry.modelcontextprotocol.io/v0.1";
+const RUNTIME_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+const PACKAGE_INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub async fn search_registry(query: &str) -> Result<Vec<McpRegistryEntry>> {
     let response = reqwest::Client::new()
@@ -155,7 +160,7 @@ pub fn uninstall_package(installation: &McpInstallation) -> Result<()> {
     let parent = path
         .parent()
         .context("MCP installation path has no parent")?;
-    if parent != root || !path.starts_with(&root) {
+    if !equivalent(parent, &root) || !path_starts_with(path, &root) {
         bail!("Refusing to remove an MCP installation outside AgentKib data");
     }
     if path.is_dir() {
@@ -190,18 +195,25 @@ fn install_npm(entry: &McpRegistryEntry) -> Result<(McpInstallation, McpServerCo
     let temp = target.with_extension("installing");
     prepare_clean_install_directory(&temp)?;
     let package = format!("{}@{}", entry.identifier, entry.version);
-    let result = Command::new("npm")
-        .args(["install", "--prefix"])
-        .arg(&temp)
-        .args(["--no-save", "--ignore-scripts"])
-        .arg(&package)
-        .status()
-        .context("Unable to start npm")?;
+    let mut npm = crate::process::command_for_std("npm");
+    let result = command_status(
+        npm.args(["install", "--prefix"])
+            .arg(&temp)
+            .args(["--no-save", "--ignore-scripts"])
+            .arg(&package),
+        PACKAGE_INSTALL_TIMEOUT,
+    )
+    .context("npm installation could not complete")?;
     if !result.success() {
         let _ = fs::remove_dir_all(&temp);
         bail!("npm installation failed with status {result}");
     }
-    let command = npm_binary(&temp, &entry.identifier)?;
+    let temporary_command = npm_binary(&temp, &entry.identifier)?;
+    let command = target.join(
+        temporary_command
+            .strip_prefix(&temp)
+            .context("npm executable is outside its installation directory")?,
+    );
     finish_install(&temp, &target)?;
     installed_package(entry, target, command, entry.package_arguments.clone())
 }
@@ -212,17 +224,22 @@ fn install_pypi(entry: &McpRegistryEntry) -> Result<(McpInstallation, McpServerC
     let temp = target.with_extension("installing");
     prepare_clean_install_directory(&temp)?;
     let venv = temp.join("venv");
-    let created = Command::new("uv").arg("venv").arg(&venv).status()?;
+    let mut uv = crate::process::command_for_std("uv");
+    let created = command_status(uv.arg("venv").arg(&venv), PACKAGE_INSTALL_TIMEOUT)
+        .context("uv virtual environment creation could not complete")?;
     if !created.success() {
         let _ = fs::remove_dir_all(&temp);
         bail!("uv venv failed with status {created}");
     }
     let package = format!("{}=={}", entry.identifier, entry.version);
-    let installed = Command::new("uv")
-        .args(["pip", "install", "--python"])
-        .arg(venv.join("bin/python"))
-        .arg(&package)
-        .status()?;
+    let mut uv = crate::process::command_for_std("uv");
+    let installed = command_status(
+        uv.args(["pip", "install", "--python"])
+            .arg(venv_python(&venv))
+            .arg(&package),
+        PACKAGE_INSTALL_TIMEOUT,
+    )
+    .context("uv package installation could not complete")?;
     if !installed.success() {
         let _ = fs::remove_dir_all(&temp);
         bail!("uv pip install failed with status {installed}");
@@ -232,43 +249,78 @@ fn install_pypi(entry: &McpRegistryEntry) -> Result<(McpInstallation, McpServerC
     installed_package(
         entry,
         target.clone(),
-        target.join("venv/bin").join(executable),
+        venv_scripts_dir(&target.join("venv")).join(executable),
         entry.package_arguments.clone(),
     )
 }
 
 fn find_venv_executable(venv: &Path, identifier: &str) -> Result<String> {
-    let bin = venv.join("bin");
+    let bin = venv_scripts_dir(venv);
     let normalized = identifier.replace('_', "-").to_ascii_lowercase();
     let mut candidates: Vec<String> = fs::read_dir(&bin)?
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_file())
         .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| {
-            !matches!(
-                name.as_str(),
-                "activate"
-                    | "activate.csh"
-                    | "activate.fish"
-                    | "activate.nu"
-                    | "activate.ps1"
-                    | "activate_this.py"
-                    | "deactivate.bat"
-                    | "pip"
-                    | "pip3"
-                    | "python"
-                    | "python3"
-                    | "pydoc"
-            )
-        })
+        .filter(|name| !is_venv_support_executable(name))
         .collect();
     candidates.sort();
     candidates
         .iter()
-        .find(|name| name.replace('_', "-").to_ascii_lowercase() == normalized)
+        .find(|name| normalized_executable_name(name) == normalized)
         .or_else(|| candidates.first())
         .cloned()
         .context("PyPI package did not install an executable entry point")
+}
+
+fn venv_scripts_dir(venv: &Path) -> PathBuf {
+    venv_scripts_dir_for(venv, cfg!(target_os = "windows"))
+}
+
+fn venv_scripts_dir_for(venv: &Path, windows: bool) -> PathBuf {
+    if windows {
+        venv.join("Scripts")
+    } else {
+        venv.join("bin")
+    }
+}
+
+fn venv_python(venv: &Path) -> PathBuf {
+    venv_python_for(venv, cfg!(target_os = "windows"))
+}
+
+fn venv_python_for(venv: &Path, windows: bool) -> PathBuf {
+    if windows {
+        venv.join("Scripts/python.exe")
+    } else {
+        venv.join("bin/python")
+    }
+}
+
+fn normalized_executable_name(name: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    let stem = [".exe", ".cmd", ".bat"]
+        .iter()
+        .find_map(|extension| lower.strip_suffix(extension))
+        .unwrap_or(&lower);
+    stem.replace('_', "-")
+}
+
+fn is_venv_support_executable(name: &str) -> bool {
+    matches!(
+        normalized_executable_name(name).as_str(),
+        "activate"
+            | "activate.csh"
+            | "activate.fish"
+            | "activate.nu"
+            | "activate.ps1"
+            | "activate-this.py"
+            | "deactivate"
+            | "pip"
+            | "pip3"
+            | "python"
+            | "python3"
+            | "pydoc"
+    )
 }
 
 fn installed_package(
@@ -352,11 +404,11 @@ fn finish_install(temp: &Path, target: &Path) -> Result<()> {
         fs::remove_dir_all(&backup)?;
     }
     if target.exists() {
-        fs::rename(target, &backup)?;
+        move_path(target, &backup)?;
     }
-    if let Err(error) = fs::rename(temp, target) {
+    if let Err(error) = move_path(temp, target) {
         if backup.exists() {
-            let _ = fs::rename(&backup, target);
+            let _ = move_path(&backup, target);
         }
         return Err(error.into());
     }
@@ -367,14 +419,47 @@ fn finish_install(temp: &Path, target: &Path) -> Result<()> {
 }
 
 fn ensure_command(command: &str) -> Result<()> {
-    let status = Command::new(command).arg("--version").status();
-    if !status.is_ok_and(|status| status.success()) {
+    let mut process = crate::process::command_for_std(command);
+    let status = command_status(process.arg("--version"), RUNTIME_CHECK_TIMEOUT)
+        .with_context(|| format!("Unable to check required runtime `{command}`"))?;
+    if !status.success() {
         bail!("Required runtime `{command}` is not installed or not executable");
     }
     Ok(())
 }
 
+fn command_status(
+    command: &mut std::process::Command,
+    timeout: Duration,
+) -> std::io::Result<std::process::ExitStatus> {
+    let mut child = command.spawn()?;
+    let process_tree = ProcessTree::attach(&child).inspect_err(|_| {
+        let _ = child.kill();
+        let _ = child.wait();
+    })?;
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if started.elapsed() >= timeout {
+            let _ = process_tree.terminate();
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("command timed out after {} seconds", timeout.as_secs()),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn npm_binary(root: &Path, identifier: &str) -> Result<PathBuf> {
+    npm_binary_for(root, identifier, cfg!(target_os = "windows"))
+}
+
+fn npm_binary_for(root: &Path, identifier: &str, windows: bool) -> Result<PathBuf> {
     let package = root
         .join("node_modules")
         .join(identifier)
@@ -389,5 +474,86 @@ fn npm_binary(root: &Path, identifier: &str) -> Result<PathBuf> {
             .context("npm package has no binary")?,
         _ => bail!("npm package does not declare an executable"),
     };
-    Ok(root.join("node_modules/.bin").join(executable))
+    let executable = if windows {
+        format!("{executable}.cmd")
+    } else {
+        executable.to_string()
+    };
+    let executable = root.join("node_modules/.bin").join(executable);
+    if !executable.is_file() {
+        bail!(
+            "npm package executable was not created: {}",
+            executable.display()
+        );
+    }
+    Ok(executable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn executable_name_matching_accepts_windows_venv_launchers() {
+        assert_eq!(normalized_executable_name("mcp_server.EXE"), "mcp-server");
+        assert!(is_venv_support_executable("python.exe"));
+        assert!(is_venv_support_executable("deactivate.bat"));
+        assert!(!is_venv_support_executable("mcp-server.exe"));
+        let venv = Path::new("C:/mcp/venv");
+        assert_eq!(
+            venv_python_for(venv, true),
+            PathBuf::from("C:/mcp/venv/Scripts/python.exe")
+        );
+        assert_eq!(
+            venv_scripts_dir_for(venv, true),
+            PathBuf::from("C:/mcp/venv/Scripts")
+        );
+    }
+
+    #[test]
+    fn npm_binary_requires_the_generated_platform_launcher() {
+        let directory = tempdir().unwrap();
+        let package = directory.path().join("node_modules/@scope/server");
+        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(directory.path().join("node_modules/.bin")).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"bin":{"mcp-server":"dist/main.js"}}"#,
+        )
+        .unwrap();
+        let launcher = directory.path().join("node_modules/.bin/mcp-server.cmd");
+        fs::write(&launcher, "launcher").unwrap();
+
+        assert_eq!(
+            npm_binary_for(directory.path(), "@scope/server", true).unwrap(),
+            launcher
+        );
+    }
+
+    #[test]
+    fn finishing_install_replaces_target_and_removes_backup() {
+        let directory = tempdir().unwrap();
+        let target = directory.path().join("package");
+        let temporary = directory.path().join("package.installing");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("version"), "old").unwrap();
+        fs::create_dir_all(&temporary).unwrap();
+        fs::write(temporary.join("version"), "new").unwrap();
+
+        finish_install(&temporary, &target).unwrap();
+
+        assert_eq!(fs::read_to_string(target.join("version")).unwrap(), "new");
+        assert!(!target.with_extension("replaced").exists());
+        assert!(!temporary.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_status_stops_a_timed_out_process() {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "sleep 5"]);
+        let error = command_status(&mut command, Duration::from_millis(20)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
 }

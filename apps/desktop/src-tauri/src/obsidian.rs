@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+use agentkib_platform::fs::atomic_write;
+use agentkib_platform::path::{canonicalize, starts_with as path_starts_with};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -116,15 +118,11 @@ pub fn open_workspace(data_dir: &Path, workspace_id: &str) -> Result<()> {
         .workspace_links
         .get(workspace_id)
         .context("The workspace is not linked to Obsidian")?;
-    let target = link
-        .target_path
-        .canonicalize()
-        .context("The linked Obsidian target no longer exists")?;
-    let vault = link
-        .vault_path
-        .canonicalize()
-        .context("The linked Obsidian vault no longer exists")?;
-    if !target.starts_with(&vault) {
+    let target =
+        canonicalize(&link.target_path).context("The linked Obsidian target no longer exists")?;
+    let vault =
+        canonicalize(&link.vault_path).context("The linked Obsidian vault no longer exists")?;
+    if !path_starts_with(&target, &vault) {
         bail!("The linked target is outside its Obsidian vault");
     }
     open_uri(&format!(
@@ -149,18 +147,15 @@ fn load_stored(data_dir: &Path) -> Result<StoredObsidianIntegration> {
 fn save_stored(data_dir: &Path, value: &StoredObsidianIntegration) -> Result<()> {
     fs::create_dir_all(data_dir)?;
     let path = integration_path(data_dir);
-    let temporary = path.with_extension("tmp");
-    fs::write(
-        &temporary,
-        format!("{}\n", serde_json::to_string_pretty(value)?),
+    atomic_write(
+        &path,
+        format!("{}\n", serde_json::to_string_pretty(value)?).as_bytes(),
     )?;
-    fs::rename(temporary, path)?;
     Ok(())
 }
 
 fn validate_vault(path: &Path) -> Result<PathBuf> {
-    let canonical = path
-        .canonicalize()
+    let canonical = canonicalize(path)
         .with_context(|| format!("Obsidian vault does not exist: {}", path.display()))?;
     if !canonical.is_dir() || !canonical.join(".obsidian").is_dir() {
         bail!("The selected folder is not an Obsidian vault");
@@ -181,11 +176,9 @@ fn resolve_target(vault: &Path, relative_target: Option<&str>) -> Result<PathBuf
     {
         bail!("The linked path must be relative to the Obsidian vault");
     }
-    let target = vault
-        .join(relative_path)
-        .canonicalize()
+    let target = canonicalize(&vault.join(relative_path))
         .with_context(|| format!("The linked Obsidian path does not exist: {relative}"))?;
-    if !target.starts_with(vault) {
+    if !path_starts_with(&target, vault) {
         bail!("The linked path is outside the Obsidian vault");
     }
     Ok(target)
@@ -207,14 +200,36 @@ fn merged_vaults(stored: &StoredObsidianIntegration) -> Vec<ObsidianVault> {
 }
 
 fn discover_vaults() -> Vec<ObsidianVault> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(path) = vault_registry_path() else {
         return Vec::new();
     };
-    let path = home.join("Library/Application Support/obsidian/obsidian.json");
     let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
     parse_vault_registry(&content)
+}
+
+fn vault_registry_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir().map(|home| home.join("Library/Application Support/obsidian/obsidian.json"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .or_else(dirs::config_dir)
+            .map(|app_data| obsidian_registry_in(&app_data))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        dirs::config_dir().map(|config| config.join("obsidian/obsidian.json"))
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn obsidian_registry_in(config_directory: &Path) -> PathBuf {
+    config_directory.join("obsidian/obsidian.json")
 }
 
 fn parse_vault_registry(content: &str) -> Vec<ObsidianVault> {
@@ -267,51 +282,111 @@ fn detect_installation() -> ObsidianInstallation {
 }
 
 fn detect_app_path() -> Option<PathBuf> {
-    let mut candidates = vec![PathBuf::from("/Applications/Obsidian.app")];
-    if let Some(home) = dirs::home_dir() {
-        candidates.push(home.join("Applications/Obsidian.app"));
-    }
     #[cfg(target_os = "macos")]
-    if let Ok(output) = Command::new("mdfind")
-        .arg("kMDItemCFBundleIdentifier == 'md.obsidian'")
-        .output()
     {
-        candidates.extend(
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(PathBuf::from),
-        );
+        let mut candidates = vec![PathBuf::from("/Applications/Obsidian.app")];
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(home.join("Applications/Obsidian.app"));
+        }
+        if let Ok(output) = Command::new("mdfind")
+            .arg("kMDItemCFBundleIdentifier == 'md.obsidian'")
+            .output()
+        {
+            candidates.extend(
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(PathBuf::from),
+            );
+        }
+        candidates
+            .into_iter()
+            .find(|path| path.join("Contents/Info.plist").is_file())
+            .and_then(|path| canonicalize(&path).ok())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows_app_candidates(
+            std::env::var_os("LOCALAPPDATA").as_deref(),
+            std::env::var_os("ProgramFiles").as_deref(),
+            std::env::var_os("ProgramFiles(x86)").as_deref(),
+        )
+        .into_iter()
+        .find(|path| path.is_file())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_app_candidates(
+    local_app_data: Option<&std::ffi::OsStr>,
+    program_files: Option<&std::ffi::OsStr>,
+    program_files_x86: Option<&std::ffi::OsStr>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(root) = local_app_data {
+        let root = Path::new(root);
+        candidates.push(root.join("Obsidian/Obsidian.exe"));
+        candidates.push(root.join("Programs/Obsidian/Obsidian.exe"));
+    }
+    for root in [program_files, program_files_x86].into_iter().flatten() {
+        candidates.push(Path::new(root).join("Obsidian/Obsidian.exe"));
     }
     candidates
-        .into_iter()
-        .find(|path| path.join("Contents/Info.plist").is_file())
-        .and_then(|path| path.canonicalize().ok())
 }
 
 fn read_app_version(app_path: &Path) -> Option<String> {
-    let output = Command::new("plutil")
-        .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
-        .arg(app_path.join("Contents/Info.plist"))
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("plutil")
+            .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
+            .arg(app_path.join("Contents/Info.plist"))
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app_path;
+        None
+    }
 }
 
 fn detect_cli() -> bool {
-    let mut candidates = vec![
-        PathBuf::from("/usr/local/bin/obsidian"),
-        PathBuf::from("/opt/homebrew/bin/obsidian"),
-    ];
-    if let Some(home) = dirs::home_dir() {
-        candidates.push(home.join(".local/bin/obsidian"));
+    let directories: Vec<_> = std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).collect())
+        .unwrap_or_default();
+    #[cfg(target_os = "windows")]
+    {
+        command_exists_in(
+            &directories,
+            &["obsidian.exe", "obsidian.cmd", "obsidian.bat"],
+        )
     }
-    if let Some(paths) = std::env::var_os("PATH") {
-        candidates.extend(std::env::split_paths(&paths).map(|path| path.join("obsidian")));
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut candidates = vec![
+            PathBuf::from("/usr/local/bin/obsidian"),
+            PathBuf::from("/opt/homebrew/bin/obsidian"),
+        ];
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(home.join(".local/bin/obsidian"));
+        }
+        candidates.extend(directories.into_iter().map(|path| path.join("obsidian")));
+        candidates.into_iter().any(|path| path.is_file())
     }
-    candidates.into_iter().any(|path| path.is_file())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn command_exists_in(directories: &[PathBuf], names: &[&str]) -> bool {
+    directories
+        .iter()
+        .any(|directory| names.iter().any(|name| directory.join(name).is_file()))
 }
 
 fn open_uri(uri: &str) -> Result<()> {
@@ -323,10 +398,18 @@ fn open_uri(uri: &str) -> Result<()> {
         }
         Ok(())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer.exe")
+            .arg(uri)
+            .spawn()
+            .context("Failed to invoke the Windows Obsidian URI handler")?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = uri;
-        bail!("Opening Obsidian is currently supported on macOS only")
+        bail!("Opening Obsidian is currently supported on macOS and Windows only")
     }
 }
 
@@ -373,6 +456,21 @@ mod tests {
         assert!(resolve_target(&vault, Some("../outside")).is_err());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn workspace_link_cannot_escape_vault_through_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("Notes");
+        let outside = directory.path().join("Outside");
+        fs::create_dir_all(vault.join(".obsidian")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, vault.join("linked-outside")).unwrap();
+
+        assert!(resolve_target(&vault, Some("linked-outside")).is_err());
+    }
+
     #[test]
     fn manual_vault_and_workspace_link_round_trip() {
         let directory = tempdir().unwrap();
@@ -393,5 +491,37 @@ mod tests {
             percent_encode("/Users/me/My Notes/项目.md"),
             "%2FUsers%2Fme%2FMy%20Notes%2F%E9%A1%B9%E7%9B%AE.md"
         );
+    }
+
+    #[test]
+    fn windows_installation_candidates_cover_per_user_and_machine_locations() {
+        assert_eq!(
+            obsidian_registry_in(Path::new("C:/Users/me/AppData/Roaming")),
+            PathBuf::from("C:/Users/me/AppData/Roaming/obsidian/obsidian.json")
+        );
+        let candidates = windows_app_candidates(
+            Some(std::ffi::OsStr::new("C:/Users/me/AppData/Local")),
+            Some(std::ffi::OsStr::new("C:/Program Files")),
+            Some(std::ffi::OsStr::new("C:/Program Files (x86)")),
+        );
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("C:/Users/me/AppData/Local/Obsidian/Obsidian.exe"),
+                PathBuf::from("C:/Users/me/AppData/Local/Programs/Obsidian/Obsidian.exe"),
+                PathBuf::from("C:/Program Files/Obsidian/Obsidian.exe"),
+                PathBuf::from("C:/Program Files (x86)/Obsidian/Obsidian.exe"),
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_cli_detection_accepts_cmd_shims() {
+        let directory = tempdir().unwrap();
+        fs::write(directory.path().join("obsidian.cmd"), "@echo off").unwrap();
+        assert!(command_exists_in(
+            &[directory.path().to_path_buf()],
+            &["obsidian.exe", "obsidian.cmd", "obsidian.bat"]
+        ));
     }
 }

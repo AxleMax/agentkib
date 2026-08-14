@@ -12,12 +12,12 @@
 
 <p align="center">
   <img alt="Status: Development Preview" src="https://img.shields.io/badge/status-development_preview-f59e0b" />
-  <img alt="Platform: macOS first" src="https://img.shields.io/badge/platform-macOS_first-111827" />
+  <img alt="Platform: macOS and Windows" src="https://img.shields.io/badge/platform-macOS_%7C_Windows-111827" />
   <img alt="Data: Local first" src="https://img.shields.io/badge/data-local_first-16a34a" />
 </p>
 
 > [!WARNING]
-> AgentKib is still a development preview. There is no official downloadable build yet; macOS users can build it from source today.
+> AgentKib is still a development preview. There is no official downloadable build yet; macOS and Windows users can build it from source today.
 
 ## English
 
@@ -32,12 +32,12 @@ AgentKib is a local-first desktop app for people who use more than one coding ag
 - **Understand what an agent will receive.** Preview instruction loading order, directory rules, overrides, available Skills, connections, and memory for a selected working directory.
 - **Share project rules safely.** Edit common assets once, review the generated diff, and write only after explicit approval. A project does not need an AgentKib manifest before it can be discovered or inspected.
 - **Use one local MCP entry point.** AgentKib can manage downstream MCP servers and expose them to supported agents through one local hub.
-- **Watch rolling plan limits.** On macOS, see available Codex, Claude Code, Cursor, and configured Coding Plan windows in the app or menu bar, including remaining quota and reset time.
+- **Watch rolling plan limits.** See available Codex, Claude Code, Cursor, and configured Coding Plan windows, including remaining quota and reset time. macOS also provides a menu bar popover; Windows uses the app and native tray menu.
 - **Track your progress.** View locally available Token usage, sessions, Git commits, contribution heatmaps, streaks, and achievements. Incomplete data is always labeled as incomplete.
 
 AgentKib can also link a workspace to an Obsidian Vault and read public metadata from optional OpenClaw or Hermes remote connections. These integrations are opt-in and read-only by default.
 
-On macOS, AgentKib can stay active in the menu bar after its window is hidden. It supports light, dark, and system appearance, plus Simplified Chinese, Traditional Chinese, Japanese, and English.
+On macOS and Windows, AgentKib can stay active from the system tray after its window is hidden. It supports light, dark, and system appearance, plus Simplified Chinese, Traditional Chinese, Japanese, and English.
 
 ### Supported agents
 
@@ -67,7 +67,7 @@ Ignored workspaces, additional scan folders, integrations, appearance, language,
 - Automatic discovery does not store prompts, message bodies, conversation titles, or raw session IDs.
 - Credentials, environment files, private keys, and message databases are excluded from the asset catalog.
 - Git statistics do not store commit messages, diffs, file contents, or plaintext email addresses.
-- Quota snapshots stay on this Mac. Account email is kept only to identify local accounts; credentials, cookies, raw CLI output, and raw diagnostics are not stored.
+- Quota snapshots stay on this device. Account email is kept only to identify local accounts; credentials, cookies, raw CLI output, and raw diagnostics are not stored.
 - Agent-proposed memory is not shared until you approve it.
 - Every generated file change is shown as a diff and checked again before writing.
 
@@ -90,12 +90,12 @@ AgentKib 是一个面向多 Agent 用户的本地桌面应用。它把散落在�
 - **看清 Agent 实际获得的上下文**：预览指令加载顺序、目录规则、平台覆盖，以及当前可见的 Skills、连接和记忆。
 - **安全共享项目规则**：公共资产只维护一次，写入前必须审查完整 Diff。项目不需要预先创建 AgentKib manifest，也能被发现和查看。
 - **统一连接 MCP**：通过一个本地 MCP Hub 管理下游 Server，并提供给受支持的 Agent 使用。
-- **查看滚动额度**：macOS 版可在应用和菜单栏查看 Codex、Claude Code、Cursor 及已配置 Coding Plan 的剩余额度和重置时间。
+- **查看滚动额度**：可查看 Codex、Claude Code、Cursor 及已配置 Coding Plan 的剩余额度和重置时间。macOS 还提供菜单栏面板，Windows 通过应用和系统托盘访问。
 - **记录使用成就**：汇总本地可获得的 Token、会话和 Git 提交，展示贡献热力图、连续活跃和成就；数据不完整时会明确标注。
 
 AgentKib 还可以将工作区关联到 Obsidian Vault，并按需只读连接 OpenClaw 或 Hermes 的远程元数据。这些能力默认不会主动启用或写入外部内容。
 
-在 macOS 上，窗口隐藏后 AgentKib 可以继续常驻菜单栏。界面支持浅色、深色和跟随系统，并提供简体中文、繁體中文、日语和英语。
+在 macOS 和 Windows 上，窗口隐藏后 AgentKib 可以继续在系统托盘运行。界面支持浅色、深色和跟随系统，并提供简体中文、繁體中文、日语和英语。
 
 ### 支持的 Agent
 
@@ -139,8 +139,9 @@ DeepSeek Harness 当前支持本地工作区发现、资产盘点、上下文预
 
 ### Requirements / 环境要求
 
-- macOS（当前主要验收平台）
-- Xcode Command Line Tools
+- macOS 13+ 或 Windows 11
+- macOS：Xcode Command Line Tools
+- Windows：Visual Studio Build Tools 2022（MSVC 与 Windows SDK）
 - Rust stable toolchain
 - Node.js
 - pnpm 10（仓库固定使用 `pnpm@10.8.1`）
@@ -154,13 +155,13 @@ pnpm dev
 
 首次 Rust 编译可能需要较长时间。
 
-### Build the macOS app / 构建 macOS 应用
+### Build the desktop app / 构建桌面应用
 
 ```bash
 pnpm tauri build
 ```
 
-首次构建会下载固定版本的 CodexBarCLI 并校验 SHA-256；构建结果位于 `target/release/bundle/`。第三方许可见 `THIRD_PARTY_NOTICES.md`。
+首次构建会下载并校验对应平台固定版本的额度 Collector；Windows x64 从经校验的 Win-CodexBar 发布源码编译 CLI，不执行其安装器。构建结果位于 `target/release/bundle/`。Windows x64 会生成 NSIS 安装包；Windows ARM64 当前作为预览架构，额度 Collector 暂不可用，但不影响其他功能。第三方许可见 `THIRD_PARTY_NOTICES.md`。
 
 ### Validate / 验证
 
@@ -176,9 +177,9 @@ pnpm build
 ## Project status / 项目状态
 
 - AgentKib is under active development; interfaces and local data formats may still change before the first release.
-- macOS is the current acceptance platform. Other platforms are not yet release targets.
+- macOS remains the primary acceptance platform. Windows 11 x64 is the first Windows release target; Windows ARM64 is a preview target.
 - Focused issues and pull requests are welcome.
 
 - AgentKib 正在持续开发，首次发布前接口和本地数据格式仍可能变化。
-- 当前以 macOS 为主要验收平台，其他平台暂未作为发布目标。
+- macOS 仍是主要验收平台；Windows 11 x64 是首个 Windows 正式目标，Windows ARM64 为预览目标。
 - 欢迎提交聚焦的问题反馈和 Pull Request。

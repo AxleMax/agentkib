@@ -15,6 +15,7 @@ use agentkib_insights::{
     InsightsQuery, InsightsStatus, InsightsSummary, ModelUsageBreakdown, ProviderStatus,
     RepositoryCommitBreakdown, UsageBatch, UsageQuality, WorkspaceUsageBreakdown,
 };
+use agentkib_platform::path as platform_path;
 use agentkib_quota::{QuotaBackend, QuotaCollectorStatus, QuotaSnapshot, sanitize_diagnostic};
 use agentkib_storage::{StorageMeasurement, StorageOverview, StorageQuality, WorkspaceStorage};
 use anyhow::{Context, Result, bail};
@@ -536,18 +537,20 @@ impl Store {
     ) -> Result<DiscoveryReport> {
         let transaction = self.connection.unchecked_transaction()?;
         let excluded = excluded_paths(&transaction)?;
-        let mut grouped: BTreeMap<PathBuf, Vec<&DiscoveryCandidate>> = BTreeMap::new();
+        let mut grouped: BTreeMap<String, (PathBuf, Vec<&DiscoveryCandidate>)> = BTreeMap::new();
         for candidate in candidates {
-            if candidate.path.is_dir() && !excluded.contains(&candidate.path) {
+            let identity = platform_path::identity(&candidate.path);
+            if candidate.path.is_dir() && !excluded.contains(&identity) {
                 grouped
-                    .entry(candidate.path.clone())
-                    .or_default()
+                    .entry(identity)
+                    .or_insert_with(|| (candidate.path.clone(), Vec::new()))
+                    .1
                     .push(candidate);
             }
         }
         let discovered_paths: BTreeSet<_> = grouped.keys().cloned().collect();
         let mut discovery_errors = errors.to_vec();
-        for (path, sources) in grouped {
+        for (_, (path, sources)) in grouped {
             let workspace_id = upsert_workspace(&transaction, &path, &sources)?;
             if let Err(error) = refresh_workspace_record(&transaction, &workspace_id, &path) {
                 record_scan_failure(&transaction, &workspace_id)?;
@@ -654,7 +657,7 @@ impl Store {
     }
 
     pub fn add_workspace(&self, path: &Path) -> Result<WorkspaceSummary> {
-        let path = path.canonicalize().context("Workspace does not exist")?;
+        let path = platform_path::canonicalize(path).context("Workspace does not exist")?;
         if !path.is_dir() {
             bail!("Workspace must be a directory");
         }
@@ -669,10 +672,12 @@ impl Store {
             repository_group_id: None,
         };
         let transaction = self.connection.unchecked_transaction()?;
-        transaction.execute(
-            "DELETE FROM excluded_workspaces WHERE canonical_path = ?1",
-            params![path.display().to_string()],
-        )?;
+        if let Some(stored) = matching_stored_path(&transaction, "excluded_workspaces", &path)? {
+            transaction.execute(
+                "DELETE FROM excluded_workspaces WHERE canonical_path = ?1",
+                params![stored],
+            )?;
+        }
         let workspace_id = upsert_workspace(&transaction, &path, &[&candidate])?;
         if refresh_workspace_record(&transaction, &workspace_id, &path).is_err() {
             record_scan_failure(&transaction, &workspace_id)?;
@@ -721,10 +726,12 @@ impl Store {
     }
 
     pub fn restore_excluded_workspace(&self, path: &Path) -> Result<()> {
-        self.connection.execute(
-            "DELETE FROM excluded_workspaces WHERE canonical_path = ?1",
-            params![path.display().to_string()],
-        )?;
+        if let Some(stored) = matching_stored_path(&self.connection, "excluded_workspaces", path)? {
+            self.connection.execute(
+                "DELETE FROM excluded_workspaces WHERE canonical_path = ?1",
+                params![stored],
+            )?;
+        }
         Ok(())
     }
 
@@ -745,19 +752,21 @@ impl Store {
     }
 
     pub fn add_scan_root(&self, path: &Path, max_depth: usize) -> Result<ScanRoot> {
-        let path = path.canonicalize().context("Scan root does not exist")?;
+        let path = platform_path::canonicalize(path).context("Scan root does not exist")?;
         if !path.is_dir() {
             bail!("Scan root must be a directory");
         }
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now();
+        let path_text = matching_stored_path(&self.connection, "scan_roots", &path)?
+            .unwrap_or_else(|| path.display().to_string());
         self.connection.execute(
             "INSERT INTO scan_roots(id, canonical_path, enabled, max_depth, created_at) VALUES (?1, ?2, 1, ?3, ?4) ON CONFLICT(canonical_path) DO UPDATE SET enabled = 1, max_depth = excluded.max_depth",
-            params![id, path.display().to_string(), max_depth.clamp(1, 8) as i64, created_at.to_rfc3339()],
+            params![id, path_text, max_depth.clamp(1, 8) as i64, created_at.to_rfc3339()],
         )?;
         self.connection.query_row(
             "SELECT id, canonical_path, enabled, max_depth, created_at FROM scan_roots WHERE canonical_path = ?1",
-            params![path.display().to_string()],
+            params![path_text],
             |row| { let created: String = row.get(4)?; Ok(ScanRoot { id: row.get(0)?, path: PathBuf::from(row.get::<_, String>(1)?), enabled: row.get(2)?, max_depth: row.get::<_, i64>(3)? as usize, created_at: parse_time(&created).map_err(sql_error)? }) },
         ).map_err(Into::into)
     }
@@ -2148,14 +2157,7 @@ impl Store {
     }
 
     fn get_workspace_by_path(&self, path: &Path) -> Result<Option<WorkspaceSummary>> {
-        let id = self
-            .connection
-            .query_row(
-                "SELECT id FROM workspaces WHERE canonical_path = ?1",
-                params![path.display().to_string()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
+        let id = matching_workspace(&self.connection, path)?.map(|(id, _)| id);
         id.map(|id| self.get_workspace(&id))
             .transpose()
             .map(Option::flatten)
@@ -2257,10 +2259,10 @@ fn query_values(connection: &Connection, query: &InsightsQuery) -> Result<Insigh
 }
 
 fn match_workspace(path: &Path, workspaces: &[(PathBuf, String)]) -> Option<String> {
-    let normalized = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let normalized = platform_path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     workspaces
         .iter()
-        .find(|(workspace, _)| normalized == *workspace || normalized.starts_with(workspace))
+        .find(|(workspace, _)| platform_path::starts_with(&normalized, workspace))
         .map(|(_, id)| id.clone())
 }
 
@@ -2407,14 +2409,49 @@ fn utc_start_of_day(day: NaiveDate) -> DateTime<Utc> {
     Utc.from_utc_datetime(&day.and_hms_opt(0, 0, 0).expect("valid start of day"))
 }
 
-fn excluded_paths(connection: &Connection) -> Result<BTreeSet<PathBuf>> {
+fn excluded_paths(connection: &Connection) -> Result<BTreeSet<String>> {
     let mut statement = connection.prepare("SELECT canonical_path FROM excluded_workspaces")?;
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
     let mut output = BTreeSet::new();
     for row in rows {
-        output.insert(PathBuf::from(row?));
+        output.insert(platform_path::identity(Path::new(&row?)));
     }
     Ok(output)
+}
+
+fn matching_stored_path(
+    connection: &Connection,
+    table: &str,
+    path: &Path,
+) -> Result<Option<String>> {
+    let sql = match table {
+        "excluded_workspaces" => "SELECT canonical_path FROM excluded_workspaces",
+        "scan_roots" => "SELECT canonical_path FROM scan_roots",
+        _ => bail!("Unsupported path table: {table}"),
+    };
+    let mut statement = connection.prepare(sql)?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    for row in rows {
+        let stored = row?;
+        if platform_path::equivalent(Path::new(&stored), path) {
+            return Ok(Some(stored));
+        }
+    }
+    Ok(None)
+}
+
+fn matching_workspace(connection: &Connection, path: &Path) -> Result<Option<(String, String)>> {
+    let mut statement = connection.prepare("SELECT id, canonical_path FROM workspaces")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (id, stored) = row?;
+        if platform_path::equivalent(Path::new(&stored), path) {
+            return Ok(Some((id, stored)));
+        }
+    }
+    Ok(None)
 }
 
 fn upsert_workspace(
@@ -2422,14 +2459,13 @@ fn upsert_workspace(
     path: &Path,
     sources: &[&DiscoveryCandidate],
 ) -> Result<String> {
-    let path_text = path.display().to_string();
-    let id = connection
-        .query_row(
-            "SELECT id FROM workspaces WHERE canonical_path = ?1",
-            params![path_text],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?
+    let existing = matching_workspace(connection, path)?;
+    let path_text = existing
+        .as_ref()
+        .map(|(_, stored)| stored.clone())
+        .unwrap_or_else(|| path.display().to_string());
+    let id = existing
+        .map(|(id, _)| id)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let last_active_at = sources
         .iter()
@@ -2450,7 +2486,7 @@ fn upsert_workspace(
     )?;
     let workspace_id: String = connection.query_row(
         "SELECT id FROM workspaces WHERE canonical_path = ?1",
-        params![path.display().to_string()],
+        params![path_text],
         |row| row.get(0),
     )?;
     connection.execute(

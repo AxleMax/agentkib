@@ -528,6 +528,26 @@ main { grid-column: 2; grid-row: 2; min-height: 0; }
 main { grid-row: 1; height: 100%; }
 .page-header, main > header.page-header { height: var(--page-header-height); min-height: var(--page-header-height); padding: 0 28px; }
 .sidebar-collapsed .page-header { padding-left: 132px; }
+:root[data-platform="windows"] pre:not(.diff),
+:root[data-platform="windows"] .memory-list article > p,
+:root[data-platform="windows"] .memory-context p { user-select: none; -webkit-user-select: none; }
+:root[data-platform="windows"] .app-shell { grid-template-rows: minmax(0, 1fr); }
+:root[data-platform="windows"] .window-toolbar {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 0;
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+:root[data-platform="windows"] .window-toolbar::before { display: none; }
+:root[data-platform="windows"] .window-sidebar-toggle { top: 12px; pointer-events: auto; }
+:root[data-platform="windows"] .sidebar,
+:root[data-platform="windows"] main { grid-row: 1; }
+:root[data-platform="windows"] .sidebar { padding-top: 12px; }
+:root[data-platform="windows"] .brand { padding-right: 38px; }
+:root[data-platform="windows"] .sidebar-collapsed .window-sidebar-toggle { left: 12px; }
+:root[data-platform="windows"] .sidebar-collapsed .page-header { padding-left: 60px; }
 .page-title-row h1, main > header.page-header h1 { font-size: var(--page-title-size); }
 .panel-head h2, .panel h2 { font-size: var(--section-title-size); }
 .workspace-row, .catalog-row, .setting-row, .agent-workspace-list > div, .home-asset-list > div { font-size: var(--body-size); }

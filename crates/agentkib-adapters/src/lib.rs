@@ -7,6 +7,7 @@ use agentkib_core::{
     FileChange, Manifest, McpConfigDocument, McpServerConfig, McpServerTransport, RiskLevel,
     hash_content, manifest_path,
 };
+use agentkib_platform::path::{canonicalize, is_safe_scan_entry, starts_with as path_starts_with};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -107,11 +108,12 @@ fn discover_scoped_instructions(project: &Path) -> Result<Vec<agentkib_core::Sco
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
-            !entry.file_type().is_dir()
-                || !matches!(
-                    entry.file_name().to_str(),
-                    Some(".git" | ".agentkib" | "node_modules" | "target" | "dist")
-                )
+            is_safe_scan_entry(entry.path())
+                && (!entry.file_type().is_dir()
+                    || !matches!(
+                        entry.file_name().to_str(),
+                        Some(".git" | ".agentkib" | "node_modules" | "target" | "dist")
+                    ))
         })
     {
         let entry = entry?;
@@ -124,7 +126,11 @@ fn discover_scoped_instructions(project: &Path) -> Result<Vec<agentkib_core::Sco
             .context("Scoped rule has no parent directory")?;
         let relative = parent.strip_prefix(project)?;
         scoped.push(agentkib_core::ScopedInstruction {
-            path: relative.display().to_string(),
+            path: relative
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/"),
             content: fs::read_to_string(entry.path())?,
         });
     }
@@ -588,10 +594,9 @@ fn skill_source_files(
     skill: &agentkib_core::SkillDefinition,
 ) -> Result<Vec<(PathBuf, String)>> {
     let source = root.join(&skill.path);
-    let canonical = source
-        .canonicalize()
+    let canonical = canonicalize(&source)
         .with_context(|| format!("Skill path does not exist: {}", source.display()))?;
-    if !canonical.starts_with(root) {
+    if !path_starts_with(&canonical, root) {
         anyhow::bail!(
             "Skill path must be inside the project: {}",
             source.display()
@@ -606,13 +611,17 @@ fn skill_source_files(
     }
 
     let mut files = Vec::new();
-    for entry in WalkDir::new(&canonical).follow_links(false) {
+    for entry in WalkDir::new(&canonical)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| is_safe_scan_entry(entry.path()))
+    {
         let entry = entry?;
         if !entry.file_type().is_file() {
             continue;
         }
-        let path = entry.path().canonicalize()?;
-        if !path.starts_with(root) {
+        let path = canonicalize(entry.path())?;
+        if !path_starts_with(&path, root) {
             anyhow::bail!(
                 "Skill file must be inside the project: {}",
                 entry.path().display()

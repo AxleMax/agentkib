@@ -4,8 +4,11 @@ import { App } from "./App";
 import { QuotaPopover } from "./components/QuotaPopover";
 import { api } from "./api";
 import { initializeI18n, normalizeLocale } from "./i18n";
+import { applyPlatformAttribute } from "./platform";
 import { applyTheme, systemTheme } from "./theme";
 import "./styles.css";
+
+applyPlatformAttribute(import.meta.env.TAURI_ENV_PLATFORM);
 
 async function bootstrap() {
   let locale = normalizeLocale(navigator.language);

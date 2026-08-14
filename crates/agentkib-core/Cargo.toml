@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agentkib-platform.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 hex.workspace = true

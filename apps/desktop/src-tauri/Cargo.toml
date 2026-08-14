@@ -12,6 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+agentkib-platform.workspace = true
 agentkib-core.workspace = true
 agentkib-adapters.workspace = true
 agentkib-discovery.workspace = true

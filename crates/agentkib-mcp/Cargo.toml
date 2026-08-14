@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agentkib-core.workspace = true
+agentkib-platform.workspace = true
 agentkib-store.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true

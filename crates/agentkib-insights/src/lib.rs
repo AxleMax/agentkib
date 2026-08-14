@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use agentkib_core::{AgentKind, WorkspaceSummary};
+use agentkib_platform::process::ProcessTree;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
@@ -1334,6 +1335,15 @@ fn command_output_with_limits(
     let mut child = command
         .spawn()
         .with_context(|| format!("Failed to execute {program}"))?;
+    let process_tree = match ProcessTree::attach(&child) {
+        Ok(process_tree) => process_tree,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error)
+                .with_context(|| format!("Failed to supervise {program} process tree"));
+        }
+    };
     let stdout = child
         .stdout
         .take()
@@ -1350,13 +1360,13 @@ fn command_output_with_limits(
             break (status, false);
         }
         if !EXTERNAL_COMMANDS_ACCEPTING.load(Ordering::SeqCst) {
-            terminate_command(&mut child);
+            terminate_command(&mut child, &process_tree);
             let _ = child.kill();
             let _ = child.wait();
             bail!("{program} query was cancelled because AgentKib is exiting");
         }
         if started.elapsed() >= timeout {
-            terminate_command(&mut child);
+            terminate_command(&mut child, &process_tree);
             let _ = child.kill();
             break (child.wait()?, true);
         }
@@ -1416,7 +1426,7 @@ fn sanitize_command_stderr(stderr: &[u8]) -> String {
 }
 
 #[cfg(unix)]
-fn terminate_command(child: &mut std::process::Child) {
+fn terminate_command(child: &mut std::process::Child, _process_tree: &ProcessTree) {
     unsafe extern "C" {
         fn kill(pid: i32, signal: i32) -> i32;
     }
@@ -1426,8 +1436,14 @@ fn terminate_command(child: &mut std::process::Child) {
     }
 }
 
-#[cfg(not(unix))]
-fn terminate_command(_child: &mut std::process::Child) {}
+#[cfg(windows)]
+fn terminate_command(_child: &mut std::process::Child, process_tree: &ProcessTree) {
+    // The Job Object includes descendants, unlike Child::kill which only stops the direct child.
+    let _ = process_tree.terminate();
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_command(_child: &mut std::process::Child, _process_tree: &ProcessTree) {}
 
 fn read_bounded(mut reader: impl Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
     let mut output = Vec::with_capacity(limit.min(64 * 1024));
@@ -1555,6 +1571,76 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("timed out"));
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn command_timeout_terminates_the_windows_job_object() {
+        let dir = tempdir().unwrap();
+        let child_script = dir.path().join("child.ps1");
+        let parent_script = dir.path().join("parent.ps1");
+        let child_started = dir.path().join("child-started");
+        let child_survived = dir.path().join("child-survived");
+        fs::write(
+            &child_script,
+            r#"param([string] $Started, [string] $Marker)
+Set-Content -LiteralPath $Started -Value "started"
+Start-Sleep -Milliseconds 7000
+Set-Content -LiteralPath $Marker -Value "survived"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &parent_script,
+            r#"param([string] $ChildScript, [string] $Started, [string] $Marker)
+$arguments = @(
+  "-NoProfile",
+  "-NonInteractive",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-File",
+  ('"{0}"' -f $ChildScript),
+  "-Started",
+  ('"{0}"' -f $Started),
+  "-Marker",
+  ('"{0}"' -f $Marker)
+)
+$child = Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -PassThru
+Wait-Process -Id $child.Id
+"#,
+        )
+        .unwrap();
+        let parent_script = parent_script.to_string_lossy().into_owned();
+        let child_script = child_script.to_string_lossy().into_owned();
+        let child_started_arg = child_started.to_string_lossy().into_owned();
+        let child_survived_arg = child_survived.to_string_lossy().into_owned();
+
+        let error = command_output_with_timeout(
+            "powershell.exe",
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &parent_script,
+                "-ChildScript",
+                &child_script,
+                "-Started",
+                &child_started_arg,
+                "-Marker",
+                &child_survived_arg,
+            ],
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(child_started.exists(), "descendant fixture did not start");
+        thread::sleep(Duration::from_millis(2250));
+        assert!(
+            !child_survived.exists(),
+            "descendant survived the Windows Job Object termination"
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@ use agentkib_core::{
     AgentKind, AssetKind, MemoryProposal, MemoryStatus, MemoryType, load_manifest, resolve_context,
     scan_workspace,
 };
+use agentkib_platform::path::{canonicalize, equivalent};
 use agentkib_store::Store;
 use anyhow::{Context, Result, bail};
 use rmcp::model::{CallToolResult, ContentBlock, Tool};
@@ -83,13 +84,11 @@ pub fn call(project: &Path, agent: AgentKind, name: &str, args: &Value) -> Resul
                     .and_then(Value::as_str)
                     .context("Missing asset path")?,
             );
-            let requested = requested.canonicalize()?;
+            let requested = canonicalize(&requested)?;
             let scan = scan_workspace(project)?;
-            if !scan
-                .assets
-                .iter()
-                .any(|asset| asset.path == requested && !matches!(asset.kind, AssetKind::Memory))
-            {
+            if !scan.assets.iter().any(|asset| {
+                equivalent(&asset.path, &requested) && !matches!(asset.kind, AssetKind::Memory)
+            }) {
                 bail!("The requested path is not in the readable asset inventory");
             }
             let content = std::fs::read_to_string(&requested)?;

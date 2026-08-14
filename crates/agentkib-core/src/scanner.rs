@@ -26,6 +26,7 @@ pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
                 for entry in WalkDir::new(&absolute)
                     .max_depth(4)
                     .into_iter()
+                    .filter_entry(|entry| agentkib_platform::path::is_safe_scan_entry(entry.path()))
                     .filter_map(|entry| entry.ok())
                 {
                     if entry.file_type().is_file() {

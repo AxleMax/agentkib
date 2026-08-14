@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::process::{Command, Stdio};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -25,11 +29,18 @@ use agentkib_insights::{
     WorkspaceUsageBreakdown, collect_git, collect_usage, shutdown_external_commands,
 };
 use agentkib_mcp::{HubController, config as mcp_config, installation_root};
+#[cfg(target_os = "windows")]
+use agentkib_platform::process::ProcessTree;
+use agentkib_platform::{fs::atomic_write, path as platform_path};
+#[cfg(target_os = "windows")]
+use agentkib_quota::resolve_win_codexbar_config;
 use agentkib_quota::{
     CollectorCapabilities, DashboardCliCollector, QuotaBackend, QuotaCollector,
     QuotaCollectorStatus, QuotaCommandOutput, QuotaCommandRunner, QuotaSnapshot,
-    resolve_codexbar_config, sanitize_diagnostic, write_managed_config,
+    sanitize_diagnostic,
 };
+#[cfg(not(target_os = "windows"))]
+use agentkib_quota::{resolve_codexbar_config, write_managed_config};
 use agentkib_storage::{
     HardLinkSet, StorageOverview, StorageWorkspace, scan_workspace as scan_workspace_storage,
 };
@@ -43,6 +54,7 @@ use tauri::{PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 #[cfg(target_os = "macos")]
 use tauri_plugin_opener::OpenerExt;
+#[cfg(not(target_os = "windows"))]
 use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
 mod i18n;
@@ -925,7 +937,24 @@ fn open_files_and_folders_settings() -> CommandResult<()> {
         Ok(())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd.exe")
+            .args([
+                "/D",
+                "/C",
+                "start",
+                "",
+                "ms-settings:privacy-broadfilesystemaccess",
+            ])
+            .spawn()
+            .map_err(|error| {
+                LocalizedMessage::with_detail("errors.openSystemSettings", error.to_string())
+            })?;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Err(LocalizedMessage::new("errors.unsupportedPlatform"))
     }
@@ -1379,11 +1408,11 @@ fn registered_project_path(project: Option<&str>) -> anyhow::Result<Option<PathB
     let Some(project) = project else {
         return Ok(None);
     };
-    let canonical = Path::new(project).canonicalize()?;
+    let canonical = platform_path::canonicalize(Path::new(project))?;
     let registered = Store::open_default()?
         .list_workspaces()?
         .into_iter()
-        .any(|workspace| workspace.path == canonical);
+        .any(|workspace| platform_path::equivalent(&workspace.path, &canonical));
     if !registered {
         anyhow::bail!("MCP project scope must be a registered AgentKib workspace");
     }
@@ -1509,16 +1538,10 @@ fn effective_theme(app: &AppHandle, preference: ThemePreference) -> EffectiveThe
 }
 
 fn save_preferences(path: &Path, preferences: &DesktopPreferences) -> anyhow::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Preferences path has no parent directory"))?;
-    fs::create_dir_all(parent)?;
-    let temp = path.with_extension("tmp");
-    fs::write(
-        &temp,
-        format!("{}\n", serde_json::to_string_pretty(preferences)?),
+    atomic_write(
+        path,
+        format!("{}\n", serde_json::to_string_pretty(preferences)?).as_bytes(),
     )?;
-    fs::rename(temp, path)?;
     Ok(())
 }
 
@@ -1612,6 +1635,7 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         });
 }
 
+#[cfg(not(target_os = "windows"))]
 const QUOTA_SIDECAR: &str = "agentkib-quota-sidecar";
 const QUOTA_OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 
@@ -1620,15 +1644,19 @@ struct QuotaCollectionContext {
     backend: QuotaBackend,
     platform_supported: bool,
     sidecar_available: bool,
+    #[cfg(target_os = "windows")]
+    sidecar_path: Option<PathBuf>,
     config_source: String,
     environment: BTreeMap<String, String>,
 }
 
+#[cfg(not(target_os = "windows"))]
 #[derive(Clone)]
 struct TauriQuotaRunner {
     app: AppHandle,
 }
 
+#[cfg(not(target_os = "windows"))]
 impl QuotaCommandRunner for TauriQuotaRunner {
     fn run(
         &self,
@@ -1714,6 +1742,90 @@ impl QuotaCommandRunner for TauriQuotaRunner {
     }
 }
 
+#[cfg(target_os = "windows")]
+#[derive(Clone)]
+struct WindowsQuotaRunner {
+    app: AppHandle,
+    executable: PathBuf,
+}
+
+#[cfg(target_os = "windows")]
+impl QuotaCommandRunner for WindowsQuotaRunner {
+    fn run(
+        &self,
+        args: &[String],
+        env: &BTreeMap<String, String>,
+        timeout: Duration,
+    ) -> anyhow::Result<QuotaCommandOutput> {
+        let mut command = Command::new(&self.executable);
+        command
+            .args(args)
+            .envs(env)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn()?;
+        let process_tree = ProcessTree::attach(&child).inspect_err(|_| {
+            let _ = child.kill();
+            let _ = child.wait();
+        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("quota collector stdout is unavailable")?;
+        let stderr = child
+            .stderr
+            .take()
+            .context("quota collector stderr is unavailable")?;
+        let stdout_reader = std::thread::spawn(move || read_bounded_output(stdout));
+        let stderr_reader = std::thread::spawn(move || read_bounded_output(stderr));
+        let started = Instant::now();
+        let coordinator = self.app.state::<Arc<RefreshCoordinator>>().inner().clone();
+        let success = loop {
+            if !coordinator.is_accepting() {
+                let _ = process_tree.terminate();
+                let _ = child.kill();
+                let _ = child.wait();
+                anyhow::bail!("quota collector was cancelled because AgentKib is exiting");
+            }
+            if started.elapsed() >= timeout {
+                let _ = process_tree.terminate();
+                let _ = child.kill();
+                let _ = child.wait();
+                anyhow::bail!("quota collector timed out");
+            }
+            if let Some(status) = child.try_wait()? {
+                break status.success();
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let stdout = stdout_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("quota collector stdout reader panicked"))??;
+        let stderr = stderr_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("quota collector stderr reader panicked"))??;
+        Ok(QuotaCommandOutput {
+            stdout,
+            stderr,
+            success,
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_bounded_output(mut reader: impl Read) -> anyhow::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    reader
+        .by_ref()
+        .take(QUOTA_OUTPUT_LIMIT as u64 + 1)
+        .read_to_end(&mut output)?;
+    if output.len() > QUOTA_OUTPUT_LIMIT {
+        anyhow::bail!("quota collector output exceeded the size limit");
+    }
+    Ok(output)
+}
+
 fn quota_backend() -> QuotaBackend {
     #[cfg(target_os = "windows")]
     {
@@ -1726,31 +1838,36 @@ fn quota_backend() -> QuotaBackend {
 }
 
 fn quota_platform_supported() -> bool {
-    cfg!(any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "windows"
-    ))
+    cfg!(any(target_os = "macos", target_os = "linux"))
+        || cfg!(all(target_os = "windows", target_arch = "x86_64"))
 }
 
-fn quota_sidecar_available() -> bool {
-    let Ok(executable) = std::env::current_exe() else {
-        return false;
-    };
-    let Some(directory) = executable.parent() else {
-        return false;
-    };
+fn quota_sidecar_path(_app: &AppHandle) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
-    let path = directory.join("agentkib-quota-sidecar.exe");
+    let path = _app
+        .path()
+        .resource_dir()
+        .ok()?
+        .join("windows")
+        .join("agentkib-quota-sidecar.exe");
     #[cfg(not(target_os = "windows"))]
-    let path = directory.join("agentkib-quota-sidecar");
-    path.is_file()
+    let path = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .join("agentkib-quota-sidecar");
+    path.is_file().then_some(path)
 }
 
-fn quota_collection_context(_app: &AppHandle) -> anyhow::Result<QuotaCollectionContext> {
+fn quota_collection_context(app: &AppHandle) -> anyhow::Result<QuotaCollectionContext> {
     let process_environment = std::env::vars().collect::<BTreeMap<_, _>>();
+    #[cfg(not(target_os = "windows"))]
     let home = dirs::home_dir().context("Home directory is unavailable")?;
     let mut environment = BTreeMap::new();
+    #[cfg(target_os = "windows")]
+    let config_source = resolve_win_codexbar_config(&process_environment)
+        .map(|_| "win-codexbar".to_string())
+        .unwrap_or_else(|| "automatic".to_string());
+    #[cfg(not(target_os = "windows"))]
     let (config_path, config_source) =
         if let Some(path) = resolve_codexbar_config(&home, &process_environment) {
             let source = if process_environment.contains_key("CODEXBAR_CONFIG") {
@@ -1787,6 +1904,7 @@ fn quota_collection_context(_app: &AppHandle) -> anyhow::Result<QuotaCollectionC
             write_managed_config(&path, &providers)?;
             (path, "agentkib-managed".to_string())
         };
+    #[cfg(not(target_os = "windows"))]
     environment.insert(
         "CODEXBAR_CONFIG".to_string(),
         config_path.to_string_lossy().into_owned(),
@@ -1794,10 +1912,13 @@ fn quota_collection_context(_app: &AppHandle) -> anyhow::Result<QuotaCollectionC
     if let Ok(path) = std::env::var("PATH") {
         environment.insert("PATH".to_string(), path);
     }
+    let sidecar_path = quota_sidecar_path(app);
     Ok(QuotaCollectionContext {
         backend: quota_backend(),
         platform_supported: quota_platform_supported(),
-        sidecar_available: quota_sidecar_available(),
+        sidecar_available: sidecar_path.is_some(),
+        #[cfg(target_os = "windows")]
+        sidecar_path,
         config_source,
         environment,
     })
@@ -1827,9 +1948,19 @@ fn perform_quota(
     }
     let result = (|| -> anyhow::Result<QuotaSnapshot> {
         let context = quota_collection_context(app)?;
+        #[cfg(not(target_os = "windows"))]
+        let runner = TauriQuotaRunner { app: app.clone() };
+        #[cfg(target_os = "windows")]
+        let runner = WindowsQuotaRunner {
+            app: app.clone(),
+            executable: context
+                .sidecar_path
+                .clone()
+                .context("quota collector sidecar is unavailable")?,
+        };
         let collector = DashboardCliCollector::new(
             context.backend,
-            TauriQuotaRunner { app: app.clone() },
+            runner,
             context.environment.clone(),
             CollectorCapabilities {
                 platform_supported: context.platform_supported,
@@ -1870,7 +2001,7 @@ fn perform_quota(
         Err(error) => Err(LocalizedMessage::with_detail(
             if !quota_platform_supported() {
                 "errors.quotaUnsupportedPlatform"
-            } else if !quota_sidecar_available() {
+            } else if quota_sidecar_path(app).is_none() {
                 "errors.quotaSidecarMissing"
             } else if error.to_string().contains("schema version") {
                 "errors.quotaSchemaUnsupported"
@@ -2258,16 +2389,19 @@ struct NavigationRequest {
     configure_popover: bool,
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Clone, Serialize)]
 struct AppMenuCommandRequest {
     command: &'static str,
 }
 
+#[cfg(target_os = "macos")]
 fn emit_app_command(app: &AppHandle, command: &'static str) {
     show_main_window(app);
     let _ = app.emit("agentkib:app-command", AppMenuCommandRequest { command });
 }
 
+#[cfg(target_os = "macos")]
 fn show_global_page(app: &AppHandle, page: &'static str) {
     show_main_window(app);
     let _ = app.emit(
@@ -2550,7 +2684,10 @@ fn perform_storage(
             }
             let excluded_roots = roots
                 .iter()
-                .filter(|path| *path != &workspace.path && path.starts_with(&workspace.path))
+                .filter(|path| {
+                    !platform_path::equivalent(path, &workspace.path)
+                        && platform_path::starts_with(path, &workspace.path)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             let source = StorageWorkspace {
@@ -2608,12 +2745,7 @@ fn storage_path_is_too_broad(path: &Path) -> bool {
     let Some(home) = dirs::home_dir() else {
         return false;
     };
-    path == home
-        || path
-            .canonicalize()
-            .ok()
-            .zip(home.canonicalize().ok())
-            .is_some_and(|(candidate, home)| candidate == home)
+    platform_path::equivalent(path, &home)
 }
 
 fn run_refresh_job(
@@ -2984,6 +3116,7 @@ pub fn run() {
                 request_guarded_exit(app);
             }
         }
+        #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => show_main_window(app),
         _ => {}
     });

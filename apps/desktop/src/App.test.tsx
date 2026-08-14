@@ -494,7 +494,7 @@ describe("AgentKib desktop", () => {
     expect(screen.getByText("CLI not enabled (optional)")).toBeInTheDocument();
   });
 
-  it.runIf(import.meta.env.TAURI_ENV_PLATFORM === "darwin")("opens macOS Files & Folders settings from Data & Privacy", async () => {
+  it.runIf(["darwin", "windows"].includes(import.meta.env.TAURI_ENV_PLATFORM))("opens system file access settings from Data & Privacy", async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));

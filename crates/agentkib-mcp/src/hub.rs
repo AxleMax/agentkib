@@ -549,11 +549,15 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
-                stream
+                if stream
                     .write_all(
                         b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                     )
-                    .unwrap();
+                    .is_err()
+                {
+                    std::thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
                 let mut response = String::new();
                 if stream.read_to_string(&mut response).is_ok()
                     && response.starts_with("HTTP/1.1 200")

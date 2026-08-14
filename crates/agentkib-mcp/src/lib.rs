@@ -3,6 +3,7 @@ pub mod config;
 mod hub;
 pub mod native;
 mod oauth;
+mod process;
 pub mod registry;
 mod runtime;
 

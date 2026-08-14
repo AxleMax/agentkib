@@ -1,0 +1,101 @@
+name: Windows x64
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-compile:
+    name: Check Windows ARM64 preview
+    runs-on: windows-2022
+    env:
+      CARGO_BUILD_TARGET: aarch64-pc-windows-msvc
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust MSVC toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Check workspace for ARM64
+        shell: pwsh
+        run: cargo check --workspace --all-targets
+
+  build:
+    name: Test and build NSIS
+    runs-on: windows-2022
+    env:
+      CARGO_BUILD_TARGET: x86_64-pc-windows-msvc
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust MSVC toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Run release checks and build NSIS
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $log = "artifacts/windows-x64-build.log"
+          $ErrorActionPreference = "Stop"
+
+          function Invoke-LoggedCommand {
+            param([string] $Name, [scriptblock] $Command)
+            "`n## $Name" | Tee-Object -FilePath $log -Append
+            & $Command *>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) {
+              throw "$Name failed with exit code $LASTEXITCODE"
+            }
+          }
+
+          Invoke-LoggedCommand "cargo fmt --check" { cargo fmt --check }
+          Invoke-LoggedCommand "cargo test --workspace" { cargo test --workspace }
+          Invoke-LoggedCommand "cargo clippy --workspace --all-targets -- -D warnings" { cargo clippy --workspace --all-targets -- -D warnings }
+          Invoke-LoggedCommand "pnpm test" { pnpm test }
+          Invoke-LoggedCommand "pnpm typecheck" { pnpm typecheck }
+          Invoke-LoggedCommand "pnpm build" { pnpm build }
+          Invoke-LoggedCommand "pnpm tauri build --bundles nsis" { pnpm tauri build --bundles nsis }
+
+      - name: Write installer checksums
+        shell: pwsh
+        run: ./.github/scripts/write-windows-checksums.ps1 -SearchRoot target
+
+      - name: Smoke test install, overwrite and uninstall
+        shell: pwsh
+        run: ./.github/scripts/smoke-test-windows-installer.ps1 -SearchRoot target
+
+      - name: Upload Windows x64 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-windows-x64
+          if-no-files-found: warn
+          path: |
+            target/**/bundle/nsis/*.exe
+            target/**/bundle/nsis/*.sha256
+            artifacts/windows-x64-build.log

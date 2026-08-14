@@ -6,13 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::SystemTime;
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 use agentkib_core::{
     AgentInstallation, AgentKind, AssetKind, CatalogAsset, CatalogScope, DiscoveryCandidate,
     DiscoveryEvidence, hash_content,
 };
+use agentkib_platform::{command, path as platform_path};
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OpenFlags};
@@ -289,7 +287,12 @@ impl WorkspaceDiscoveryProvider for ClaudeProvider {
         }
         let projects = home.join("projects");
         if projects.is_dir() {
-            for entry in WalkDir::new(projects).max_depth(3).follow_links(false) {
+            for entry in WalkDir::new(projects)
+                .max_depth(3)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|entry| platform_path::is_safe_scan_entry(entry.path()))
+            {
                 let entry = entry?;
                 if entry.file_name() != "sessions-index.json" || !entry.file_type().is_file() {
                     continue;
@@ -395,6 +398,8 @@ impl WorkspaceDiscoveryProvider for CursorProvider {
             .min_depth(2)
             .max_depth(2)
             .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| platform_path::is_safe_scan_entry(entry.path()))
         {
             let entry = entry?;
             if !entry.file_type().is_file() || entry.file_name() != "workspace.json" {
@@ -444,22 +449,7 @@ fn cursor_workspace_path(value: &JsonValue) -> Option<PathBuf> {
 }
 
 fn file_uri_path(value: &str) -> Option<PathBuf> {
-    let encoded = value.strip_prefix("file://")?;
-    let mut decoded = Vec::with_capacity(encoded.len());
-    let bytes = encoded.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let high = (bytes[index + 1] as char).to_digit(16)?;
-            let low = (bytes[index + 2] as char).to_digit(16)?;
-            decoded.push((high * 16 + low) as u8);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(decoded).ok().map(PathBuf::from)
+    platform_path::file_uri_to_path(value)
 }
 
 #[derive(Default)]
@@ -769,7 +759,7 @@ fn discover_scan_root(
     root: &Path,
     max_depth: usize,
 ) -> Result<(Vec<DiscoveryCandidate>, Vec<String>)> {
-    let root = root.canonicalize()?;
+    let root = platform_path::canonicalize(root)?;
     let mut output = Vec::new();
     let mut errors = Vec::new();
     for entry in WalkDir::new(&root)
@@ -822,11 +812,11 @@ fn allowed_scan_entry(entry: &DirEntry) -> bool {
                 | "DerivedData"
                 | "Library"
         )
-    ) && !entry.path_is_symlink()
+    ) && platform_path::is_safe_scan_entry(entry.path())
 }
 
 fn normalize_and_merge(candidates: Vec<DiscoveryCandidate>) -> Vec<DiscoveryCandidate> {
-    let mut grouped: BTreeMap<(PathBuf, Option<AgentKind>, DiscoveryEvidence), DiscoveryCandidate> =
+    let mut grouped: BTreeMap<(String, Option<AgentKind>, DiscoveryEvidence), DiscoveryCandidate> =
         BTreeMap::new();
     for mut candidate in candidates {
         let Some(path) = normalize_workspace(&candidate.path, candidate.explicit_workspace) else {
@@ -834,7 +824,11 @@ fn normalize_and_merge(candidates: Vec<DiscoveryCandidate>) -> Vec<DiscoveryCand
         };
         candidate.repository_group_id = repository_group_id(&path);
         candidate.path = path.clone();
-        let key = (path, candidate.source_agent, candidate.evidence);
+        let key = (
+            platform_path::identity(&path),
+            candidate.source_agent,
+            candidate.evidence,
+        );
         grouped
             .entry(key)
             .and_modify(|existing| {
@@ -852,7 +846,7 @@ fn normalize_and_merge(candidates: Vec<DiscoveryCandidate>) -> Vec<DiscoveryCand
 }
 
 fn normalize_workspace(path: &Path, explicit: bool) -> Option<PathBuf> {
-    let canonical = path.canonicalize().ok()?;
+    let canonical = platform_path::canonicalize(path).ok()?;
     if !canonical.is_dir() {
         return None;
     }
@@ -860,7 +854,7 @@ fn normalize_workspace(path: &Path, explicit: bool) -> Option<PathBuf> {
     let mut current = Some(canonical.as_path());
     while let Some(path) = current {
         if has_project_marker(path) && home.as_deref() != Some(path) {
-            return path.canonicalize().ok();
+            return platform_path::canonicalize(path).ok();
         }
         current = path.parent();
     }
@@ -885,18 +879,18 @@ fn has_project_marker(path: &Path) -> bool {
 fn repository_group_id(path: &Path) -> Option<String> {
     let marker = path.join(".git");
     let git_dir = if marker.is_dir() {
-        marker.canonicalize().ok()?
+        platform_path::canonicalize(&marker).ok()?
     } else {
         let content = fs::read_to_string(marker).ok()?;
         let relative = content.trim().strip_prefix("gitdir:")?.trim();
-        path.join(relative).canonicalize().ok()?
+        platform_path::canonicalize(&path.join(relative)).ok()?
     };
     let common = fs::read_to_string(git_dir.join("commondir"))
         .ok()
         .map(|value| git_dir.join(value.trim()))
-        .and_then(|value| value.canonicalize().ok())
+        .and_then(|value| platform_path::canonicalize(&value).ok())
         .unwrap_or(git_dir);
-    Some(hash_content(common.to_string_lossy().as_bytes()))
+    Some(hash_content(platform_path::identity(&common).as_bytes()))
 }
 
 fn scan_known_home(agent: AgentKind, home: &Path, names: &[&str]) -> Result<Vec<CatalogAsset>> {
@@ -961,7 +955,7 @@ fn allowed_home_entry(entry: &DirEntry) -> bool {
                 | ".venv"
                 | "venv"
         )
-    ) && !entry.path_is_symlink()
+    ) && platform_path::is_safe_scan_entry(entry.path())
 }
 
 fn is_private_home_file(path: &Path) -> bool {
@@ -1074,52 +1068,12 @@ fn agent_is_installed(agent: AgentKind) -> bool {
 }
 
 fn command_is_available(command: &str) -> bool {
-    command_is_available_in(command, &executable_search_dirs())
+    command::resolve(command).is_some()
 }
 
+#[cfg(all(test, unix))]
 fn command_is_available_in(command: &str, directories: &BTreeSet<PathBuf>) -> bool {
-    directories
-        .iter()
-        .map(|directory| directory.join(format!("{command}{}", env::consts::EXE_SUFFIX)))
-        .any(|path| is_executable_file(&path))
-}
-
-fn executable_search_dirs() -> BTreeSet<PathBuf> {
-    let mut directories = BTreeSet::new();
-    if let Some(paths) = env::var_os("PATH") {
-        directories.extend(env::split_paths(&paths));
-    }
-    directories.extend([
-        PathBuf::from("/usr/local/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-    ]);
-    if let Some(home) = dirs::home_dir() {
-        directories.extend([
-            home.join(".local/bin"),
-            home.join(".cargo/bin"),
-            home.join(".bun/bin"),
-            home.join(".npm-global/bin"),
-            home.join("Library/pnpm"),
-        ]);
-    }
-    directories
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    command::resolve_in(command, directories.iter().map(PathBuf::as_path)).is_some()
 }
 
 #[cfg(target_os = "macos")]
@@ -1142,8 +1096,8 @@ fn app_bundle_is_available(agent: AgentKind) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn app_bundle_is_available(_agent: AgentKind) -> bool {
-    false
+fn app_bundle_is_available(agent: AgentKind) -> bool {
+    agent == AgentKind::Cursor && command::cursor_app_is_available()
 }
 
 fn candidate(
@@ -1285,6 +1239,8 @@ fn modified_at(path: &Path) -> Result<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
     #[test]
@@ -1326,7 +1282,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("packages/api/src")).unwrap();
         fs::create_dir(dir.path().join(".git")).unwrap();
         let result = normalize_workspace(&dir.path().join("packages/api/src"), false).unwrap();
-        assert_eq!(result, dir.path().canonicalize().unwrap());
+        assert_eq!(result, platform_path::canonicalize(dir.path()).unwrap());
     }
 
     #[test]
@@ -1335,7 +1291,7 @@ mod tests {
         assert!(normalize_workspace(dir.path(), false).is_none());
         assert_eq!(
             normalize_workspace(dir.path(), true).unwrap(),
-            dir.path().canonicalize().unwrap()
+            platform_path::canonicalize(dir.path()).unwrap()
         );
     }
 
@@ -1349,7 +1305,7 @@ mod tests {
         assert_eq!(discovered.len(), 1);
         assert_eq!(
             discovered[0].path,
-            dir.path().join("app").canonicalize().unwrap()
+            platform_path::canonicalize(&dir.path().join("app")).unwrap()
         );
     }
 
@@ -1412,17 +1368,25 @@ mod tests {
         fs::write(
             agent_home.join("history.jsonl"),
             format!(
-                "{{\"project\":\"{}\",\"sessionId\":\"private-session\",\"display\":\"private prompt\"}}\n",
-                workspace.display()
+                "{}\n",
+                serde_json::json!({
+                    "project": workspace.to_string_lossy(),
+                    "sessionId": "private-session",
+                    "display": "private prompt"
+                })
             ),
         )
         .unwrap();
         fs::write(
             agent_home.join("projects/p1/sessions-index.json"),
-            format!(
-                "{{\"entries\":[{{\"projectPath\":\"{}\",\"sessionId\":\"private-session\",\"messageCount\":42}}]}}",
-                workspace.display()
-            ),
+            serde_json::to_vec(&serde_json::json!({
+                "entries": [{
+                    "projectPath": workspace.to_string_lossy(),
+                    "sessionId": "private-session",
+                    "messageCount": 42
+                }]
+            }))
+            .unwrap(),
         )
         .unwrap();
 
@@ -1503,13 +1467,23 @@ mod tests {
         let data_home = dir.path().join("Cursor");
         let storage = data_home.join("User/workspaceStorage/hash");
         fs::create_dir_all(&storage).unwrap();
-        let uri = format!(
-            "file://{}",
-            workspace.display().to_string().replace(' ', "%20")
-        );
+        let uri_path = workspace
+            .display()
+            .to_string()
+            .replace('\\', "/")
+            .replace(' ', "%20");
+        let uri = if cfg!(windows) {
+            format!("file:///{uri_path}")
+        } else {
+            format!("file://{uri_path}")
+        };
         fs::write(
             storage.join("workspace.json"),
-            format!("{{\"folder\":\"{uri}\",\"prompt\":\"must not be retained\"}}"),
+            serde_json::to_vec(&serde_json::json!({
+                "folder": uri,
+                "prompt": "must not be retained"
+            }))
+            .unwrap(),
         )
         .unwrap();
 

@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs::Metadata;
 use std::path::{Component, Path, PathBuf};
 
+use agentkib_platform::path as platform_path;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use walkdir::{DirEntry, WalkDir};
@@ -260,7 +261,11 @@ pub fn scan_workspace(
 }
 
 fn should_visit(entry: &DirEntry, root: &Path, excluded_roots: &[PathBuf]) -> bool {
-    entry.path() == root || !excluded_roots.iter().any(|path| entry.path() == path)
+    entry.path() == root
+        || (platform_path::is_safe_scan_entry(entry.path())
+            && !excluded_roots
+                .iter()
+                .any(|path| platform_path::equivalent(entry.path(), path)))
 }
 
 fn breakdown_key(relative: &Path, is_directory: bool) -> (String, StorageBreakdownKind, PathBuf) {
@@ -349,6 +354,8 @@ impl HardLinkSet {
                 return self.entries.insert((metadata.dev(), metadata.ino()));
             }
         }
+        #[cfg(not(unix))]
+        let _ = metadata;
         true
     }
 }

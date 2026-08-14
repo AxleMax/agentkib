@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agentkib-core.workspace = true
+agentkib-platform.workspace = true
 agentkib-insights.workspace = true
 agentkib-quota.workspace = true
 agentkib-storage.workspace = true

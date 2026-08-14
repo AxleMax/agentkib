@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agentkib_platform::fs::atomic_write;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -482,10 +482,17 @@ pub fn resolve_codexbar_config(
     legacy.is_file().then_some(legacy)
 }
 
+pub fn resolve_win_codexbar_config(environment: &BTreeMap<String, String>) -> Option<PathBuf> {
+    environment
+        .get("APPDATA")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|root| root.join("CodexBar/settings.json"))
+        .filter(|path| path.is_file())
+}
+
 pub fn write_managed_config(path: &Path, providers: &[&str]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let value = serde_json::json!({
         "version": 1,
         "providers": providers.iter().map(|id| serde_json::json!({
@@ -493,14 +500,7 @@ pub fn write_managed_config(path: &Path, providers: &[&str]) -> Result<()> {
             "enabled": true
         })).collect::<Vec<_>>()
     });
-    let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, serde_json::to_vec_pretty(&value)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
-    }
-    fs::rename(temporary, path)?;
+    atomic_write(path, &serde_json::to_vec_pretty(&value)?)?;
     Ok(())
 }
 
@@ -518,6 +518,7 @@ fn expand_home(value: &str, home: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use std::fs;
     use std::sync::Mutex;
     use tempfile::tempdir;
 
@@ -576,6 +577,19 @@ mod tests {
             resolve_codexbar_config(dir.path(), &BTreeMap::new()),
             Some(config)
         );
+    }
+
+    #[test]
+    fn resolves_existing_windows_settings_from_appdata() {
+        let dir = tempdir().unwrap();
+        let settings = dir.path().join("CodexBar/settings.json");
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, "{}").unwrap();
+        let environment = BTreeMap::from([(
+            "APPDATA".to_string(),
+            dir.path().to_string_lossy().into_owned(),
+        )]);
+        assert_eq!(resolve_win_codexbar_config(&environment), Some(settings));
     }
 
     #[test]

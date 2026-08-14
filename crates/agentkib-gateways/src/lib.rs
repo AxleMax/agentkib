@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agentkib_platform::fs::{ExpectedFile, atomic_write_checked};
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -145,6 +146,8 @@ struct GatewayDocument {
     version: u32,
     #[serde(default)]
     gateways: Vec<StoredGateway>,
+    #[serde(skip)]
+    original_hash: Option<String>,
 }
 
 fn document_version() -> u32 {
@@ -376,9 +379,12 @@ fn load_document(path: &Path) -> Result<GatewayDocument> {
         return Ok(GatewayDocument {
             version: DOCUMENT_VERSION,
             gateways: Vec::new(),
+            original_hash: None,
         });
     }
-    let document: GatewayDocument = serde_json::from_str(&fs::read_to_string(path)?)?;
+    let content = fs::read(path)?;
+    let mut document: GatewayDocument = serde_json::from_slice(&content)?;
+    document.original_hash = Some(format!("{:x}", Sha256::digest(&content)));
     if document.version != DOCUMENT_VERSION {
         bail!("Unsupported remote gateway document version");
     }
@@ -386,19 +392,13 @@ fn load_document(path: &Path) -> Result<GatewayDocument> {
 }
 
 fn save_document(path: &Path, document: &GatewayDocument) -> Result<()> {
-    let parent = path.parent().context("Remote gateway path has no parent")?;
-    fs::create_dir_all(parent)?;
-    let temp = path.with_extension("tmp");
-    fs::write(
-        &temp,
-        format!("{}\n", serde_json::to_string_pretty(document)?),
-    )?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
-    }
-    fs::rename(temp, path)?;
+    let content = format!("{}\n", serde_json::to_string_pretty(document)?);
+    let expected = document
+        .original_hash
+        .as_deref()
+        .map(ExpectedFile::Sha256)
+        .unwrap_or(ExpectedFile::Missing);
+    atomic_write_checked(path, content.as_bytes(), expected)?;
     Ok(())
 }
 
@@ -1129,11 +1129,31 @@ mod tests {
                 last_connected_at: None,
                 last_error: None,
             }],
+            original_hash: None,
         };
         save_document(&path, &document).unwrap();
         let json = serde_json::to_string(&list(&path).unwrap()).unwrap();
         assert!(!json.contains("super-secret"));
         assert!(json.contains("has_credentials"));
+    }
+
+    #[test]
+    fn registry_write_rejects_an_external_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gateways.json");
+        let initial = GatewayDocument {
+            version: DOCUMENT_VERSION,
+            gateways: Vec::new(),
+            original_hash: None,
+        };
+        save_document(&path, &initial).unwrap();
+        let loaded = load_document(&path).unwrap();
+        fs::write(&path, "{\"version\":1,\"gateways\":[]}\n").unwrap();
+        assert!(save_document(&path, &loaded).is_err());
+        assert_eq!(
+            fs::read_to_string(path).unwrap(),
+            "{\"version\":1,\"gateways\":[]}\n"
+        );
     }
 
     #[test]
