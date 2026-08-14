@@ -41,6 +41,8 @@ use tauri::{AppHandle, Emitter, Manager, Theme, WindowEvent};
 #[cfg(target_os = "macos")]
 use tauri::{PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+#[cfg(target_os = "macos")]
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
 mod i18n;
@@ -951,6 +953,8 @@ fn set_locale(
         .map_err(format_error)?;
     state.set_locale(preference, preference.effective());
     refresh_tray_status(&app).map_err(format_error)?;
+    #[cfg(target_os = "macos")]
+    let _ = refresh_app_menu(&app);
     runtime_info(app, state, hub)
 }
 
@@ -1475,6 +1479,8 @@ fn refresh_system_locale(app: &AppHandle, lifecycle: &LifecycleState) {
     if lifecycle.effective_locale() != effective {
         lifecycle.set_locale(LocalePreference::System, effective);
         let _ = refresh_tray_status(app);
+        #[cfg(target_os = "macos")]
+        let _ = refresh_app_menu(app);
     }
 }
 
@@ -1973,6 +1979,192 @@ fn setup_quota_popover(_app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn refresh_app_menu(app: &AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{
+        AboutMetadataBuilder, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder,
+    };
+
+    let locale = app.state::<Arc<LifecycleState>>().effective_locale();
+    let item = |id: &str, key: &str, accelerator: Option<&str>| {
+        MenuItem::with_id(app, id, translate(locale, key, &[]), true, accelerator)
+    };
+
+    let about = PredefinedMenuItem::about(
+        app,
+        Some(&translate(locale, "menu.about", &[])),
+        Some(
+            AboutMetadataBuilder::new()
+                .name(Some("AgentKib"))
+                .version(Some(app.package_info().version.to_string()))
+                .icon(app.default_window_icon().cloned())
+                .build(),
+        ),
+    )?;
+    let settings = item("app-menu:settings", "menu.settings", Some("CmdOrCtrl+,"))?;
+    let services =
+        PredefinedMenuItem::services(app, Some(&translate(locale, "menu.services", &[])))?;
+    let hide = PredefinedMenuItem::hide(app, Some(&translate(locale, "menu.hide", &[])))?;
+    let hide_others =
+        PredefinedMenuItem::hide_others(app, Some(&translate(locale, "menu.hideOthers", &[])))?;
+    let show_all =
+        PredefinedMenuItem::show_all(app, Some(&translate(locale, "menu.showAll", &[])))?;
+    let quit = item("app-menu:quit", "menu.quit", Some("CmdOrCtrl+Q"))?;
+    let app_menu = SubmenuBuilder::new(app, "AgentKib")
+        .items(&[&about, &settings])
+        .separator()
+        .item(&services)
+        .separator()
+        .items(&[&hide, &hide_others, &show_all])
+        .separator()
+        .item(&quit)
+        .build()?;
+
+    let add_workspace = item(
+        "app-menu:add-workspace",
+        "menu.addWorkspace",
+        Some("CmdOrCtrl+O"),
+    )?;
+    let add_scan_root = item(
+        "app-menu:add-scan-root",
+        "menu.addScanRoot",
+        Some("CmdOrCtrl+Shift+O"),
+    )?;
+    let close_window =
+        PredefinedMenuItem::close_window(app, Some(&translate(locale, "menu.closeWindow", &[])))?;
+    let file_menu = SubmenuBuilder::new(app, translate(locale, "menu.file", &[]))
+        .items(&[&add_workspace, &add_scan_root])
+        .separator()
+        .item(&close_window)
+        .build()?;
+
+    let undo = PredefinedMenuItem::undo(app, Some(&translate(locale, "menu.undo", &[])))?;
+    let redo = PredefinedMenuItem::redo(app, Some(&translate(locale, "menu.redo", &[])))?;
+    let cut = PredefinedMenuItem::cut(app, Some(&translate(locale, "menu.cut", &[])))?;
+    let copy = PredefinedMenuItem::copy(app, Some(&translate(locale, "menu.copy", &[])))?;
+    let paste = PredefinedMenuItem::paste(app, Some(&translate(locale, "menu.paste", &[])))?;
+    let select_all =
+        PredefinedMenuItem::select_all(app, Some(&translate(locale, "menu.selectAll", &[])))?;
+    let edit_menu = SubmenuBuilder::new(app, translate(locale, "menu.edit", &[]))
+        .items(&[&undo, &redo])
+        .separator()
+        .items(&[&cut, &copy, &paste, &select_all])
+        .build()?;
+
+    let home = item("app-menu:navigate-home", "nav.home", Some("CmdOrCtrl+1"))?;
+    let workspaces = item(
+        "app-menu:navigate-workspaces",
+        "nav.workspaces",
+        Some("CmdOrCtrl+2"),
+    )?;
+    let assets = item(
+        "app-menu:navigate-catalog",
+        "nav.assets",
+        Some("CmdOrCtrl+3"),
+    )?;
+    let agents = item(
+        "app-menu:navigate-agents",
+        "nav.agents",
+        Some("CmdOrCtrl+4"),
+    )?;
+    let quota = item("app-menu:navigate-quota", "nav.quota", Some("CmdOrCtrl+5"))?;
+    let insights = item(
+        "app-menu:navigate-insights",
+        "nav.insights",
+        Some("CmdOrCtrl+6"),
+    )?;
+    let toggle_sidebar = item(
+        "app-menu:toggle-sidebar",
+        "menu.toggleSidebar",
+        Some("CmdOrCtrl+Shift+Backslash"),
+    )?;
+    let refresh_current = item(
+        "app-menu:refresh-current",
+        "menu.refreshCurrent",
+        Some("CmdOrCtrl+R"),
+    )?;
+    let refresh_all = item("app-menu:refresh-all", "menu.refreshAll", None)?;
+    let fullscreen =
+        PredefinedMenuItem::fullscreen(app, Some(&translate(locale, "menu.fullscreen", &[])))?;
+    let view_menu = SubmenuBuilder::new(app, translate(locale, "menu.view", &[]))
+        .items(&[&home, &workspaces, &assets, &agents, &quota, &insights])
+        .separator()
+        .item(&toggle_sidebar)
+        .separator()
+        .items(&[&refresh_current, &refresh_all])
+        .separator()
+        .item(&fullscreen)
+        .build()?;
+
+    let minimize =
+        PredefinedMenuItem::minimize(app, Some(&translate(locale, "menu.minimize", &[])))?;
+    let zoom = PredefinedMenuItem::maximize(app, Some(&translate(locale, "menu.zoom", &[])))?;
+    let window_menu = SubmenuBuilder::new(app, translate(locale, "menu.window", &[]))
+        .items(&[&minimize, &zoom])
+        .build()?;
+
+    let docs = item("app-menu:help-docs", "menu.helpDocs", None)?;
+    let privacy = item("app-menu:settings-privacy", "menu.dataPrivacy", None)?;
+    let diagnostics = item("app-menu:settings-diagnostics", "menu.diagnostics", None)?;
+    let report_issue = item("app-menu:report-issue", "menu.reportIssue", None)?;
+    let help_menu = SubmenuBuilder::new(app, translate(locale, "menu.help", &[]))
+        .item(&docs)
+        .separator()
+        .items(&[&privacy, &diagnostics])
+        .separator()
+        .item(&report_issue)
+        .build()?;
+
+    let menu = MenuBuilder::new(app)
+        .items(&[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &window_menu,
+            &help_menu,
+        ])
+        .build()?;
+    app.set_menu(menu)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn handle_app_menu_event(_app: &AppHandle, _id: &str) {}
+
+#[cfg(target_os = "macos")]
+fn handle_app_menu_event(app: &AppHandle, id: &str) {
+    match id {
+        "app-menu:settings" => show_settings_page(app),
+        "app-menu:add-workspace" => emit_app_command(app, "add-workspace"),
+        "app-menu:add-scan-root" => emit_app_command(app, "add-scan-root"),
+        "app-menu:toggle-sidebar" => emit_app_command(app, "toggle-sidebar"),
+        "app-menu:refresh-current" => emit_app_command(app, "refresh-current"),
+        "app-menu:refresh-all" => emit_app_command(app, "refresh-all"),
+        "app-menu:navigate-home" => show_global_page(app, "home"),
+        "app-menu:navigate-workspaces" => show_global_page(app, "workspaces"),
+        "app-menu:navigate-catalog" => show_global_page(app, "catalog"),
+        "app-menu:navigate-agents" => show_global_page(app, "agents"),
+        "app-menu:navigate-quota" => show_quota_page(app, None, None, false),
+        "app-menu:navigate-insights" => show_global_page(app, "insights"),
+        "app-menu:settings-privacy" => show_settings_section(app, "privacy"),
+        "app-menu:settings-diagnostics" => show_settings_section(app, "diagnostics"),
+        "app-menu:help-docs" => {
+            let _ = app
+                .opener()
+                .open_url("https://github.com/starroyhq/agentkib#readme", None::<&str>);
+        }
+        "app-menu:report-issue" => {
+            let _ = app.opener().open_url(
+                "https://github.com/starroyhq/agentkib/issues/new",
+                None::<&str>,
+            );
+        }
+        "app-menu:quit" => request_guarded_exit(app),
+        _ => {}
+    }
+}
+
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::menu::{MenuBuilder, MenuItem};
     use tauri::tray::TrayIconBuilder;
@@ -2060,9 +2252,34 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 #[derive(Clone, Serialize)]
 struct NavigationRequest {
     page: &'static str,
+    settings_section: Option<&'static str>,
     provider: Option<String>,
     window: Option<QuotaWindowSelector>,
     configure_popover: bool,
+}
+
+#[derive(Clone, Serialize)]
+struct AppMenuCommandRequest {
+    command: &'static str,
+}
+
+fn emit_app_command(app: &AppHandle, command: &'static str) {
+    show_main_window(app);
+    let _ = app.emit("agentkib:app-command", AppMenuCommandRequest { command });
+}
+
+fn show_global_page(app: &AppHandle, page: &'static str) {
+    show_main_window(app);
+    let _ = app.emit(
+        "agentkib:navigate",
+        NavigationRequest {
+            page,
+            settings_section: None,
+            provider: None,
+            window: None,
+            configure_popover: false,
+        },
+    );
 }
 
 fn show_quota_page(
@@ -2076,6 +2293,7 @@ fn show_quota_page(
         "agentkib:navigate",
         NavigationRequest {
             page: "quota",
+            settings_section: None,
             provider,
             window,
             configure_popover,
@@ -2084,11 +2302,16 @@ fn show_quota_page(
 }
 
 fn show_settings_page(app: &AppHandle) {
+    show_settings_section(app, "general");
+}
+
+fn show_settings_section(app: &AppHandle, settings_section: &'static str) {
     show_main_window(app);
     let _ = app.emit(
         "agentkib:navigate",
         NavigationRequest {
             page: "settings",
+            settings_section: Some(settings_section),
             provider: None,
             window: None,
             configure_popover: false,
@@ -2614,12 +2837,15 @@ pub fn run() {
             let theme = app.state::<Arc<LifecycleState>>().theme_preference();
             setup_quota_popover(app)?;
             apply_native_theme(app.handle(), theme)?;
+            #[cfg(target_os = "macos")]
+            let _ = refresh_app_menu(app.handle());
             setup_tray(app)?;
             app.state::<Arc<HubController>>().start()?;
             seed_refresh_freshness(app.handle());
             start_refresh_schedulers(app.handle().clone());
             Ok(())
         })
+        .on_menu_event(|app, event| handle_app_menu_event(app, event.id().as_ref()))
         .on_window_event(|window, event| {
             if window.label() == "main" {
                 match event {

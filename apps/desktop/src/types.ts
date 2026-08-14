@@ -90,4 +90,12 @@ export interface QuotaSnapshot { schema_version: number; backend: QuotaBackend; 
 export interface QuotaCollectorStatus { backend: QuotaBackend; backend_version?: string; platform_supported: boolean; sidecar_available: boolean; config_source: string; last_attempt_at?: string; last_success_at?: string; running: boolean; error_key?: string; error_detail?: string }
 export interface QuotaWindowSelector { provider_id: string; account_id?: string; kind: string; label: string }
 export interface QuotaPopoverPreferences { hidden_providers: string[]; hidden_windows: QuotaWindowSelector[] }
-export interface QuotaNavigationRequest { page: "quota" | "settings"; provider?: string; window?: QuotaWindowSelector; configure_popover?: boolean }
+export type AppMenuCommand = "add-workspace" | "add-scan-root" | "toggle-sidebar" | "refresh-current" | "refresh-all";
+export interface AppMenuCommandRequest { command: AppMenuCommand }
+export interface AppNavigationRequest {
+  page: "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights" | "settings";
+  settings_section?: "general" | "discovery" | "integrations" | "privacy" | "diagnostics";
+  provider?: string;
+  window?: QuotaWindowSelector;
+  configure_popover?: boolean;
+}

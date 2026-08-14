@@ -146,4 +146,25 @@ mod tests {
             "missing.key"
         );
     }
+
+    #[test]
+    fn app_menu_labels_exist_in_every_supported_locale() {
+        for locale in [
+            SupportedLocale::ZhCn,
+            SupportedLocale::ZhTw,
+            SupportedLocale::JaJp,
+            SupportedLocale::EnUs,
+        ] {
+            for key in [
+                "menu.file",
+                "menu.edit",
+                "menu.view",
+                "menu.window",
+                "menu.help",
+                "menu.refreshAllConfirm",
+            ] {
+                assert_ne!(translate(locale, key, &[]), key);
+            }
+        }
+    }
 }

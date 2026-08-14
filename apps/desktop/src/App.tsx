@@ -18,7 +18,7 @@ import { groupCatalogAssets, groupWorkspaceAssets, workspaceAssetCounts, type Ca
 import { diffLines } from "./diff";
 import { changeLocale, formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "./i18n";
 import { applyTheme } from "./theme";
-import type { ActivityRecord, AgentInstallation, AgentKind, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, QuotaCollectorStatus, QuotaNavigationRequest, QuotaWindowSelector, RefreshJobStatus, RemoteGatewaySummary, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary } from "./types";
+import type { ActivityRecord, AgentInstallation, AgentKind, AppMenuCommandRequest, AppNavigationRequest, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, QuotaCollectorStatus, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RemoteGatewaySummary, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary } from "./types";
 
 type Page = "overview" | "assets" | "context" | "changes";
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
@@ -72,7 +72,8 @@ export function App() {
   const [quotaProvider, setQuotaProvider] = useState<string>();
   const [quotaWindow, setQuotaWindow] = useState<QuotaWindowSelector>();
   const [quotaConfigureRequest, setQuotaConfigureRequest] = useState(0);
-  const [navigationRequest, setNavigationRequest] = useState<QuotaNavigationRequest>();
+  const [navigationRequest, setNavigationRequest] = useState<AppNavigationRequest>();
+  const [menuCommand, setMenuCommand] = useState<AppMenuCommandRequest>();
   const [refreshJobs, setRefreshJobs] = useState<RefreshJobStatus[]>([]);
   const [assetSection, setAssetSection] = useState<AssetSection>("instructions");
   const [workspaceAssetSection, setWorkspaceAssetSection] = useState<WorkspaceAssetSection>("instructions");
@@ -115,7 +116,7 @@ export function App() {
   };
 
   useEffect(() => {
-    let disposed = false; let refreshReloadTimer: number | undefined; let unlisten: (() => void) | undefined; let unlistenRefresh: (() => void) | undefined; let unlistenInsights: (() => void) | undefined; let unlistenGateways: (() => void) | undefined; let unlistenQuota: (() => void) | undefined; let unlistenNavigate: (() => void) | undefined; let unlistenTheme: (() => void) | undefined;
+    let disposed = false; let refreshReloadTimer: number | undefined; let unlisten: (() => void) | undefined; let unlistenRefresh: (() => void) | undefined; let unlistenInsights: (() => void) | undefined; let unlistenGateways: (() => void) | undefined; let unlistenQuota: (() => void) | undefined; let unlistenNavigate: (() => void) | undefined; let unlistenMenuCommand: (() => void) | undefined; let unlistenTheme: (() => void) | undefined;
     void (async () => {
       try {
         unlisten = await listen<DiscoveryReport>("agentkib:discovery-updated", (event) => { setDiscovery(event.payload); });
@@ -133,7 +134,8 @@ export function App() {
         unlistenInsights = await listen<InsightsSummary>("agentkib:insights-updated", (event) => { setInsightsSummary(event.payload); });
         unlistenGateways = await listen<RemoteGatewaySummary[]>("agentkib:remote-gateways-updated", (event) => { setRemoteGateways(event.payload); });
         unlistenQuota = await listen("agentkib:quota-updated", () => { void api.quotaCollectorStatus().then(setQuotaStatus); });
-        unlistenNavigate = await listen<QuotaNavigationRequest>("agentkib:navigate", (event) => { setNavigationRequest(event.payload); });
+        unlistenNavigate = await listen<AppNavigationRequest>("agentkib:navigate", (event) => { setNavigationRequest(event.payload); });
+        unlistenMenuCommand = await listen<AppMenuCommandRequest>("agentkib:app-command", (event) => { setMenuCommand(event.payload); });
         unlistenTheme = await listen<EffectiveTheme>("tauri://theme-changed", (event) => {
           setRuntime((current) => {
             if (!current || current.theme_preference !== "system") return current;
@@ -150,7 +152,7 @@ export function App() {
         if (!disposed) setRefreshJobs(await api.refreshStatus());
       } catch (error) { if (!disposed) setMessage(localizeMessage(error)); }
     })();
-    return () => { disposed = true; window.clearTimeout(refreshReloadTimer); unlisten?.(); unlistenRefresh?.(); unlistenInsights?.(); unlistenGateways?.(); unlistenQuota?.(); unlistenNavigate?.(); unlistenTheme?.(); };
+    return () => { disposed = true; window.clearTimeout(refreshReloadTimer); unlisten?.(); unlistenRefresh?.(); unlistenInsights?.(); unlistenGateways?.(); unlistenQuota?.(); unlistenNavigate?.(); unlistenMenuCommand?.(); unlistenTheme?.(); };
   }, []);
   useEffect(() => { localStorage.setItem("agentkib.sidebar.collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
   useEffect(() => {
@@ -197,16 +199,19 @@ export function App() {
   useEffect(() => {
     if (!navigationRequest) return;
     if (navigationRequest.page === "settings") {
+      setSettingsSection(navigationRequest.settings_section ?? "general");
       setAppMode("settings");
       setNavigationRequest(undefined);
       return;
     }
-    if (navigationRequest.page !== "quota") return;
-    if (selectedWorkspace && manifest && hasUnsavedDraft) {
-      setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
+    if (navigationRequest.page === "quota") {
+      setQuotaProvider(navigationRequest.provider);
+      setQuotaWindow(navigationRequest.window);
+      if (navigationRequest.configure_popover) setQuotaConfigureRequest((value) => value + 1);
     }
-    setSelectedWorkspace(undefined); setProject(""); setScan(undefined); setManifest(undefined); setChangeSet(undefined); setBaselineManifest("");
-    setQuotaProvider(navigationRequest.provider); setQuotaWindow(navigationRequest.window); if (navigationRequest.configure_popover) setQuotaConfigureRequest((value) => value + 1); setGlobalPage("quota"); setAppMode("main"); setNavigationRequest(undefined);
+    navigateGlobal(navigationRequest.page, navigationRequest.page === "quota");
+    setAppMode("main");
+    setNavigationRequest(undefined);
   }, [navigationRequest]);
   const persistWorkspaceDraft = () => {
     if (selectedWorkspace && manifest && hasUnsavedDraft) setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
@@ -228,8 +233,8 @@ export function App() {
     finally { setBusy(false); }
   };
   const closeWorkspace = () => leaveWorkspace(() => setGlobalPage("workspaces"));
-  const navigateGlobal = (nextPage: GlobalPage) => {
-    if (nextPage === "quota") { setQuotaProvider(undefined); setQuotaWindow(undefined); }
+  const navigateGlobal = (nextPage: GlobalPage, preserveQuotaSelection = false) => {
+    if (nextPage === "quota" && !preserveQuotaSelection) { setQuotaProvider(undefined); setQuotaWindow(undefined); }
     selectedWorkspace ? leaveWorkspace(() => setGlobalPage(nextPage)) : setGlobalPage(nextPage);
   };
   const openSettings = () => setAppMode("settings");
@@ -242,6 +247,38 @@ export function App() {
     finally { setBusy(false); }
   };
   const refreshDiscovery = async () => { setMessage(""); try { await api.requestRefresh("discovery", true); } catch (error) { setMessage(localizeMessage(error)); } };
+  const requestRefreshKinds = async (kinds: RefreshKind[]) => {
+    setMessage("");
+    try { await Promise.all(kinds.map((kind) => api.requestRefresh(kind, true))); }
+    catch (error) { setMessage(localizeMessage(error)); }
+  };
+  const refreshCurrentView = async () => {
+    if (selectedWorkspace && project && manifest) {
+      await load(project, manifest);
+      return;
+    }
+    if (appMode === "settings") {
+      if (settingsSection === "discovery") await requestRefreshKinds(["discovery"]);
+      else if (settingsSection === "integrations") await requestRefreshKinds(["gateways"]);
+      else if (settingsSection === "diagnostics") await requestRefreshKinds(["discovery", "insights", "gateways", "quota"]);
+      else await loadGlobal();
+      return;
+    }
+    if (globalPage === "quota") await requestRefreshKinds(["quota"]);
+    else if (globalPage === "insights") await requestRefreshKinds(["insights"]);
+    else await requestRefreshKinds(["discovery"]);
+  };
+  useEffect(() => {
+    if (!menuCommand) return;
+    setMenuCommand(undefined);
+    if (menuCommand.command === "add-workspace") void selectProject();
+    else if (menuCommand.command === "add-scan-root") void addScanRootFromDialog();
+    else if (menuCommand.command === "toggle-sidebar") setSidebarCollapsed((value) => !value);
+    else if (menuCommand.command === "refresh-current") void refreshCurrentView();
+    else if (menuCommand.command === "refresh-all" && window.confirm(tr("menu.refreshAllConfirm"))) {
+      void requestRefreshKinds(["discovery", "insights", "gateways", "quota"]);
+    }
+  }, [menuCommand]);
   const discoveryRefreshing = refreshJobs.some((job) => job.kind === "discovery" && (job.state === "queued" || job.state === "running"));
 
   const navigation = globalNav.map((entry) => entry.id === "catalog" ? { ...entry, badge: globalMemories.filter((item) => item.status === "pending").length } : entry);

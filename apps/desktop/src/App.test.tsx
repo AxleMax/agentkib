@@ -6,6 +6,7 @@ import { App } from "./App";
 import { api } from "./api";
 import { diffLines } from "./diff";
 import { initializeI18n } from "./i18n";
+import { open } from "@tauri-apps/plugin-dialog";
 
 const tauriListeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockImplementation((event: string, handler: (event: { payload: unknown }) => void) => {
@@ -54,6 +55,8 @@ vi.mock("./api", () => ({
     quotaCollectorStatus: vi.fn().mockResolvedValue({ backend: "codex-bar-cli", platform_supported: true, sidecar_available: true, config_source: "agentkib-managed", running: false }),
     quotaPopoverPreferences: vi.fn().mockResolvedValue({ hidden_providers: [], hidden_windows: [] }),
     setQuotaPopoverPreferences: vi.fn().mockImplementation((preferences) => Promise.resolve(preferences)),
+    addWorkspace: vi.fn(),
+    addScanRoot: vi.fn(),
     refreshQuota: vi.fn().mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-refresh" }),
     insightsView: vi.fn().mockResolvedValue({
       summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
@@ -218,6 +221,55 @@ describe("AgentKib desktop", () => {
     fireEvent.click(screen.getByRole("button", { name: "Quota" }));
     expect(await screen.findByPlaceholderText("Search providers or accounts")).toBeInTheDocument();
     expect(screen.getByText("No quota snapshot yet")).toBeInTheDocument();
+  });
+
+  it("handles native menu navigation and Settings sections", async () => {
+    render(<App />);
+    await waitFor(() => expect(tauriListeners.has("agentkib:navigate")).toBe(true));
+
+    act(() => tauriListeners.get("agentkib:navigate")?.({ payload: { page: "agents" } }));
+    expect(await screen.findByRole("heading", { name: "Agents" })).toBeInTheDocument();
+
+    act(() => tauriListeners.get("agentkib:navigate")?.({ payload: { page: "settings", settings_section: "diagnostics" } }));
+    expect(await screen.findByRole("heading", { name: "Diagnostics" })).toBeInTheDocument();
+  });
+
+  it("reuses the existing workspace picker for native menu commands", async () => {
+    vi.mocked(open).mockResolvedValueOnce(null);
+    render(<App />);
+    await waitFor(() => expect(tauriListeners.has("agentkib:app-command")).toBe(true));
+
+    act(() => tauriListeners.get("agentkib:app-command")?.({ payload: { command: "add-workspace" } }));
+
+    await waitFor(() => expect(open).toHaveBeenCalledWith({ directory: true, multiple: false, title: "Add workspace manually" }));
+  });
+
+  it("maps native refresh commands to the active page", async () => {
+    render(<App />);
+    await waitFor(() => expect(tauriListeners.has("agentkib:navigate")).toBe(true));
+    act(() => tauriListeners.get("agentkib:navigate")?.({ payload: { page: "quota" } }));
+    expect(await screen.findByRole("heading", { name: "Quota" })).toBeInTheDocument();
+    vi.mocked(api.requestRefresh).mockClear();
+
+    act(() => tauriListeners.get("agentkib:app-command")?.({ payload: { command: "refresh-current" } }));
+
+    await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledWith("quota", true));
+  });
+
+  it("confirms before refreshing every data source from the native menu", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+    await waitFor(() => expect(tauriListeners.has("agentkib:app-command")).toBe(true));
+    vi.mocked(api.requestRefresh).mockClear();
+
+    act(() => tauriListeners.get("agentkib:app-command")?.({ payload: { command: "refresh-all" } }));
+
+    await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledTimes(4));
+    expect(api.requestRefresh).toHaveBeenCalledWith("discovery", true);
+    expect(api.requestRefresh).toHaveBeenCalledWith("insights", true);
+    expect(api.requestRefresh).toHaveBeenCalledWith("gateways", true);
+    expect(api.requestRefresh).toHaveBeenCalledWith("quota", true);
+    confirm.mockRestore();
   });
 
   it("does not count DeepSeek Harness residual data as an installation", async () => {
