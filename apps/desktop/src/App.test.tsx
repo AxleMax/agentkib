@@ -188,6 +188,16 @@ describe("AgentKib desktop", () => {
     expect(screen.getByRole("tab", { name: /^MCP\s*0$/ })).toBeInTheDocument();
   });
 
+  it("loads Agent and quota pages on demand", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Quota" }));
+    expect(await screen.findByPlaceholderText("Search providers or accounts")).toBeInTheDocument();
+    expect(screen.getByText("No quota snapshot yet")).toBeInTheDocument();
+  });
+
   it("keeps the global sidebar when opening a workspace without a manifest", async () => {
     vi.mocked(api.workspaces).mockResolvedValue([{
       id: "project",
@@ -232,7 +242,7 @@ describe("AgentKib desktop", () => {
     await waitFor(() => expect(screen.getByText(/120K Token/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Achievements" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument());
-    expect(screen.getByText("Activity Heatmap")).toBeInTheDocument();
+    expect(await screen.findByText("Activity Heatmap")).toBeInTheDocument();
     expect(screen.getAllByText("My Commits")).toHaveLength(2);
   });
 

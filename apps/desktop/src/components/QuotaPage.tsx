@@ -152,17 +152,6 @@ export function QuotaPage({ initialProvider }: { initialProvider?: string }) {
   </div>;
 }
 
-export function QuotaDiagnostics({ status }: { status?: QuotaCollectorStatus }) {
-  if (!status) return <div className="setting-empty">{tr("quota.statusUnavailable")}</div>;
-  return <div className="quota-diagnostics">
-    <DiagnosticRow label={tr("quota.collector")} value={backendLabel(status.backend, status.backend_version)} />
-    <DiagnosticRow label={tr("quota.sidecar")} value={tr(status.sidecar_available ? "quota.available" : "quota.unavailable")} />
-    <DiagnosticRow label={tr("quota.configSource")} value={tr(`quota.config.${status.config_source}`)} />
-    <DiagnosticRow label={tr("quota.lastSuccess")} value={status.last_success_at ? formatDateTime(status.last_success_at) : "—"} />
-    {status.error_key && <div className="quota-diagnostic-error"><strong>{tr(status.error_key)}</strong>{status.error_detail && <details><summary>{tr("common.details")}</summary><pre>{status.error_detail}</pre></details>}</div>}
-  </div>;
-}
-
 function QuotaProviderDetail({ provider }: { provider: QuotaProvider }) {
   const windows = provider.windows;
   return <>
@@ -184,7 +173,6 @@ function QuotaRemaining({ provider }: { provider: QuotaProvider }) {
   return <em className={quotaSeverity(remaining)}>{Math.round(remaining)}%</em>;
 }
 
-function DiagnosticRow({ label, value }: { label: string; value: string }) { return <div className="setting-row"><span>{label}</span><strong>{value}</strong></div>; }
 function lowestRemaining(provider: QuotaProvider) { const values = [...provider.windows, ...provider.accounts.flatMap((account) => account.windows)].map((window) => window.remaining_percent); return values.length ? Math.min(...values) : undefined; }
 function quotaSeverity(remaining: number) { return remaining <= 10 ? "danger" : remaining <= 20 ? "warning" : "healthy"; }
 function compareProviders(left: QuotaProvider, right: QuotaProvider) { return (lowestRemaining(left) ?? 101) - (lowestRemaining(right) ?? 101) || left.name.localeCompare(right.name); }

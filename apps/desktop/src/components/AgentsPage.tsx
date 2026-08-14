@@ -1,0 +1,54 @@
+import { useState, type KeyboardEvent } from "react";
+import { ChevronRight, CircleAlert, FileCode2, FolderGit2, PlugZap, Search } from "lucide-react";
+import { formatRelativeTime, tr } from "../i18n";
+import type { AgentInstallation, AgentKind, CatalogAsset, InsightsStatus, RemoteGatewaySummary, UsageQuality, WorkspaceSummary } from "../types";
+import { AgentIcon } from "./AgentIcon";
+
+type AgentDetailSection = "overview" | "assets" | "workspaces" | "usage";
+
+const agentKinds: AgentKind[] = ["codex", "claude-code", "cursor", "open-claw", "hermes"];
+const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes" };
+
+export function AgentsPage({ installations, assets, workspaces, remoteGateways, insightsStatus, onOpen }: { installations: AgentInstallation[]; assets: CatalogAsset[]; workspaces: WorkspaceSummary[]; remoteGateways: RemoteGatewaySummary[]; insightsStatus?: InsightsStatus; onOpen: (workspace: WorkspaceSummary) => Promise<void> }) {
+  const [selected, setSelected] = useState<AgentKind>("codex");
+  const [section, setSection] = useState<AgentDetailSection>("overview");
+  const [assetQuery, setAssetQuery] = useState("");
+  const [assetKind, setAssetKind] = useState("all");
+  const installation = installations.find((item) => item.agent === selected);
+  const provider = insightsStatus?.providers.find((item) => item.agent === selected);
+  const homeAssets = assets.filter((item) => item.agent === selected);
+  const assetKinds = [...new Set(homeAssets.map((item) => item.kind))].sort();
+  const visibleHomeAssets = homeAssets.filter((item) => `${item.name} ${item.path} ${item.kind}`.toLowerCase().includes(assetQuery.toLowerCase()) && (assetKind === "all" || item.kind === assetKind));
+  const linkedWorkspaces = workspaces.filter((workspace) => workspace.sources.some((source) => source.agent === selected));
+  const recentLinkedWorkspaces = [...linkedWorkspaces].sort((left, right) => (right.last_active_at ?? "").localeCompare(left.last_active_at ?? "")).slice(0, 5);
+  const homeAssetKinds = [...homeAssets.reduce((counts, asset) => counts.set(asset.kind, (counts.get(asset.kind) ?? 0) + 1), new Map<string, number>()).entries()].sort((left, right) => right[1] - left[1]);
+  const selectedRemoteGateways = remoteGateways.filter((gateway) => gateway.kind === selected);
+  const remoteWorkspaceCount = selectedRemoteGateways.reduce((total, gateway) => total + gateway.workspaces.length, 0);
+  return <div className="agent-master-detail">
+    <div className="panel agent-master-list">{agentKinds.map((agent) => { const item = installations.find((value) => value.agent === agent); const remoteCount = remoteGateways.filter((gateway) => gateway.kind === agent).reduce((total, gateway) => total + gateway.workspaces.length, 0); const count = workspaces.filter((workspace) => workspace.sources.some((source) => source.agent === agent)).length + remoteCount; return <button key={agent} className={selected === agent ? "active" : ""} onClick={() => { setSelected(agent); setSection("overview"); }}><AgentIcon agent={agent} /><span><strong>{agentLabels[agent]}</strong><small>{count} {tr("common.workspaces")}</small></span><span className={item?.installed ? "ready" : "status neutral"}>{tr(item?.installed ? "common.installed" : "common.notInstalled")}</span><ChevronRight size={15} /></button>; })}</div>
+    <section className="panel agent-detail"><div className="agent-detail-head"><AgentIcon agent={selected} /><h2>{agentLabels[selected]}</h2>{installation?.version && <span className="agent-version">{installation.version}</span>}</div><div className="section-tabs agent-detail-tabs" role="tablist" aria-label={agentLabels[selected]} onKeyDown={handleTabKey}>{(["overview", "assets", "workspaces", "usage"] as AgentDetailSection[]).map((value) => <button role="tab" aria-selected={section === value} className={section === value ? "active" : ""} key={value} onClick={() => setSection(value)}>{tr(`agents.section.${value}`)}</button>)}</div>
+      {section === "overview" && <><div className="agent-facts three"><div><span>{tr("agents.linkedWorkspaces")}</span><strong>{linkedWorkspaces.length + remoteWorkspaceCount}</strong></div><div><span>{tr("agents.homeAssets")}</span><strong>{homeAssets.length}</strong></div><div><span>{tr("agents.provider")}</span><strong>{provider ? qualityLabel(provider.quality) : tr("insights.noData")}</strong></div></div>{installation?.home && <div className="agent-home-path"><code>{installation.home}</code></div>}{installation?.warnings.map((warning) => <div className="warning" key={warning}><CircleAlert size={14} />{warning}</div>)}<div className="agent-overview-grid"><section className="detail-section"><h3>{tr("agents.recentWorkspaces")}</h3><div className="agent-workspace-list preview-list">{recentLinkedWorkspaces.map((workspace) => <button key={workspace.id} onClick={() => void onOpen(workspace)}><FolderGit2 size={14} /><span>{workspace.name}<small>{workspace.path}</small></span><small>{workspace.last_active_at ? formatRelativeTime(workspace.last_active_at) : tr("common.never")}</small></button>)}{!recentLinkedWorkspaces.length && <p className="neutral-empty">{tr("agents.noRecentWorkspaces")}</p>}</div></section><section className="detail-section"><h3>{tr("agents.homeAssetTypes")}</h3><dl className="summary-list compact-summary">{homeAssetKinds.map(([kind, count]) => <div key={kind}><dt>{tr(`status.asset.${kind}`)}</dt><dd>{count}</dd></div>)}{!homeAssetKinds.length && <div><dt>{tr("agents.noHomeAssets")}</dt><dd>0</dd></div>}</dl></section></div>{selectedRemoteGateways.length > 0 && <RemoteAgentGatewayDetails gateways={selectedRemoteGateways} />}</>}
+      {section === "assets" && <div className="detail-section"><div className="toolbar compact-toolbar"><div className="search"><Search size={15} /><input value={assetQuery} onChange={(event) => setAssetQuery(event.target.value)} placeholder={tr("catalog.searchPlaceholder")} /></div>{assetKinds.length > 1 && <select className="setting-select" value={assetKind} onChange={(event) => setAssetKind(event.target.value)}><option value="all">{tr("catalog.allTypes")}</option>{assetKinds.map((value) => <option key={value} value={value}>{tr(`status.asset.${value}`)}</option>)}</select>}</div><div className="home-asset-list">{visibleHomeAssets.map((asset) => <div key={asset.id}><FileCode2 size={14} /><span><strong>{asset.name}</strong><small>{shortPath(asset.path)}</small></span><em>{tr(`status.asset.${asset.kind}`)}</em></div>)}{!visibleHomeAssets.length && <Empty icon={FileCode2} title={tr("agents.noHomeAssets")} />}</div></div>}
+      {section === "workspaces" && <div className="detail-section"><div className="agent-workspace-list">{linkedWorkspaces.map((workspace) => <div key={workspace.id}><FolderGit2 size={14} /><span>{workspace.name}<small>{workspace.path}</small></span><small>{workspace.asset_count}</small></div>)}</div>{selectedRemoteGateways.length > 0 && <RemoteAgentGatewayDetails gateways={selectedRemoteGateways} />}{!linkedWorkspaces.length && !selectedRemoteGateways.length && <Empty icon={FolderGit2} title={tr("workspace.noMatch")} />}</div>}
+      {section === "usage" && <div className="detail-section provider-usage"><div className="provider-summary"><span>{tr("agents.provider")}</span><strong>{provider ? qualityLabel(provider.quality) : tr("insights.noData")}</strong>{provider?.coverage_from && <small>{provider.coverage_from} — {provider.coverage_to}</small>}</div>{(provider?.error_key || provider?.error) && <details><summary>{provider.error_key ? tr(provider.error_key, { defaultValue: tr("insights.providerUnavailable") }) : tr("insights.providerUnavailable")}</summary>{provider.error && <pre>{provider.error}</pre>}</details>}</div>}
+    </section>
+  </div>;
+}
+
+function RemoteAgentGatewayDetails({ gateways }: { gateways: RemoteGatewaySummary[] }) {
+  return <><div className="detail-section"><h3>{tr("gateway.title")}</h3><div className="home-asset-list">{gateways.map((gateway) => <div key={gateway.id}><PlugZap size={14} /><span><strong>{gateway.name}</strong><small>{gateway.url}</small></span><em className={`gateway-${gateway.state}`}>{tr(`gateway.state.${gateway.state}`)}</em></div>)}</div></div><div className="detail-section"><h3>{tr("gateway.remoteWorkspaces")}</h3><div className="agent-workspace-list">{gateways.flatMap((gateway) => gateway.workspaces.map((workspace) => <div key={`${gateway.id}:${workspace.id}`}><FolderGit2 size={14} /><span>{workspace.name}<small>{workspace.path ?? gateway.name}</small></span><small>{tr("common.sessions")} {workspace.session_count}</small></div>))}</div></div><div className="detail-section"><h3>{tr("gateway.remoteAssets")}</h3><div className="home-asset-list">{gateways.flatMap((gateway) => gateway.assets.map((asset) => <div key={`${gateway.id}:${asset.id}`}><FileCode2 size={14} /><span><strong>{asset.name}</strong><small>{asset.path}</small></span><em>{asset.kind}</em></div>))}{gateways.every((gateway) => !gateway.assets.length) && <p>{tr(gateways.every((gateway) => gateway.kind === "hermes") ? "gateway.hermesPartial" : "gateway.noRemoteAssets")}</p>}</div></div></>;
+}
+
+function qualityLabel(value: UsageQuality) { return tr(`status.quality.${value}`); }
+function shortPath(path: string) { const parts = path.split("/").filter(Boolean); return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : path; }
+function Empty({ icon: Icon, title }: { icon: typeof FileCode2; title: string }) { return <div className="empty compact"><Icon size={28} /><h3>{title}</h3></div>; }
+function handleTabKey(event: KeyboardEvent<HTMLDivElement>) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)')];
+  const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+  if (!tabs.length || current < 0) return;
+  event.preventDefault();
+  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[next].focus();
+  tabs[next].click();
+}
