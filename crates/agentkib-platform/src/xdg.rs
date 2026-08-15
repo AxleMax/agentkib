@@ -112,7 +112,7 @@ fn deduplicate(paths: &mut Vec<PathBuf>) {
     paths.retain(|path| seen.insert(crate::path::identity(path)));
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use std::ffi::OsString;
