@@ -1,0 +1,273 @@
+name: Desktop Release Artifacts
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach desktop artifacts to
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  desktop:
+    name: Build ${{ matrix.name }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            arch: arm64
+            os: macos-15
+            artifact: macos-arm64
+            asset_suffix: macos-arm64
+            bundles: app,dmg
+          - name: macOS
+            arch: x64
+            os: macos-15-intel
+            artifact: macos-x64
+            asset_suffix: macos-x64
+            bundles: app,dmg
+          - name: Windows
+            arch: x64
+            os: windows-2025
+            artifact: windows-x64
+            asset_suffix: windows-x64
+            bundles: nsis
+          - name: Windows
+            arch: arm64-preview
+            os: windows-11-arm
+            artifact: windows-arm64-preview
+            asset_suffix: windows-arm64-preview
+            bundles: nsis
+          - name: Ubuntu
+            arch: x64
+            os: ubuntu-22.04
+            artifact: linux-ubuntu-x64
+            asset_suffix: linux-x64
+            bundles: deb,appimage
+          - name: Ubuntu
+            arch: arm64-preview
+            os: ubuntu-24.04-arm
+            artifact: linux-ubuntu-arm64-preview
+            asset_suffix: linux-arm64-preview
+            bundles: deb,appimage
+
+    env:
+      CARGO_TERM_COLOR: always
+      DESKTOP_RELEASE_DIR: dist/desktop-release
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources || true
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential binutils curl file pkg-config patchelf libssl-dev \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libfuse2 libglib2.0-bin desktop-file-utils
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust and quota collector
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.artifact }}
+          cache-directories: ~/.cache/agentkib/codexbar/0.49.5
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Read application version
+        shell: bash
+        run: |
+          version=$(node -p "JSON.parse(require('fs').readFileSync('apps/desktop/src-tauri/tauri.conf.json')).version")
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Clean previous bundle outputs
+        shell: bash
+        run: find target -type d -path '*/release/bundle' -prune -exec rm -rf '{}' + 2>/dev/null || true
+
+      - name: Build Linux bundles
+        if: runner.os == 'Linux'
+        run: apps/desktop/scripts/build-linux-bundles.sh --bundles ${{ matrix.bundles }}
+
+      - name: Build macOS or Windows bundles
+        if: runner.os != 'Linux'
+        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Smoke test Linux bundles
+        if: runner.os == 'Linux'
+        run: .github/scripts/smoke-test-linux-package.sh target
+
+      - name: Stage release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$DESKTOP_RELEASE_DIR"
+          mkdir -p "$DESKTOP_RELEASE_DIR"
+          prefix="AgentKib_${APP_VERSION}_${{ matrix.asset_suffix }}"
+
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            app=$(find target -type d -path '*/bundle/macos/*.app' -print -quit)
+            test -n "$app"
+            ditto -c -k --sequesterRsrc --keepParent "$app" "$DESKTOP_RELEASE_DIR/${prefix}.app.zip"
+          fi
+
+          while IFS= read -r artifact; do
+            case "$artifact" in
+              *.dmg) cp "$artifact" "$DESKTOP_RELEASE_DIR/${prefix}.dmg" ;;
+              *.exe) cp "$artifact" "$DESKTOP_RELEASE_DIR/${prefix}.exe" ;;
+              *.deb) cp "$artifact" "$DESKTOP_RELEASE_DIR/${prefix}.deb" ;;
+              *.AppImage) cp "$artifact" "$DESKTOP_RELEASE_DIR/${prefix}.AppImage" ;;
+            esac
+          done < <(find target -type f \
+            \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) \
+            -path '*/bundle/*' | sort)
+
+          count=$(find "$DESKTOP_RELEASE_DIR" -type f | wc -l | tr -d ' ')
+          test "$count" -gt 0
+          find "$DESKTOP_RELEASE_DIR" -type f -print
+
+      - name: Write release checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$DESKTOP_RELEASE_DIR"
+          for artifact in *; do
+            [[ "$artifact" == *.sha256 ]] && continue
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$artifact" > "$artifact.sha256"
+            else
+              shasum -a 256 "$artifact" > "$artifact.sha256"
+            fi
+          done
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-desktop-${{ matrix.artifact }}
+          path: ${{ env.DESKTOP_RELEASE_DIR }}/*
+          if-no-files-found: error
+
+      - name: Upload artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: ${{ env.DESKTOP_RELEASE_DIR }}/*
+          fail_on_unmatched_files: true
+
+  fedora-x64:
+    name: Build Fedora x64 RPM
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    env:
+      CARGO_TERM_COLOR: always
+      DESKTOP_RELEASE_DIR: dist/desktop-release
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Install Fedora build dependencies
+        run: |
+          dnf install -y \
+            git curl tar gzip xz file findutils which binutils \
+            gcc gcc-c++ make openssl-devel pkgconf-pkg-config patchelf \
+            gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3-devel \
+            librsvg2-devel libxdo-devel rpm-build rpmdevtools cpio desktop-file-utils
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust and quota collector
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-fedora-x64
+          cache-directories: ~/.cache/agentkib/codexbar/0.49.5
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Read application version
+        shell: bash
+        run: |
+          version=$(node -p "JSON.parse(require('fs').readFileSync('apps/desktop/src-tauri/tauri.conf.json')).version")
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Clean previous bundle outputs
+        shell: bash
+        run: find target -type d -path '*/release/bundle' -prune -exec rm -rf '{}' + 2>/dev/null || true
+
+      - name: Build RPM
+        run: apps/desktop/scripts/build-linux-bundles.sh --bundles rpm
+
+      - name: Smoke test RPM
+        run: .github/scripts/smoke-test-linux-package.sh target rpm
+
+      - name: Stage release artifact and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$DESKTOP_RELEASE_DIR"
+          mkdir -p "$DESKTOP_RELEASE_DIR"
+          source=$(find target -type f -name '*.rpm' -path '*/bundle/rpm/*' -print -quit)
+          test -n "$source"
+          destination="$DESKTOP_RELEASE_DIR/AgentKib_${APP_VERSION}_linux-x64.rpm"
+          cp "$source" "$destination"
+          sha256sum "$destination" > "$destination.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-desktop-linux-fedora-x64
+          path: ${{ env.DESKTOP_RELEASE_DIR }}/*
+          if-no-files-found: error
+
+      - name: Upload artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: ${{ env.DESKTOP_RELEASE_DIR }}/*
+          fail_on_unmatched_files: true
