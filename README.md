@@ -1,182 +1,118 @@
 <p align="center">
-  <img src="apps/desktop/src-tauri/icons/icon.png" width="128" alt="AgentKib app icon" />
+  <img src="apps/desktop/src-tauri/icons/icon.png" width="128" alt="AgentKib" />
 </p>
 
 <h1 align="center">AgentKib</h1>
 
-<p align="center"><strong>Keep every coding agent working from the same local source of truth.</strong></p>
+<p align="center"><strong>让不同 Coding Agent 共享同一套可信的本地资产。</strong></p>
 
 <p align="center">
-  <a href="#english">English</a> · <a href="#简体中文">简体中文</a>
+  <a href="#简体中文">简体中文</a> · <a href="#english">English</a>
 </p>
 
 <p align="center">
-  <img alt="Status: Development Preview" src="https://img.shields.io/badge/status-development_preview-f59e0b" />
-  <img alt="Platform: macOS, Windows and Linux" src="https://img.shields.io/badge/platform-macOS_%7C_Windows_%7C_Linux-111827" />
-  <img alt="Data: Local first" src="https://img.shields.io/badge/data-local_first-16a34a" />
+  <a href="https://github.com/starroyhq/agentkib/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/starroyhq/agentkib/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/starroyhq/agentkib/actions/workflows/windows-x64.yml"><img alt="Windows" src="https://github.com/starroyhq/agentkib/actions/workflows/windows-x64.yml/badge.svg" /></a>
+  <a href="https://github.com/starroyhq/agentkib/actions/workflows/linux.yml"><img alt="Linux" src="https://github.com/starroyhq/agentkib/actions/workflows/linux.yml/badge.svg" /></a>
+  <img alt="Development preview" src="https://img.shields.io/badge/status-development_preview-f59e0b" />
+  <img alt="Local first" src="https://img.shields.io/badge/data-local_first-16a34a" />
 </p>
 
 > [!WARNING]
-> AgentKib is still a development preview. There is no official downloadable build yet; the current source-build targets are macOS, Windows 11, Ubuntu, and Fedora.
-
-## English
-
-AgentKib is a local-first desktop app for people who use more than one coding agent. It brings scattered project instructions, Skills, MCP connections, reusable memory, and activity into one place—without requiring an account, cloud database, or model API.
-
-**KIB** stands for **Knowledge & Instruction Base**.
-
-### What AgentKib helps you do
-
-- **Find your workspaces automatically.** AgentKib reads workspace paths from supported agents and folders you explicitly authorize. It does not scan your entire disk.
-- **See all agent assets in one catalog.** Browse project instructions, Skills, MCP connections, hooks, profiles, configurations, and approved memory across workspaces.
-- **Understand what an agent will receive.** Preview instruction loading order, directory rules, overrides, available Skills, connections, and memory for a selected working directory.
-- **Share project rules safely.** Edit common assets once, review the generated diff, and write only after explicit approval. A project does not need an AgentKib manifest before it can be discovered or inspected.
-- **Use one local MCP entry point.** AgentKib can manage downstream MCP servers and expose them to supported agents through one local hub.
-- **Watch rolling plan limits.** See available Codex, Claude Code, Cursor, and configured Coding Plan windows, including remaining quota and reset time. macOS also provides a menu bar popover; Windows and Linux use the app and native tray menu.
-- **Track your progress.** View locally available Token usage, sessions, Git commits, contribution heatmaps, streaks, and achievements. Incomplete data is always labeled as incomplete.
-
-AgentKib can also link a workspace to an Obsidian Vault and read public metadata from optional OpenClaw or Hermes remote connections. These integrations are opt-in and read-only by default.
-
-AgentKib can stay active from the system tray after its window is hidden. On Linux desktops without AppIndicator support it keeps the window reachable instead of hiding it completely. It supports light, dark, and system appearance, plus Simplified Chinese, Traditional Chinese, Japanese, and English.
-
-### Supported agents
-
-- Codex
-- Claude Code
-- Cursor
-- OpenClaw
-- Hermes
-- DeepSeek Harness (Beta, read-only)
-
-AgentKib distinguishes an installed app or CLI from leftover configuration. Existing Agent Home assets can still be inventoried read-only without incorrectly marking the agent as installed.
-DeepSeek Harness support currently covers local workspace discovery, asset inventory, context preview, and cumulative Token usage; shared writes and MCP setup remain disabled while its storage contracts are in Beta.
-
-### Typical workflow
-
-1. Open AgentKib. Workspace discovery starts automatically; no folder selection is required.
-2. Use **Workspaces**, **Assets**, and **Agents** to inspect what already exists.
-3. Open a workspace to review its assets and effective context.
-4. Edit shared instructions, Skills, or MCP settings when needed.
-5. Review the complete diff before AgentKib changes any project or Agent Home file.
-
-Ignored workspaces, additional scan folders, integrations, appearance, language, and local data controls are available in **Settings**.
-
-### Local and private by default
-
-- No account, subscription, cloud sync, or remote database is required.
-- Automatic discovery does not store prompts, message bodies, conversation titles, or raw session IDs.
-- Credentials, environment files, private keys, and message databases are excluded from the asset catalog.
-- Git statistics do not store commit messages, diffs, file contents, or plaintext email addresses.
-- Quota snapshots stay on this device. Account email is kept only to identify local accounts; credentials, cookies, raw CLI output, and raw diagnostics are not stored.
-- Agent-proposed memory is not shared until you approve it.
-- Every generated file change is shown as a diff and checked again before writing.
-
-### Try it
-
-The [Releases page](https://github.com/starroyhq/agentkib/releases) is reserved for future preview builds. Until then, use the [build instructions](#build-from-source) below.
-
----
+> AgentKib 仍处于开发预览阶段，本地数据格式和部分功能可能继续调整。目前尚未发布正式安装包，请从源码构建。
 
 ## 简体中文
 
-AgentKib 是一个面向多 Agent 用户的本地桌面应用。它把散落在不同项目、不同 Agent 目录中的项目指令、Skills、MCP 连接、共享记忆和使用记录集中到一个地方，不需要账号、云端数据库或模型 API。
+AgentKib 是一个本地优先的 Coding Agent 资产中心。它自动发现你已经使用过的工作区，把散落在 Codex、Claude Code、Cursor、OpenClaw、Hermes 等工具中的 Instructions、Skills、MCP、记忆和配置集中展示，并在不同 Agent 之间安全地复用公共资产。
 
-**KIB** 代表 **Knowledge & Instruction Base（知识与指令底座）**。
+不需要账号、云端数据库或模型 API。**KIB** 代表 **Knowledge & Instruction Base（知识与指令底座）**。
 
-### AgentKib 能帮你做什么
+### 为什么需要 AgentKib
 
-- **自动找到工作区**：从受支持 Agent 的本地记录和你明确授权的目录中发现项目，不会默认扫描整块磁盘。
-- **统一查看 Agent 资产**：跨工作区浏览项目指令、Skills、MCP、Hooks、Profiles、配置和已批准记忆。
-- **看清 Agent 实际获得的上下文**：预览指令加载顺序、目录规则、平台覆盖，以及当前可见的 Skills、连接和记忆。
-- **安全共享项目规则**：公共资产只维护一次，写入前必须审查完整 Diff。项目不需要预先创建 AgentKib manifest，也能被发现和查看。
-- **统一连接 MCP**：通过一个本地 MCP Hub 管理下游 Server，并提供给受支持的 Agent 使用。
-- **查看滚动额度**：可查看 Codex、Claude Code、Cursor 及已配置 Coding Plan 的剩余额度和重置时间。macOS 还提供菜单栏面板，Windows 和 Linux 通过应用和系统托盘访问。
-- **记录使用成就**：汇总本地可获得的 Token、会话和 Git 提交，展示贡献热力图、连续活跃和成就；数据不完整时会明确标注。
+同一个项目经常同时存在 `AGENTS.md`、`CLAUDE.md`、`.cursor/rules`、Skills 和多个 MCP 配置。它们的内容会逐渐重复、冲突或失效，而且每个 Agent 实际读取到的上下文并不相同。
 
-AgentKib 还可以将工作区关联到 Obsidian Vault，并按需只读连接 OpenClaw 或 Hermes 的远程元数据。这些能力默认不会主动启用或写入外部内容。
+AgentKib 提供一个统一入口来解决这些问题：
 
-窗口隐藏后，AgentKib 可以继续在系统托盘运行。Linux 桌面缺少 AppIndicator 支持时，应用会保留可访问的窗口而不是彻底隐藏。界面支持浅色、深色和跟随系统，并提供简体中文、繁體中文、日语和英语。
+- **自动发现工作区**：从 Agent 的本地配置和历史元数据中发现仍然存在的项目，也支持添加扫描目录；不会默认扫描整块磁盘。
+- **统一盘点资产**：按工作区、Agent 和类型查看 Instructions、Skills、MCP、Hooks、Profiles 与经审批的共享记忆。
+- **预览有效上下文**：查看指定 Agent 在当前目录中的加载顺序、作用域、覆盖关系、可见 Skills 和潜在冲突。
+- **安全同步公共资产**：先生成完整 Diff，再由用户确认写入；发现和浏览本身不会创建 manifest 或修改 Agent 配置。
+- **集中连接 MCP**：通过本地 MCP Hub 管理下游 Server，并向支持的 Agent 提供统一入口。
+- **查看额度与使用轨迹**：汇总可获得的滚动额度、重置时间、Token、会话、Git 提交、热力图和成就；不完整数据会明确标注。
+- **后台常驻**：关闭主窗口后可继续在系统托盘运行。macOS 支持额度菜单栏面板，Windows 和 Linux 使用原生托盘菜单。
+
+界面支持简体中文、繁體中文、日本語和 English，并提供浅色、深色与跟随系统三种主题。
 
 ### 支持的 Agent
 
-- Codex
-- Claude Code
-- Cursor
-- OpenClaw
-- Hermes
-- DeepSeek Harness（Beta，只读）
+| Agent | 当前支持 |
+| --- | --- |
+| Codex | 工作区发现、资产盘点、上下文预览和公共资产同步 |
+| Claude Code | 工作区发现、资产盘点、上下文预览和公共资产同步 |
+| Cursor | 工作区发现、资产盘点、上下文预览和公共资产同步 |
+| OpenClaw | 工作区发现、资产盘点、上下文预览和公共资产同步 |
+| Hermes | 工作区发现、资产盘点、上下文预览和公共资产同步 |
+| DeepSeek Harness | **Beta，只读**：工作区发现、资产盘点、上下文预览和累计 Token |
 
-AgentKib 会区分“实际安装的应用或 CLI”和“卸载后留下的配置”。即使只剩 Agent Home 资产，也可以继续只读盘点，但不会被错误标记为已安装。
-DeepSeek Harness 当前支持本地工作区发现、资产盘点、上下文预览和累计 Token 用量；在其存储协议仍处于 Beta 期间，不会写入共享配置或接入 MCP。
+AgentKib 会区分“已安装”和“只发现了卸载后的本地数据”。涉及 Agent Home 的写入会单独请求授权；DeepSeek Harness 的存储协议仍处于 Beta，因此不会被写入或配置 MCP。
 
-### 常见使用流程
+### 使用流程
 
-1. 打开 AgentKib，应用会自动开始发现工作区，不要求先选择文件夹。
-2. 在**工作区**、**资产**和 **Agent** 页面查看已有内容。
-3. 进入某个工作区，检查项目资产和有效上下文。
-4. 需要统一规则时，再编辑共享 Instructions、Skills 或 MCP 设置。
-5. AgentKib 修改任何项目文件或 Agent Home 文件前，都必须先由你审查完整 Diff。
+1. 启动 AgentKib，等待它自动发现本机已有工作区。
+2. 在“工作区”“资产”和“Agent”中检查现有配置。
+3. 打开工作区，预览某个 Agent 在指定目录中实际可见的上下文。
+4. 需要统一规则时，编辑共享 Instructions、Skills 或 MCP。
+5. 审查 ChangeSet 的完整 Diff，确认后再写入项目或 Agent Home。
 
-忽略的工作区、补充扫描目录、集成、主题、语言和本地数据控制均可在**设置**中管理。
+工作区不需要预先存在 `.agentkib/manifest.yaml`。只有首次保存共享资产时，AgentKib 才会把 manifest 纳入待确认的 ChangeSet。
 
-### 默认本地、默认私密
+### 本地与隐私边界
 
-- 不需要账号、订阅、云同步或远程数据库。
-- 自动发现不会保存 Prompt、消息正文、对话标题或原始会话 ID。
-- 凭据、环境文件、私钥和消息数据库不会进入资产目录。
+- 不需要登录，不提供云同步，也不会上传项目资产。
+- 自动发现只保存路径、来源、数量和时间等聚合元数据，不保存 Prompt、消息正文、对话标题或原始 Session ID。
+- 凭据、Cookie、Token、`.env`、私钥和消息数据库不会进入资产目录或日志。
 - Git 统计不保存提交说明、Diff、文件内容或明文邮箱。
-- 额度快照只保存在本机。账号邮箱仅用于区分本地账号；凭据、Cookie、CLI 原始输出和原始诊断不会落库。
-- Agent 提议的记忆必须由你批准后才能共享。
-- 所有生成的文件修改都会先展示 Diff，并在写入前再次校验。
+- 额度快照只保存在本机；外部 Collector 的原始输出不会落库。
+- Agent 提议的记忆只有在用户批准后才会被其他 Agent 检索。
+- 所有文件写入都经过路径边界、原始哈希、Diff、备份和写后验证。
 
-### 体验方式
+可选的 Obsidian、OpenClaw Remote Gateway 和 Hermes Remote Gateway 集成均需主动配置，并保持各自的权限边界。
 
-[Releases 页面](https://github.com/starroyhq/agentkib/releases)将用于后续预览版本发布。目前请按照下方[源码构建说明](#build-from-source)运行。
+### 平台状态
 
----
+| 平台 | 状态 |
+| --- | --- |
+| macOS 13+（Apple Silicon / Intel） | 主要开发与验收平台 |
+| Windows 11 x64 | CI 构建 NSIS，并执行安装、覆盖安装和卸载烟测 |
+| Ubuntu 22.04 x64 | CI 构建并验证 `.deb` 与 AppImage |
+| Fedora x64 | CI 构建并验证 `.rpm` |
+| Windows ARM64 / Linux ARM64 | Preview；保证核心编译或原生打包，部分额度能力可能不可用 |
 
-## Build from source
+### 从源码运行
 
-### Requirements / 环境要求
-
-- macOS 13+、Windows 11、Ubuntu 22.04+ 或近期 Fedora
-- macOS：Xcode Command Line Tools
-- Windows：Visual Studio Build Tools 2022（MSVC 与 Windows SDK）
-- Linux：GTK 3、WebKitGTK 4.1、AppIndicator、librsvg、libxdo、`gdbus` 和对应的 C/C++ 构建工具
-- Rust stable toolchain
-- Node.js
-- pnpm 10（仓库固定使用 `pnpm@10.8.1`）
-
-### Run locally / 本地运行
+需要 Rust stable、Node.js 和 pnpm 10。桌面端还需要对应平台的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)：macOS 使用 Xcode Command Line Tools，Windows 使用 Visual Studio Build Tools 2022 与 Windows SDK，Linux 使用 GTK 3、WebKitGTK 4.1、AppIndicator、librsvg 和 libxdo。
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-首次 Rust 编译可能需要较长时间。
-
-Linux 用户可以先运行只读环境诊断；脚本只检查依赖和桌面能力，不会调用 `sudo`：
-
-```bash
-apps/desktop/scripts/diagnose-linux.sh
-```
-
-### Build the desktop app / 构建桌面应用
+构建桌面安装包：
 
 ```bash
 pnpm tauri build
 ```
 
-Linux 打包请使用下列入口；它会规范化构建权限，避免严格 `umask` 生成只能由构建用户执行的安装包：
+Linux 可先运行只读环境诊断，再使用项目脚本生成发行包：
 
 ```bash
+apps/desktop/scripts/diagnose-linux.sh
 apps/desktop/scripts/build-linux-bundles.sh
 ```
 
-首次构建会下载并校验对应平台固定版本的额度 Collector；Linux 使用官方 CodexBarCLI 0.49.5 静态 musl 产物，Windows x64 从经校验的 Win-CodexBar 发布源码编译 CLI，均不会执行第三方安装器。构建结果位于 `target/release/bundle/`。Windows x64 生成 NSIS 安装包；Ubuntu/Fedora 可生成 `.deb`、`.rpm` 和 AppImage。Windows ARM64 当前作为预览架构，额度 Collector 暂不可用；Linux ARM64 包同样标记为 Preview，因为当前原生 CI 使用 Ubuntu 24.04，尚未满足正式 AppImage 的 Ubuntu 22.04 构建基线。第三方许可见 `THIRD_PARTY_NOTICES.md`。
+首次构建可能下载并校验固定版本的额度 Collector。构建产物位于 `target/release/bundle/`，第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-### Validate / 验证
+### 验证
 
 ```bash
 cargo fmt --all -- --check
@@ -187,12 +123,78 @@ pnpm typecheck
 pnpm build
 ```
 
-## Project status / 项目状态
+问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。正式预览版本将发布在 [Releases](https://github.com/starroyhq/agentkib/releases)。
 
-- AgentKib is under active development; interfaces and local data formats may still change before the first release.
-- macOS remains the primary acceptance platform. Windows 11 x64 and Linux x86_64 are release build targets; Windows ARM64 and Linux ARM64 are preview targets, with Linux ARM64 built on a native runner.
-- Focused issues and pull requests are welcome.
+---
 
-- AgentKib 正在持续开发，首次发布前接口和本地数据格式仍可能变化。
-- macOS 仍是主要验收平台；Windows 11 x64 与 Linux x86_64 是发布构建目标；Windows ARM64 与 Linux ARM64 为预览目标，其中 Linux ARM64 使用原生 CI Runner 构建。
-- 欢迎提交聚焦的问题反馈和 Pull Request。
+## English
+
+AgentKib is a local-first asset center for people who use multiple coding agents. It discovers existing workspaces, inventories instructions, Skills, MCP connections, memory, and native configuration, and helps reuse shared assets safely across agents—without requiring an account, cloud database, or model API.
+
+**KIB** stands for **Knowledge & Instruction Base**.
+
+### What it does
+
+- Discovers existing workspaces from supported agents and explicitly added scan folders without scanning the entire disk.
+- Catalogs instructions, Skills, MCP connections, hooks, profiles, configuration, and approved memory across workspaces.
+- Previews the effective context for an agent and working directory, including load order, scope, overrides, visible Skills, and conflicts.
+- Generates a complete ChangeSet and diff before writing shared assets or native agent configuration.
+- Runs a local MCP Hub that provides a single entry point to downstream MCP servers.
+- Shows available rolling quota windows, Token usage, sessions, Git activity, contribution heatmaps, streaks, and achievements.
+- Continues working from the system tray after the main window is hidden.
+
+AgentKib supports light, dark, and system appearance, with Simplified Chinese, Traditional Chinese, Japanese, and English UI.
+
+### Supported agents
+
+Codex, Claude Code, Cursor, OpenClaw, and Hermes support discovery, asset inventory, context preview, and shared-asset synchronization. **DeepSeek Harness is currently Beta and read-only**, with workspace discovery, asset inventory, context preview, and cumulative Token coverage.
+
+AgentKib distinguishes an installed app or CLI from leftover local data. Agent Home writes require separate approval, and DeepSeek Harness is never selected as a write target while its storage contracts remain in Beta.
+
+### Local and private by default
+
+- No login, cloud sync, remote database, or model API is required.
+- Discovery stores aggregate metadata, not prompts, message bodies, conversation titles, or raw session IDs.
+- Credentials, cookies, tokens, environment files, private keys, and message databases are excluded from the catalog and logs.
+- Git analytics do not store commit subjects, diffs, file contents, or plaintext email addresses.
+- Agent-proposed memory is not shared until you approve it.
+- Every generated file change is checked, previewed as a diff, backed up, and validated after writing.
+
+Optional Obsidian and OpenClaw/Hermes Remote Gateway integrations must be configured explicitly and retain their own permission boundaries.
+
+### Build from source
+
+Install Rust stable, Node.js, pnpm 10, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Build the desktop app with:
+
+```bash
+pnpm tauri build
+```
+
+Linux users can diagnose the local environment and build packages with:
+
+```bash
+apps/desktop/scripts/diagnose-linux.sh
+apps/desktop/scripts/build-linux-bundles.sh
+```
+
+Build output is written to `target/release/bundle/`. Third-party licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Validate
+
+```bash
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+pnpm test
+pnpm typecheck
+pnpm build
+```
+
+AgentKib is a development preview. There are no official downloads yet; future preview builds will be published on [Releases](https://github.com/starroyhq/agentkib/releases). For feedback, use [GitHub Issues](https://github.com/starroyhq/agentkib/issues).
