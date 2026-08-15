@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyPlatformAttribute, normalizePlatform } from "./platform";
+import { applyPlatformAttribute, normalizePlatform, primaryShortcutModifier, usesSystemTrayWording } from "./platform";
 
 describe("desktop platform marker", () => {
   beforeEach(() => {
@@ -16,9 +16,17 @@ describe("desktop platform marker", () => {
     expect(normalizePlatform(input)).toBe(expected);
   });
 
-  it("marks the document root for Windows-specific layout", () => {
-    applyPlatformAttribute("windows");
+  it.each(["windows", "linux"])("marks the document root for %s-specific layout", (platform) => {
+    applyPlatformAttribute(platform);
 
-    expect(document.documentElement.dataset.platform).toBe("windows");
+    expect(document.documentElement.dataset.platform).toBe(platform);
+  });
+
+  it("uses native shortcut and tray terminology by platform", () => {
+    expect(primaryShortcutModifier("darwin")).toBe("Command");
+    expect(primaryShortcutModifier("linux")).toBe("Ctrl");
+    expect(primaryShortcutModifier("windows")).toBe("Ctrl");
+    expect(usesSystemTrayWording("linux")).toBe(true);
+    expect(usesSystemTrayWording("darwin")).toBe(false);
   });
 });

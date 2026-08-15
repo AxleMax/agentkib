@@ -175,7 +175,7 @@ describe("QuotaPage", () => {
   });
 
   it("configures menu bar windows without hiding them from the dashboard", async () => {
-    render(<QuotaPage configurePopoverRequest={1} />);
+    render(<QuotaPage configurePopoverRequest={1} popoverSupported />);
     await waitFor(() => expect(screen.getByRole("dialog", { name: "Menu bar display" })).toBeInTheDocument());
 
     const checkboxes = screen.getAllByRole("checkbox");
@@ -183,6 +183,14 @@ describe("QuotaPage", () => {
 
     await waitFor(() => expect(setQuotaPopoverPreferences).toHaveBeenCalled());
     expect(screen.getByText("8% remaining")).toBeInTheDocument();
+  });
+
+  it("does not expose macOS popover settings on Linux", async () => {
+    render(<QuotaPage configurePopoverRequest={1} popoverSupported={false} />);
+
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
+    expect(screen.queryByRole("button", { name: "Menu bar display" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Menu bar display" })).not.toBeInTheDocument();
   });
 });
 

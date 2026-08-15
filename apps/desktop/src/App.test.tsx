@@ -7,6 +7,23 @@ import { api } from "./api";
 import { diffLines } from "./diff";
 import { initializeI18n } from "./i18n";
 import { open } from "@tauri-apps/plugin-dialog";
+import type { RuntimeInfo } from "./types";
+
+function testRuntime(trayAvailable: boolean): RuntimeInfo {
+  return {
+    data_dir: "/tmp/agentkib",
+    database_path: "/tmp/agentkib/agentkib.db",
+    mcp_package_root: "/tmp/agentkib/mcp",
+    mcp_hub: { running: true, bind_address: "127.0.0.1", port: 47831, lan_enabled: false, accessible_addresses: ["127.0.0.1"], runtime_count: 0, error_count: 0 },
+    mcp_network: { port: 47831, lan_enabled: false, lan_risk_accepted: false },
+    close_behavior: "minimize-to-tray",
+    locale_preference: "system",
+    effective_locale: "en-US",
+    theme_preference: "system",
+    effective_theme: "dark",
+    tray_available: trayAvailable,
+  };
+}
 
 const tauriListeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockImplementation((event: string, handler: (event: { payload: unknown }) => void) => {
@@ -93,6 +110,7 @@ afterEach(() => {
   vi.mocked(api.quitApp).mockClear();
   vi.mocked(api.workspaces).mockResolvedValue([]);
   vi.mocked(api.agentInstallations).mockResolvedValue([]);
+  vi.mocked(api.runtime).mockResolvedValue(testRuntime(true));
   vi.mocked(api.insightsView).mockResolvedValue({
     summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
     heatmap: [{ date: "2026-08-13", tokens: 120000, my_commits: 8, all_commits: 20, attributed_commits: 3, sessions: 12, quality: "exact" }],
@@ -472,6 +490,16 @@ describe("AgentKib desktop", () => {
     expect(document.documentElement.style.colorScheme).toBe("light");
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
     expect(api.setThemePreference).toHaveBeenCalledWith("light");
+  });
+
+  it("disables background hiding when the system tray is unavailable", async () => {
+    vi.mocked(api.runtime).mockResolvedValueOnce(testRuntime(false));
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect(screen.getByText(/System tray unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Hide in (Menu Bar|System Tray)/ })).toBeDisabled();
   });
 
   it("tracks macOS appearance changes only while following the system", async () => {

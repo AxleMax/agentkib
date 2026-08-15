@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::fs;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::io::Read;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::process::{Command, Stdio};
 use std::sync::{
     Arc, Mutex,
@@ -29,8 +29,10 @@ use agentkib_insights::{
     WorkspaceUsageBreakdown, collect_git, collect_usage, shutdown_external_commands,
 };
 use agentkib_mcp::{HubController, config as mcp_config, installation_root};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use agentkib_platform::process::ProcessTree;
+#[cfg(target_os = "linux")]
+use agentkib_platform::process::configure_process_group;
 use agentkib_platform::{fs::atomic_write, path as platform_path};
 #[cfg(target_os = "windows")]
 use agentkib_quota::resolve_win_codexbar_config;
@@ -54,7 +56,7 @@ use tauri::{PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 #[cfg(target_os = "macos")]
 use tauri_plugin_opener::OpenerExt;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
 mod i18n;
@@ -176,6 +178,7 @@ struct LifecycleState {
     theme_preference: Mutex<ThemePreference>,
     close_prompt_open: AtomicBool,
     quitting: AtomicBool,
+    tray_available: AtomicBool,
 }
 
 #[derive(Debug, Default)]
@@ -210,6 +213,7 @@ impl LifecycleState {
             theme_preference: Mutex::new(preferences.theme_preference),
             close_prompt_open: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
+            tray_available: AtomicBool::new(false),
         }
     }
 
@@ -247,6 +251,14 @@ impl LifecycleState {
     fn set_theme_preference(&self, preference: ThemePreference) {
         *self.theme_preference.lock().expect("theme state lock") = preference;
     }
+
+    fn tray_available(&self) -> bool {
+        self.tray_available.load(Ordering::SeqCst)
+    }
+
+    fn set_tray_available(&self, available: bool) {
+        self.tray_available.store(available, Ordering::SeqCst);
+    }
 }
 
 #[derive(Serialize)]
@@ -263,6 +275,7 @@ struct RuntimeInfo {
     effective_locale: SupportedLocale,
     theme_preference: ThemePreference,
     effective_theme: EffectiveTheme,
+    tray_available: bool,
 }
 
 #[derive(Serialize)]
@@ -440,14 +453,14 @@ fn unlink_workspace_from_obsidian(workspace_id: String) -> CommandResult<()> {
 
 #[tauri::command]
 fn open_obsidian() -> CommandResult<()> {
-    obsidian::open_app().map_err(format_error)
+    obsidian::open_app().map_err(format_obsidian_error)
 }
 
 #[tauri::command]
 fn open_workspace_in_obsidian(workspace_id: String) -> CommandResult<()> {
     default_data_dir()
         .and_then(|data_dir| obsidian::open_workspace(&data_dir, &workspace_id))
-        .map_err(format_error)
+        .map_err(format_obsidian_error)
 }
 
 #[tauri::command]
@@ -919,6 +932,7 @@ fn runtime_info(
         effective_locale: state.effective_locale(),
         theme_preference,
         effective_theme: effective_theme(&app, theme_preference),
+        tray_available: state.tray_available(),
     })
 }
 
@@ -1547,10 +1561,85 @@ fn save_preferences(path: &Path, preferences: &DesktopPreferences) -> anyhow::Re
 
 fn hide_to_tray(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+        let lifecycle = app.state::<Arc<LifecycleState>>();
+        let tray_available = lifecycle.tray_available();
+        #[cfg(target_os = "linux")]
+        let tray_available = tray_available && {
+            let available = linux_tray_host_available();
+            if !available {
+                lifecycle.set_tray_available(false);
+            }
+            available
+        };
+        if tray_available {
+            let _ = window.hide();
+        } else {
+            // GNOME and other Linux desktops may not expose AppIndicator support.
+            // Keep a taskbar entry so the user can always recover the window.
+            let _ = window.minimize();
+        }
+        #[cfg(target_os = "macos")]
+        if tray_available {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        }
     }
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tray_host_available() -> bool {
+    let Some(executable) = agentkib_platform::command::resolve("gdbus") else {
+        return false;
+    };
+    let mut command = Command::new(executable);
+    command
+        .args([
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.DBus",
+            "--object-path",
+            "/org/freedesktop/DBus",
+            "--method",
+            "org.freedesktop.DBus.NameHasOwner",
+            "org.kde.StatusNotifierWatcher",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    configure_process_group(&mut command);
+    let Ok(mut child) = command.spawn() else {
+        return false;
+    };
+    let Ok(process_tree) = ProcessTree::attach(&child) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return false;
+    };
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                return child
+                    .wait_with_output()
+                    .ok()
+                    .is_some_and(|output| linux_tray_watcher_response(&output.stdout));
+            }
+            Ok(Some(_)) | Err(_) => return false,
+            Ok(None) if started.elapsed() < Duration::from_secs(2) => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = process_tree.terminate();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_tray_watcher_response(output: &[u8]) -> bool {
+    std::str::from_utf8(output).is_ok_and(|value| value.trim() == "(true,)")
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -1602,10 +1691,35 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         return;
     }
     let locale = lifecycle.effective_locale();
-    let hide_label = translate(locale, "dialog.close.hide", &[]);
+    let tray_available = lifecycle.tray_available();
+    let hide_label = translate(
+        locale,
+        if tray_available {
+            if cfg!(target_os = "linux") {
+                "dialog.close.hideSystemTray"
+            } else {
+                "dialog.close.hide"
+            }
+        } else {
+            "dialog.close.minimize"
+        },
+        &[],
+    );
     let quit_label = translate(locale, "dialog.close.quit", &[]);
     app.dialog()
-        .message(translate(locale, "dialog.close.message", &[]))
+        .message(translate(
+            locale,
+            if tray_available {
+                if cfg!(target_os = "linux") {
+                    "dialog.close.messageSystemTray"
+                } else {
+                    "dialog.close.message"
+                }
+            } else {
+                "dialog.close.messageNoTray"
+            },
+            &[],
+        ))
         .title(translate(locale, "dialog.close.title", &[]))
         .parent(window)
         .buttons(MessageDialogButtons::YesNoCancelCustom(
@@ -1635,7 +1749,7 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         });
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 const QUOTA_SIDECAR: &str = "agentkib-quota-sidecar";
 const QUOTA_OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 
@@ -1644,19 +1758,19 @@ struct QuotaCollectionContext {
     backend: QuotaBackend,
     platform_supported: bool,
     sidecar_available: bool,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     sidecar_path: Option<PathBuf>,
     config_source: String,
     environment: BTreeMap<String, String>,
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[derive(Clone)]
 struct TauriQuotaRunner {
     app: AppHandle,
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 impl QuotaCommandRunner for TauriQuotaRunner {
     fn run(
         &self,
@@ -1742,6 +1856,78 @@ impl QuotaCommandRunner for TauriQuotaRunner {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+struct LinuxQuotaRunner {
+    app: AppHandle,
+    executable: PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl QuotaCommandRunner for LinuxQuotaRunner {
+    fn run(
+        &self,
+        args: &[String],
+        env: &BTreeMap<String, String>,
+        timeout: Duration,
+    ) -> anyhow::Result<QuotaCommandOutput> {
+        let mut command = Command::new(&self.executable);
+        command
+            .args(args)
+            .envs(env)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // The collector may launch provider helpers. A dedicated process group
+        // lets timeout and app shutdown terminate the complete sidecar tree.
+        configure_process_group(&mut command);
+        let mut child = command.spawn()?;
+        let process_tree = ProcessTree::attach(&child).inspect_err(|_| {
+            let _ = child.kill();
+            let _ = child.wait();
+        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("quota collector stdout is unavailable")?;
+        let stderr = child
+            .stderr
+            .take()
+            .context("quota collector stderr is unavailable")?;
+        let stdout_reader = std::thread::spawn(move || read_bounded_output(stdout));
+        let stderr_reader = std::thread::spawn(move || read_bounded_output(stderr));
+        let started = Instant::now();
+        let coordinator = self.app.state::<Arc<RefreshCoordinator>>().inner().clone();
+        let success = loop {
+            if !coordinator.is_accepting() {
+                let _ = process_tree.terminate();
+                let _ = child.wait();
+                anyhow::bail!("quota collector was cancelled because AgentKib is exiting");
+            }
+            if started.elapsed() >= timeout {
+                let _ = process_tree.terminate();
+                let _ = child.wait();
+                anyhow::bail!("quota collector timed out");
+            }
+            if let Some(status) = child.try_wait()? {
+                break status.success();
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let stdout = stdout_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("quota collector stdout reader panicked"))??;
+        let stderr = stderr_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("quota collector stderr reader panicked"))??;
+        Ok(QuotaCommandOutput {
+            stdout,
+            stderr,
+            success,
+        })
+    }
+}
+
 #[cfg(target_os = "windows")]
 #[derive(Clone)]
 struct WindowsQuotaRunner {
@@ -1813,7 +1999,7 @@ impl QuotaCommandRunner for WindowsQuotaRunner {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn read_bounded_output(mut reader: impl Read) -> anyhow::Result<Vec<u8>> {
     let mut output = Vec::new();
     reader
@@ -1917,7 +2103,7 @@ fn quota_collection_context(app: &AppHandle) -> anyhow::Result<QuotaCollectionCo
         backend: quota_backend(),
         platform_supported: quota_platform_supported(),
         sidecar_available: sidecar_path.is_some(),
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         sidecar_path,
         config_source,
         environment,
@@ -1948,8 +2134,16 @@ fn perform_quota(
     }
     let result = (|| -> anyhow::Result<QuotaSnapshot> {
         let context = quota_collection_context(app)?;
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
         let runner = TauriQuotaRunner { app: app.clone() };
+        #[cfg(target_os = "linux")]
+        let runner = LinuxQuotaRunner {
+            app: app.clone(),
+            executable: context
+                .sidecar_path
+                .clone()
+                .context("quota collector sidecar is unavailable")?,
+        };
         #[cfg(target_os = "windows")]
         let runner = WindowsQuotaRunner {
             app: app.clone(),
@@ -2503,6 +2697,9 @@ fn perform_discovery(
 
 fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
     use tauri::menu::{MenuBuilder, MenuItem};
+    if !app.state::<Arc<LifecycleState>>().tray_available() {
+        return Ok(());
+    }
     let workspaces = Store::open_default()
         .and_then(|store| store.list_workspaces())
         .unwrap_or_default();
@@ -2938,6 +3135,16 @@ fn format_error(error: impl std::fmt::Display) -> LocalizedMessage {
     LocalizedMessage::with_detail("errors.generic", error.to_string())
 }
 
+fn format_obsidian_error(error: impl std::fmt::Display) -> LocalizedMessage {
+    let detail = error.to_string();
+    let key = if detail.contains("URI handler is unavailable") {
+        "errors.obsidianUriHandlerUnavailable"
+    } else {
+        "errors.obsidianOpenFailed"
+    };
+    LocalizedMessage::with_detail(key, detail)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let preferences = load_desktop_preferences();
@@ -2971,7 +3178,18 @@ pub fn run() {
             apply_native_theme(app.handle(), theme)?;
             #[cfg(target_os = "macos")]
             let _ = refresh_app_menu(app.handle());
-            setup_tray(app)?;
+            let tray_result = setup_tray(app);
+            let tray_available = tray_result.is_ok();
+            #[cfg(target_os = "linux")]
+            let tray_available = tray_available && linux_tray_host_available();
+            app.state::<Arc<LifecycleState>>()
+                .set_tray_available(tray_available);
+            #[cfg(not(target_os = "linux"))]
+            tray_result?;
+            #[cfg(target_os = "linux")]
+            if let Err(error) = tray_result {
+                eprintln!("AgentKib system tray is unavailable: {error}");
+            }
             app.state::<Arc<HubController>>().start()?;
             seed_refresh_freshness(app.handle());
             start_refresh_schedulers(app.handle().clone());
@@ -3311,5 +3529,20 @@ mod tests {
             active_refresh_translation_key(&[RefreshKind::Discovery, RefreshKind::Quota]),
             Some("tray.refreshMultiple")
         );
+    }
+
+    #[test]
+    fn lifecycle_tracks_runtime_tray_capability() {
+        let lifecycle = LifecycleState::new(&DesktopPreferences::default());
+        assert!(!lifecycle.tray_available());
+        lifecycle.set_tray_available(true);
+        assert!(lifecycle.tray_available());
+    }
+
+    #[test]
+    fn parses_status_notifier_watcher_response_strictly() {
+        assert!(linux_tray_watcher_response(b"(true,)\n"));
+        assert!(!linux_tray_watcher_response(b"(false,)\n"));
+        assert!(!linux_tray_watcher_response(b"unexpected"));
     }
 }

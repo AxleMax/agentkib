@@ -268,7 +268,7 @@ async fn start_instance(server: &McpServerConfig) -> Result<RuntimeInstance> {
         McpServerTransport::Stdio { command, args, cwd } => {
             // Windows cannot execute npm/pnpm-generated .cmd or .bat shims directly.
             // Resolve PATHEXT first and route batch shims through cmd.exe.
-            let mut process = crate::process::command_for_tokio(command, cwd.as_deref());
+            let mut process = crate::process::command_for_tokio(command, cwd.as_deref())?;
             process.args(args);
             if let Some(cwd) = cwd {
                 process.current_dir(cwd);

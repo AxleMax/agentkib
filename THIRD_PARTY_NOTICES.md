@@ -2,7 +2,9 @@
 
 ## CodexBarCLI
 
-AgentKib bundles CodexBarCLI 0.49.5 on macOS to collect local quota snapshots.
+AgentKib bundles CodexBarCLI 0.49.5 on macOS and Linux to collect local quota
+snapshots. Linux packages use the official statically linked musl release for
+their target architecture.
 
 - Project: https://github.com/steipete/CodexBar
 - License: MIT

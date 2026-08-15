@@ -221,10 +221,22 @@ fn vault_registry_path() -> Option<PathBuf> {
             .or_else(dirs::config_dir)
             .map(|app_data| obsidian_registry_in(&app_data))
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
     {
-        dirs::config_dir().map(|config| config.join("obsidian/obsidian.json"))
+        agentkib_platform::xdg::config_home().map(|config| config.join("obsidian/obsidian.json"))
     }
+}
+
+#[cfg(test)]
+fn linux_vault_registry_path(
+    xdg_config_home: Option<&std::ffi::OsStr>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
+    xdg_config_home
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| home.map(|path| path.join(".config")))
+        .map(|config| config.join("obsidian/obsidian.json"))
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -313,10 +325,82 @@ fn detect_app_path() -> Option<PathBuf> {
         .into_iter()
         .find(|path| path.is_file())
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
     {
-        None
+        linux_app_candidates(
+            agentkib_platform::xdg::home_dir().as_deref(),
+            &agentkib_platform::xdg::application_dirs(),
+            &agentkib_platform::command::search_directories(),
+        )
+        .into_iter()
+        .find(|path| agentkib_platform::command::is_executable(path))
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_app_candidates(
+    home: Option<&Path>,
+    desktop_directories: &[PathBuf],
+    search_directories: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        PathBuf::from("/usr/bin/obsidian"),
+        PathBuf::from("/usr/local/bin/obsidian"),
+        PathBuf::from("/opt/Obsidian/obsidian"),
+        PathBuf::from("/opt/Obsidian/Obsidian"),
+        PathBuf::from("/usr/share/obsidian/obsidian"),
+    ];
+    if let Some(home) = home {
+        candidates.push(home.join(".local/bin/obsidian"));
+        candidates.extend(app_images_in(&home.join("Applications")));
+    }
+
+    for directory in desktop_directories {
+        candidates.extend(obsidian_desktop_executables(directory, search_directories));
+    }
+    candidates
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn app_images_in(directory: &Path) -> Vec<PathBuf> {
+    fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            agentkib_platform::command::is_executable(path)
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        let lowercase = name.to_ascii_lowercase();
+                        lowercase.contains("obsidian") && lowercase.ends_with(".appimage")
+                    })
+        })
+        .collect()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn obsidian_desktop_executables(directory: &Path, search_directories: &[PathBuf]) -> Vec<PathBuf> {
+    fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|value| value.to_str()) == Some("desktop")
+                && path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.to_ascii_lowercase().contains("obsidian"))
+        })
+        .filter_map(|path| {
+            agentkib_platform::command::desktop_entry_executable(&path, search_directories)
+                .ok()
+                .flatten()
+        })
+        .collect()
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -358,6 +442,11 @@ fn read_app_version(app_path: &Path) -> Option<String> {
 }
 
 fn detect_cli() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        agentkib_platform::command::resolve("obsidian").is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
     let directories: Vec<_> = std::env::var_os("PATH")
         .map(|paths| std::env::split_paths(&paths).collect())
         .unwrap_or_default();
@@ -368,7 +457,7 @@ fn detect_cli() -> bool {
             &["obsidian.exe", "obsidian.cmd", "obsidian.bat"],
         )
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
         let mut candidates = vec![
             PathBuf::from("/usr/local/bin/obsidian"),
@@ -406,10 +495,25 @@ fn open_uri(uri: &str) -> Result<()> {
             .context("Failed to invoke the Windows Obsidian URI handler")?;
         Ok(())
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
     {
-        let _ = uri;
-        bail!("Opening Obsidian is currently supported on macOS and Windows only")
+        let executable = agentkib_platform::command::resolve("xdg-open")
+            .context("Obsidian URI handler is unavailable: xdg-open was not found")?;
+        let output = Command::new(executable)
+            .arg(uri)
+            .output()
+            .context("Obsidian URI handler is unavailable: xdg-open could not be started")?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            let detail = detail.trim();
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            };
+            bail!("Obsidian URI handler is unavailable{}", suffix);
+        }
+        Ok(())
     }
 }
 
@@ -523,5 +627,88 @@ mod tests {
             &[directory.path().to_path_buf()],
             &["obsidian.exe", "obsidian.cmd", "obsidian.bat"]
         ));
+    }
+
+    #[test]
+    fn linux_registry_uses_xdg_then_home_default() {
+        assert_eq!(
+            linux_vault_registry_path(
+                Some(std::ffi::OsStr::new("/tmp/config")),
+                Some(Path::new("/home/me")),
+            ),
+            Some(PathBuf::from("/tmp/config/obsidian/obsidian.json"))
+        );
+        assert_eq!(
+            linux_vault_registry_path(None, Some(Path::new("/home/me"))),
+            Some(PathBuf::from("/home/me/.config/obsidian/obsidian.json"))
+        );
+        assert_eq!(
+            linux_vault_registry_path(
+                Some(std::ffi::OsStr::new("relative/config")),
+                Some(Path::new("/home/me")),
+            ),
+            Some(PathBuf::from("/home/me/.config/obsidian/obsidian.json"))
+        );
+    }
+
+    #[test]
+    fn linux_desktop_exec_parser_handles_quoted_env_commands() {
+        let directory = tempdir().unwrap();
+        let executable = directory.path().join("Obsidian AppImage");
+        let desktop = directory.path().join("md.obsidian.Obsidian.desktop");
+        fs::write(&executable, "binary").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fs::write(
+            &desktop,
+            format!(
+                "[Desktop Entry]\nExec=env FOO=bar \"{}\" %u\n",
+                executable.display()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            agentkib_platform::command::desktop_entry_executable(&desktop, &[]).unwrap(),
+            Some(executable)
+        );
+    }
+
+    #[test]
+    fn linux_candidates_cover_appimage_and_desktop_installations() {
+        let directory = tempdir().unwrap();
+        let home = directory.path().join("home");
+        let data = directory.path().join("data");
+        let app_image = home.join("Applications/Obsidian-1.8.AppImage");
+        let desktop_executable = directory.path().join("bin/obsidian");
+        fs::create_dir_all(app_image.parent().unwrap()).unwrap();
+        fs::create_dir_all(desktop_executable.parent().unwrap()).unwrap();
+        fs::create_dir_all(data.join("applications")).unwrap();
+        fs::write(&app_image, "appimage").unwrap();
+        fs::write(&desktop_executable, "binary").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&app_image, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&desktop_executable, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fs::write(
+            data.join("applications/md.obsidian.Obsidian.desktop"),
+            format!(
+                "[Desktop Entry]\nName=Obsidian\nExec={} %U\n",
+                desktop_executable.display()
+            ),
+        )
+        .unwrap();
+
+        let candidates = linux_app_candidates(
+            Some(&home),
+            &[data.join("applications")],
+            &[desktop_executable.parent().unwrap().to_path_buf()],
+        );
+        assert!(candidates.contains(&app_image));
+        assert!(candidates.contains(&desktop_executable));
     }
 }

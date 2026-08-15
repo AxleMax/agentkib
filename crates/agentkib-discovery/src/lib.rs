@@ -371,7 +371,7 @@ impl CursorProvider {
         self.data_home.clone().or_else(|| {
             env::var_os("CURSOR_DATA_DIR")
                 .map(PathBuf::from)
-                .or_else(|| dirs::config_dir().map(|path| path.join("Cursor")))
+                .or_else(cursor_default_data_home)
         })
     }
 }
@@ -562,7 +562,7 @@ impl HermesProvider {
                 entries
                     .filter_map(Result::ok)
                     .map(|entry| entry.path())
-                    .filter(|path| path.is_dir()),
+                    .filter(|path| path.is_dir() && platform_path::is_safe_scan_entry(path)),
             );
         }
         homes
@@ -759,12 +759,16 @@ fn discover_scan_root(
     root: &Path,
     max_depth: usize,
 ) -> Result<(Vec<DiscoveryCandidate>, Vec<String>)> {
+    if platform_path::is_reparse_or_symlink(root)? {
+        anyhow::bail!("scan root must not be a symbolic link or reparse point");
+    }
     let root = platform_path::canonicalize(root)?;
     let mut output = Vec::new();
     let mut errors = Vec::new();
     for entry in WalkDir::new(&root)
         .max_depth(max_depth.clamp(1, 8))
         .follow_links(false)
+        .same_file_system(true)
         .into_iter()
         .filter_entry(allowed_scan_entry)
     {
@@ -898,18 +902,25 @@ fn scan_known_home(agent: AgentKind, home: &Path, names: &[&str]) -> Result<Vec<
     let mut output = Vec::new();
     for name in names {
         let path = home.join(name);
-        if !path.exists() {
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() {
             continue;
         }
-        if path.is_file() {
+        if metadata.is_file() {
             if !is_private_home_file(&path) {
                 output.push(home_asset(agent, &path, home_asset_kind(&path))?);
             }
             continue;
         }
+        if !metadata.is_dir() {
+            continue;
+        }
         for entry in WalkDir::new(&path)
             .max_depth(4)
             .follow_links(false)
+            .same_file_system(true)
             .into_iter()
             .filter_entry(allowed_home_entry)
         {
@@ -1053,6 +1064,17 @@ fn cursor_installation(
     let mut value = installation(AgentKind::Cursor, home, installed);
     value.configured = value.configured || data_home.is_some_and(|path| path.is_dir());
     value
+}
+
+fn cursor_default_data_home() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        agentkib_platform::xdg::config_home().map(|path| path.join("Cursor"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        dirs::config_dir().map(|path| path.join("Cursor"))
+    }
 }
 
 fn agent_is_installed(agent: AgentKind) -> bool {
@@ -1307,6 +1329,40 @@ mod tests {
             discovered[0].path,
             platform_path::canonicalize(&dir.path().join("app")).unwrap()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_root_rejects_symbolic_link_roots() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let actual = dir.path().join("actual");
+        fs::create_dir(&actual).unwrap();
+        let link = dir.path().join("linked");
+        symlink(&actual, &link).unwrap();
+
+        assert!(
+            discover_scan_root(&link, 5)
+                .unwrap_err()
+                .to_string()
+                .contains("symbolic link")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn home_catalog_does_not_follow_symbolic_links() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let external = dir.path().join("external-skills");
+        fs::create_dir_all(external.join("private")).unwrap();
+        fs::write(external.join("private/SKILL.md"), "private body").unwrap();
+        symlink(&external, dir.path().join("skills")).unwrap();
+
+        let assets = scan_known_home(AgentKind::Codex, dir.path(), &["skills"]).unwrap();
+        assert!(assets.is_empty());
     }
 
     #[test]

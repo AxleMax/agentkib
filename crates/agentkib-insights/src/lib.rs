@@ -1321,17 +1321,15 @@ fn command_output_with_limits(
     timeout: Duration,
     stdout_limit: usize,
 ) -> Result<Vec<u8>> {
-    let mut command = Command::new(program);
+    let executable = agentkib_platform::command::resolve(program)
+        .with_context(|| format!("Unable to resolve command `{program}`"))?;
+    let mut command = Command::new(executable);
     command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
+    agentkib_platform::process::configure_process_group(&mut command);
     let mut child = command
         .spawn()
         .with_context(|| format!("Failed to execute {program}"))?;

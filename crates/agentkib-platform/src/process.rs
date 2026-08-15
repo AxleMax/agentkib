@@ -1,11 +1,30 @@
 use std::io;
-use std::process::Child;
+use std::process::{Child, Command};
+
+/// Configure a command so the spawned child becomes the leader of a new Unix
+/// process group. Call this before `spawn`, then attach a [`ProcessTree`] to
+/// ensure timeouts terminate descendants as well as the direct child.
+pub fn configure_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = command;
+    }
+}
 
 /// Owns the operating-system primitive that contains a child process tree.
-/// On Windows, dropping the guard terminates every process in the Job Object.
+/// Dropping the guard terminates the Job Object or configured Unix process group.
 pub struct ProcessTree {
     #[cfg(windows)]
     job: windows_sys::Win32::Foundation::HANDLE,
+    #[cfg(unix)]
+    unix_pid: libc::pid_t,
+    #[cfg(unix)]
+    owns_process_group: bool,
 }
 
 impl ProcessTree {
@@ -14,7 +33,11 @@ impl ProcessTree {
         {
             windows::attach(child)
         }
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            unix::attach_pid(child.id())
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             let _ = child;
             Ok(Self {})
@@ -28,7 +51,11 @@ impl ProcessTree {
         {
             windows::attach_pid(pid)
         }
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            unix::attach_pid(pid)
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             let _ = pid;
             Ok(Self {})
@@ -40,7 +67,11 @@ impl ProcessTree {
         {
             windows::terminate(self.job)
         }
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            unix::terminate(self.unix_pid, self.owns_process_group)
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             Ok(())
         }
@@ -56,10 +87,52 @@ impl Drop for ProcessTree {
     }
 }
 
+#[cfg(unix)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        if self.owns_process_group {
+            let _ = unix::terminate(self.unix_pid, true);
+        }
+    }
+}
+
 #[cfg(windows)]
 unsafe impl Send for ProcessTree {}
 #[cfg(windows)]
 unsafe impl Sync for ProcessTree {}
+
+#[cfg(unix)]
+mod unix {
+    use std::io;
+
+    use super::ProcessTree;
+
+    pub(super) fn attach_pid(pid: u32) -> io::Result<ProcessTree> {
+        let pid = libc::pid_t::try_from(pid)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "process id is too large"))?;
+        let process_group = unsafe { libc::getpgid(pid) };
+        if process_group < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(ProcessTree {
+            unix_pid: pid,
+            owns_process_group: process_group == pid,
+        })
+    }
+
+    pub(super) fn terminate(pid: libc::pid_t, owns_process_group: bool) -> io::Result<()> {
+        let target = if owns_process_group { -pid } else { pid };
+        if unsafe { libc::kill(target, libc::SIGKILL) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+}
 
 #[cfg(windows)]
 mod windows {
@@ -129,5 +202,62 @@ mod windows {
         } else {
             Ok(())
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::io;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    use super::{ProcessTree, configure_process_group};
+
+    #[test]
+    fn configured_child_can_be_terminated_as_a_process_group() {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30 & wait"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_process_group(&mut command);
+        let mut child = command.spawn().unwrap();
+        let process_group = child.id() as libc::pid_t;
+        let tree = ProcessTree::attach(&child).unwrap();
+
+        tree.terminate().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "child process did not terminate");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = unsafe { libc::kill(-process_group, 0) };
+            if result < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "descendant process group remained alive"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn unconfigured_child_falls_back_to_direct_termination() {
+        let mut child = Command::new("sh")
+            .args(["-c", "exec sleep 30"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let tree = ProcessTree::attach(&child).unwrap();
+        tree.terminate().unwrap();
+        assert!(child.wait().unwrap().code().is_none());
     }
 }

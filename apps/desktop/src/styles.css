@@ -548,6 +548,23 @@ main { grid-row: 1; height: 100%; }
 :root[data-platform="windows"] .brand { padding-right: 38px; }
 :root[data-platform="windows"] .sidebar-collapsed .window-sidebar-toggle { left: 12px; }
 :root[data-platform="windows"] .sidebar-collapsed .page-header { padding-left: 60px; }
+:root[data-platform="linux"] .app-shell { grid-template-rows: minmax(0, 1fr); }
+:root[data-platform="linux"] .window-toolbar {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 0;
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+:root[data-platform="linux"] .window-toolbar::before { display: none; }
+:root[data-platform="linux"] .window-sidebar-toggle { top: 12px; pointer-events: auto; }
+:root[data-platform="linux"] .sidebar,
+:root[data-platform="linux"] main { grid-row: 1; }
+:root[data-platform="linux"] .sidebar { padding-top: 12px; }
+:root[data-platform="linux"] .brand { padding-right: 38px; }
+:root[data-platform="linux"] .sidebar-collapsed .window-sidebar-toggle { left: 12px; }
+:root[data-platform="linux"] .sidebar-collapsed .page-header { padding-left: 60px; }
 .page-title-row h1, main > header.page-header h1 { font-size: var(--page-title-size); }
 .panel-head h2, .panel h2 { font-size: var(--section-title-size); }
 .workspace-row, .catalog-row, .setting-row, .agent-workspace-list > div, .home-asset-list > div { font-size: var(--body-size); }

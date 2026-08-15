@@ -1,0 +1,288 @@
+name: Linux
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ubuntu-x64:
+    name: Ubuntu 22.04 x64 (deb and AppImage)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential binutils curl file git pkg-config patchelf libssl-dev \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libfuse2 libglib2.0-bin \
+            desktop-file-utils dbus-x11 xvfb
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust and verified quota collector
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/agentkib/codexbar/0.49.5
+          key: linux-ubuntu22-x64-${{ hashFiles('Cargo.lock', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-quota-sidecar.mjs') }}
+          restore-keys: linux-ubuntu22-x64-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Diagnose build environment
+        run: apps/desktop/scripts/diagnose-linux.sh --strict --packaging deb
+
+      - name: Run release checks and build packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          log=artifacts/linux-ubuntu22-x64-build.log
+          run_logged() {
+            printf '\n## %s\n' "$*" | tee -a "$log"
+            "$@" 2>&1 | tee -a "$log"
+          }
+          run_logged cargo fmt --check
+          run_logged cargo test --workspace
+          run_logged cargo clippy --workspace --all-targets -- -D warnings
+          run_logged pnpm test
+          run_logged pnpm typecheck
+          run_logged pnpm build
+          rm -rf target/release/bundle
+          run_logged apps/desktop/scripts/build-linux-bundles.sh --bundles deb,appimage
+
+      - name: Verify packages and write checksums
+        run: |
+          .github/scripts/smoke-test-linux-package.sh target deb
+          .github/scripts/smoke-test-linux-package.sh target appimage
+          .github/scripts/write-linux-checksums.sh target
+          package=$(find target -type f -name '*.deb' -print -quit)
+          sudo apt-get install -y "$package"
+          .github/scripts/smoke-test-linux-installed.sh
+
+      - name: Upload Ubuntu x64 packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-linux-ubuntu-x64
+          if-no-files-found: error
+          path: |
+            target/**/bundle/deb/*.deb
+            target/**/bundle/deb/*.sha256
+            target/**/bundle/appimage/*.AppImage
+            target/**/bundle/appimage/*.sha256
+
+      - name: Upload Ubuntu x64 build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-linux-ubuntu-x64-log
+          if-no-files-found: warn
+          path: |
+            artifacts/linux-ubuntu22-x64-build.log
+
+  ubuntu-arm64:
+    name: Ubuntu 24.04 ARM64 preview (deb and AppImage)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential binutils curl file git pkg-config patchelf libssl-dev \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libfuse2 libglib2.0-bin \
+            desktop-file-utils dbus-x11 xvfb
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust and verified quota collector
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/agentkib/codexbar/0.49.5
+          key: linux-ubuntu24-arm64-${{ hashFiles('Cargo.lock', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-quota-sidecar.mjs') }}
+          restore-keys: linux-ubuntu24-arm64-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Diagnose build environment
+        run: apps/desktop/scripts/diagnose-linux.sh --strict --packaging deb
+
+      - name: Run ARM64 checks and build packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          log=artifacts/linux-ubuntu24-arm64-build.log
+          run_logged() {
+            printf '\n## %s\n' "$*" | tee -a "$log"
+            "$@" 2>&1 | tee -a "$log"
+          }
+          run_logged cargo test --workspace
+          run_logged cargo clippy --workspace --all-targets -- -D warnings
+          run_logged pnpm test
+          run_logged pnpm typecheck
+          rm -rf target/release/bundle
+          run_logged apps/desktop/scripts/build-linux-bundles.sh --bundles deb,appimage
+
+      - name: Verify packages and write checksums
+        run: |
+          .github/scripts/smoke-test-linux-package.sh target deb
+          .github/scripts/smoke-test-linux-package.sh target appimage
+          .github/scripts/write-linux-checksums.sh target
+          package=$(find target -type f -name '*.deb' -print -quit)
+          sudo apt-get install -y "$package"
+          .github/scripts/smoke-test-linux-installed.sh
+
+      - name: Upload Ubuntu ARM64 preview packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-linux-ubuntu-arm64-preview
+          if-no-files-found: error
+          path: |
+            target/**/bundle/deb/*.deb
+            target/**/bundle/deb/*.sha256
+            target/**/bundle/appimage/*.AppImage
+            target/**/bundle/appimage/*.sha256
+
+      - name: Upload Ubuntu ARM64 build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-linux-ubuntu-arm64-preview-log
+          if-no-files-found: warn
+          path: |
+            artifacts/linux-ubuntu24-arm64-build.log
+
+  fedora-x64:
+    name: Fedora x64 (RPM)
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    steps:
+      - name: Install Fedora build dependencies
+        run: |
+          dnf install -y \
+            git curl tar gzip xz file findutils which binutils \
+            gcc gcc-c++ make openssl-devel pkgconf-pkg-config patchelf \
+            gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3-devel \
+            librsvg2-devel libxdo-devel rpm-build rpmdevtools cpio \
+            desktop-file-utils dbus-daemon xorg-x11-server-Xvfb util-linux
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust and verified quota collector
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/agentkib/codexbar/0.49.5
+          key: linux-fedora42-x64-${{ hashFiles('Cargo.lock', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-quota-sidecar.mjs') }}
+          restore-keys: linux-fedora42-x64-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Diagnose build environment
+        run: apps/desktop/scripts/diagnose-linux.sh --strict --packaging rpm
+
+      - name: Run Fedora checks and build RPM
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          log=artifacts/linux-fedora42-x64-build.log
+          run_logged() {
+            printf '\n## %s\n' "$*" | tee -a "$log"
+            "$@" 2>&1 | tee -a "$log"
+          }
+          run_logged cargo test --workspace
+          run_logged cargo clippy --workspace --all-targets -- -D warnings
+          run_logged pnpm test
+          run_logged pnpm typecheck
+          run_logged pnpm build
+          rm -rf target/release/bundle
+          run_logged apps/desktop/scripts/build-linux-bundles.sh --bundles rpm
+
+      - name: Verify RPM and write checksum
+        run: |
+          .github/scripts/smoke-test-linux-package.sh target rpm
+          .github/scripts/write-linux-checksums.sh target
+          package=$(find target -type f -name '*.rpm' -print -quit)
+          dnf install -y "$package"
+          .github/scripts/smoke-test-linux-installed.sh
+
+      - name: Upload Fedora x64 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-linux-fedora-x64
+          if-no-files-found: error
+          path: |
+            target/**/bundle/rpm/*.rpm
+            target/**/bundle/rpm/*.sha256
+
+      - name: Upload Fedora x64 build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkib-linux-fedora-x64-log
+          if-no-files-found: warn
+          path: |
+            artifacts/linux-fedora42-x64-build.log

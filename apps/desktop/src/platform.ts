@@ -9,3 +9,11 @@ export function normalizePlatform(platform?: string): AppPlatform {
 export function applyPlatformAttribute(platform?: string): void {
   document.documentElement.dataset.platform = normalizePlatform(platform);
 }
+
+export function primaryShortcutModifier(platform?: string): "Command" | "Ctrl" {
+  return normalizePlatform(platform) === "macos" ? "Command" : "Ctrl";
+}
+
+export function usesSystemTrayWording(platform?: string): boolean {
+  return normalizePlatform(platform) === "linux";
+}

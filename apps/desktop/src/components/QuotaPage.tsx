@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Check, ChevronDown, CircleAlert, Gauge, RefreshCw, Search, Settings2, X } from "lucide-react";
 import { api } from "../api";
 import { formatRelativeTime, localizeMessage, tr } from "../i18n";
+import { normalizePlatform } from "../platform";
 import {
   compareQuotaProviders,
   flattenQuotaWindows,
@@ -30,10 +31,12 @@ export function QuotaPage({
   initialProvider,
   initialWindow,
   configurePopoverRequest = 0,
+  popoverSupported = normalizePlatform(import.meta.env.TAURI_ENV_PLATFORM) === "macos",
 }: {
   initialProvider?: string;
   initialWindow?: QuotaWindowSelector;
   configurePopoverRequest?: number;
+  popoverSupported?: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<QuotaSnapshot>();
   const [status, setStatus] = useState<QuotaCollectorStatus>();
@@ -41,7 +44,7 @@ export function QuotaPage({
   const [selectedId, setSelectedId] = useState(initialProvider ?? initialWindow?.provider_id ?? "");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<QuotaFilter>("all");
-  const [showPreferences, setShowPreferences] = useState(configurePopoverRequest > 0);
+  const [showPreferences, setShowPreferences] = useState(popoverSupported && configurePopoverRequest > 0);
   const [refreshJob, setRefreshJob] = useState<RefreshJobStatus>();
   const [requestPending, setRequestPending] = useState(false);
   const [error, setError] = useState("");
@@ -147,8 +150,8 @@ export function QuotaPage({
 
   useEffect(() => {
     if (initialProvider || initialWindow) setSelectedId(initialProvider ?? initialWindow?.provider_id ?? "");
-    if (configurePopoverRequest > 0) setShowPreferences(true);
-  }, [configurePopoverRequest, initialProvider, initialWindow]);
+    if (popoverSupported && configurePopoverRequest > 0) setShowPreferences(true);
+  }, [configurePopoverRequest, initialProvider, initialWindow, popoverSupported]);
 
   const providers = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -212,12 +215,12 @@ export function QuotaPage({
       <div className="quota-filter" role="group" aria-label={tr("quota.filterLabel")}>
         {(["all", "healthy", "warning", "unavailable"] as QuotaFilter[]).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{tr(`quota.filter.${value}`)}</button>)}
       </div>
-      <button className="ghost quota-display-settings-button" type="button" onClick={() => setShowPreferences((value) => !value)} aria-expanded={showPreferences}><Settings2 size={15} />{tr("quota.popoverSettings")}</button>
+      {popoverSupported && <button className="ghost quota-display-settings-button" type="button" onClick={() => setShowPreferences((value) => !value)} aria-expanded={showPreferences}><Settings2 size={15} />{tr("quota.popoverSettings")}</button>}
       {snapshot && refreshLabel && <span className="badge">{refreshLabel}</span>}
       <button className="ghost icon-only" onClick={() => void refresh()} disabled={busy} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></button>
     </div>
 
-    {showPreferences && snapshot && <QuotaDisplaySettings snapshot={snapshot} preferences={preferences} onChange={setPreferences} onClose={() => setShowPreferences(false)} />}
+    {popoverSupported && showPreferences && snapshot && <QuotaDisplaySettings snapshot={snapshot} preferences={preferences} onChange={setPreferences} onClose={() => setShowPreferences(false)} />}
 
     {!snapshot && <div className="quota-empty compact"><Gauge size={26} /><strong>{emptyLabel}</strong>{emptyDetail && <small>{emptyDetail}</small>}<button className="primary" onClick={() => void refresh()} disabled={busy}>{tr("quota.refresh")}</button></div>}
     {snapshot && <>

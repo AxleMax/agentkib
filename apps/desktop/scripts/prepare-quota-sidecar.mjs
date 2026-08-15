@@ -22,6 +22,20 @@ const releases = {
     url: "https://github.com/steipete/CodexBar/releases/download/v0.49.5/CodexBarCLI-v0.49.5-macos-x86_64.tar.gz",
     format: "tar",
   },
+  "aarch64-unknown-linux-gnu": {
+    version: "0.49.5",
+    asset: "CodexBarCLI-v0.49.5-linux-musl-aarch64.tar.gz",
+    sha256: "6486f199d3f176c5d6f981840bf2a97b6d2744e259ec49e37f8f3d1b6b5eac14",
+    url: "https://github.com/steipete/CodexBar/releases/download/v0.49.5/CodexBarCLI-v0.49.5-linux-musl-aarch64.tar.gz",
+    format: "linux-tar",
+  },
+  "x86_64-unknown-linux-gnu": {
+    version: "0.49.5",
+    asset: "CodexBarCLI-v0.49.5-linux-musl-x86_64.tar.gz",
+    sha256: "87153677de7193dd4d0e1907d9a8412cfc70472ec4d331c83564202237ec7af8",
+    url: "https://github.com/steipete/CodexBar/releases/download/v0.49.5/CodexBarCLI-v0.49.5-linux-musl-x86_64.tar.gz",
+    format: "linux-tar",
+  },
   "x86_64-pc-windows-msvc": {
     version: "0.48.0",
     asset: "Win-CodexBar-v0.48.0.tar.gz",
@@ -80,21 +94,38 @@ if (!(await hasExpectedHash(archive, release.sha256))) {
 
 const extracted = await mkdtemp(join(tmpdir(), "agentkib-codexbar-"));
 try {
-  if (release.format === "tar") {
+  if (release.format === "tar" || release.format === "linux-tar") {
     const result = spawnSync("tar", ["-xzf", archive, "-C", extracted], { stdio: "inherit" });
     if (result.status !== 0) throw new Error("Failed to extract CodexBarCLI archive");
 
     const binaryDirectory = join(tauriDirectory, "binaries");
     const binary = join(binaryDirectory, `agentkib-quota-sidecar-${target}`);
     await mkdir(binaryDirectory, { recursive: true });
-    await copyFile(join(extracted, "CodexBarCLI"), binary);
-    await chmod(binary, 0o755);
+    if (release.format === "linux-tar") {
+      const resourcesDirectory = join(tauriDirectory, "resources/linux");
+      const resourceBundle = join(resourcesDirectory, "CodexBar_CodexBarCore.bundle");
+      const collector = join(resourcesDirectory, "CodexBarCLI");
+      await mkdir(resourcesDirectory, { recursive: true });
+      await copyFile(join(extracted, "CodexBarCLI"), collector);
+      const strip = spawnSync("strip", ["--strip-unneeded", collector], { stdio: "inherit" });
+      if (strip.status !== 0) throw new Error("Failed to strip CodexBarCLI debug symbols");
+      await chmod(collector, 0o755);
+      await rm(resourceBundle, { recursive: true, force: true });
+      await cp(join(extracted, "CodexBar_CodexBarCore.bundle"), resourceBundle, { recursive: true });
+      // The tiny launcher is source-controlled so plain cargo builds do not
+      // depend on downloading the large collector archive first.
+      await access(binary);
+      await chmod(binary, 0o755);
+    } else {
+      await copyFile(join(extracted, "CodexBarCLI"), binary);
+      await chmod(binary, 0o755);
 
-    const resourcesDirectory = join(tauriDirectory, "resources");
-    const resourceBundle = join(resourcesDirectory, "CodexBar_CodexBarCore.bundle");
-    await mkdir(resourcesDirectory, { recursive: true });
-    await rm(resourceBundle, { recursive: true, force: true });
-    await cp(join(extracted, "CodexBar_CodexBarCore.bundle"), resourceBundle, { recursive: true });
+      const resourcesDirectory = join(tauriDirectory, "resources");
+      const resourceBundle = join(resourcesDirectory, "CodexBar_CodexBarCore.bundle");
+      await mkdir(resourcesDirectory, { recursive: true });
+      await rm(resourceBundle, { recursive: true, force: true });
+      await cp(join(extracted, "CodexBar_CodexBarCore.bundle"), resourceBundle, { recursive: true });
+    }
   } else {
     const sourceDirectory = join(cacheRoot, "source");
     const manifest = join(sourceDirectory, "rust/Cargo.toml");

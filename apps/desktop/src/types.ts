@@ -33,7 +33,7 @@ export interface McpInstallation { id: string; name: string; package_kind: McpPa
 export interface McpMigrationCandidate { id: string; agent: AgentKind; scope: string; name: string; source_path: string; transport: string; endpoint: string; has_secret_values: boolean; supported: boolean; warnings: string[] }
 export interface McpOAuthStart { authorization_url: string }
 export interface McpInstallResult { installation: McpInstallation; server: McpServerConfig; tools: McpToolDescriptor[] }
-export interface RuntimeInfo { data_dir: string; database_path: string; mcp_package_root: string; mcp_hub: McpHubStatus; mcp_network: McpNetworkSettings; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale; theme_preference: ThemePreference; effective_theme: EffectiveTheme }
+export interface RuntimeInfo { data_dir: string; database_path: string; mcp_package_root: string; mcp_hub: McpHubStatus; mcp_network: McpNetworkSettings; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale; theme_preference: ThemePreference; effective_theme: EffectiveTheme; tray_available: boolean }
 export type WorkspaceStatus = "healthy" | "attention";
 export type DiscoveryEvidence = "session-cwd" | "configured-workspace" | "scan-marker" | "manual";
 export interface WorkspaceSource { agent?: AgentKind; evidence: DiscoveryEvidence; session_count: number; last_active_at?: string }

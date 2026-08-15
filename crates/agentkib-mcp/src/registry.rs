@@ -195,7 +195,7 @@ fn install_npm(entry: &McpRegistryEntry) -> Result<(McpInstallation, McpServerCo
     let temp = target.with_extension("installing");
     prepare_clean_install_directory(&temp)?;
     let package = format!("{}@{}", entry.identifier, entry.version);
-    let mut npm = crate::process::command_for_std("npm");
+    let mut npm = crate::process::command_for_std("npm")?;
     let result = command_status(
         npm.args(["install", "--prefix"])
             .arg(&temp)
@@ -224,7 +224,7 @@ fn install_pypi(entry: &McpRegistryEntry) -> Result<(McpInstallation, McpServerC
     let temp = target.with_extension("installing");
     prepare_clean_install_directory(&temp)?;
     let venv = temp.join("venv");
-    let mut uv = crate::process::command_for_std("uv");
+    let mut uv = crate::process::command_for_std("uv")?;
     let created = command_status(uv.arg("venv").arg(&venv), PACKAGE_INSTALL_TIMEOUT)
         .context("uv virtual environment creation could not complete")?;
     if !created.success() {
@@ -232,7 +232,7 @@ fn install_pypi(entry: &McpRegistryEntry) -> Result<(McpInstallation, McpServerC
         bail!("uv venv failed with status {created}");
     }
     let package = format!("{}=={}", entry.identifier, entry.version);
-    let mut uv = crate::process::command_for_std("uv");
+    let mut uv = crate::process::command_for_std("uv")?;
     let installed = command_status(
         uv.args(["pip", "install", "--python"])
             .arg(venv_python(&venv))
@@ -419,7 +419,7 @@ fn finish_install(temp: &Path, target: &Path) -> Result<()> {
 }
 
 fn ensure_command(command: &str) -> Result<()> {
-    let mut process = crate::process::command_for_std(command);
+    let mut process = crate::process::command_for_std(command)?;
     let status = command_status(process.arg("--version"), RUNTIME_CHECK_TIMEOUT)
         .with_context(|| format!("Unable to check required runtime `{command}`"))?;
     if !status.success() {
