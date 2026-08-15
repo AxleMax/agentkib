@@ -41,7 +41,8 @@
           "libayatana-appindicator3-1",
           "libglib2.0-bin",
           "librsvg2-2",
-          "libxdo3"
+          "libxdo3",
+          "xdg-utils"
         ],
         "section": "devel",
         "priority": "optional"
@@ -56,7 +57,8 @@
           "webkit2gtk4.1",
           "libappindicator-gtk3",
           "librsvg2",
-          "libxdo"
+          "libxdo",
+          "xdg-utils"
         ],
         "release": "1"
       }
