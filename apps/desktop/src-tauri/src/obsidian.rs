@@ -227,7 +227,7 @@ fn vault_registry_path() -> Option<PathBuf> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 fn linux_vault_registry_path(
     xdg_config_home: Option<&std::ffi::OsStr>,
     home: Option<&Path>,
@@ -337,7 +337,7 @@ fn detect_app_path() -> Option<PathBuf> {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn linux_app_candidates(
     home: Option<&Path>,
     desktop_directories: &[PathBuf],
@@ -361,7 +361,7 @@ fn linux_app_candidates(
     candidates
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn app_images_in(directory: &Path) -> Vec<PathBuf> {
     fs::read_dir(directory)
         .into_iter()
@@ -381,7 +381,7 @@ fn app_images_in(directory: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn obsidian_desktop_executables(directory: &Path, search_directories: &[PathBuf]) -> Vec<PathBuf> {
     fs::read_dir(directory)
         .into_iter()
@@ -629,6 +629,7 @@ mod tests {
         ));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_registry_uses_xdg_then_home_default() {
         assert_eq!(
@@ -651,6 +652,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_desktop_exec_parser_handles_quoted_env_commands() {
         let directory = tempdir().unwrap();
@@ -676,6 +678,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_candidates_cover_appimage_and_desktop_installations() {
         let directory = tempdir().unwrap();

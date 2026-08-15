@@ -82,7 +82,7 @@ jobs:
           .github/scripts/smoke-test-linux-package.sh target deb
           .github/scripts/smoke-test-linux-package.sh target appimage
           .github/scripts/write-linux-checksums.sh target
-          package=$(find target -type f -name '*.deb' -print -quit)
+          package=$(find "$PWD/target" -type f -name '*.deb' -print -quit)
           sudo apt-get install -y "$package"
           .github/scripts/smoke-test-linux-installed.sh
 
@@ -173,7 +173,7 @@ jobs:
           .github/scripts/smoke-test-linux-package.sh target deb
           .github/scripts/smoke-test-linux-package.sh target appimage
           .github/scripts/write-linux-checksums.sh target
-          package=$(find target -type f -name '*.deb' -print -quit)
+          package=$(find "$PWD/target" -type f -name '*.deb' -print -quit)
           sudo apt-get install -y "$package"
           .github/scripts/smoke-test-linux-installed.sh
 
