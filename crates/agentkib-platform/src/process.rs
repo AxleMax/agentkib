@@ -207,23 +207,63 @@ mod windows {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::fs;
     use std::io;
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
+    use tempfile::tempdir;
+
     use super::{ProcessTree, configure_process_group};
+
+    fn process_is_running(pid: libc::pid_t) -> bool {
+        let result = unsafe { libc::kill(pid, 0) };
+        if result < 0 {
+            return io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let path = format!("/proc/{pid}/stat");
+            let Ok(stat) = fs::read_to_string(path) else {
+                return false;
+            };
+            let state = stat
+                .rsplit_once(") ")
+                .and_then(|(_, fields)| fields.as_bytes().first().copied());
+            if matches!(state, Some(b'Z' | b'X')) {
+                return false;
+            }
+        }
+        true
+    }
 
     #[test]
     fn configured_child_can_be_terminated_as_a_process_group() {
+        let directory = tempdir().unwrap();
+        let descendant_pid_path = directory.path().join("descendant.pid");
         let mut command = Command::new("sh");
         command
-            .args(["-c", "sleep 30 & wait"])
+            .args(["-c", "sleep 30 & echo $! > \"$1\"; wait", "sh"])
+            .arg(&descendant_pid_path)
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         configure_process_group(&mut command);
         let mut child = command.spawn().unwrap();
-        let process_group = child.id() as libc::pid_t;
         let tree = ProcessTree::attach(&child).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let descendant_pid = loop {
+            if let Ok(value) = fs::read_to_string(&descendant_pid_path)
+                && let Ok(pid) = value.trim().parse::<libc::pid_t>()
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "descendant process did not start"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
 
         tree.terminate().unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -236,13 +276,12 @@ mod tests {
         }
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            let result = unsafe { libc::kill(-process_group, 0) };
-            if result < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            if !process_is_running(descendant_pid) {
                 break;
             }
             assert!(
                 Instant::now() < deadline,
-                "descendant process group remained alive"
+                "descendant process remained alive"
             );
             std::thread::sleep(Duration::from_millis(10));
         }
