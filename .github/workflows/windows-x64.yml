@@ -32,7 +32,6 @@ jobs:
     name: Test and build NSIS
     runs-on: windows-2022
     env:
-      CARGO_BUILD_TARGET: x86_64-pc-windows-msvc
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
