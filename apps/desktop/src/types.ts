@@ -33,7 +33,7 @@ export interface McpInstallation { id: string; name: string; package_kind: McpPa
 export interface McpMigrationCandidate { id: string; agent: AgentKind; scope: string; name: string; source_path: string; transport: string; endpoint: string; has_secret_values: boolean; supported: boolean; warnings: string[] }
 export interface McpOAuthStart { authorization_url: string }
 export interface McpInstallResult { installation: McpInstallation; server: McpServerConfig; tools: McpToolDescriptor[] }
-export interface RuntimeInfo { data_dir: string; database_path: string; mcp_package_root: string; mcp_hub: McpHubStatus; mcp_network: McpNetworkSettings; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale; theme_preference: ThemePreference; effective_theme: EffectiveTheme; tray_available: boolean }
+export interface RuntimeInfo { data_dir: string; database_path: string; mcp_package_root: string; mcp_hub: McpHubStatus; mcp_network: McpNetworkSettings; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale; theme_preference: ThemePreference; effective_theme: EffectiveTheme; tray_available: boolean; session_index_enabled: boolean }
 export type WorkspaceStatus = "healthy" | "attention";
 export type DiscoveryEvidence = "session-cwd" | "configured-workspace" | "scan-marker" | "manual";
 export interface WorkspaceSource { agent?: AgentKind; evidence: DiscoveryEvidence; session_count: number; last_active_at?: string }
@@ -99,3 +99,11 @@ export interface AppNavigationRequest {
   window?: QuotaWindowSelector;
   configure_popover?: boolean;
 }
+
+export type SessionAvailability = "readable" | "metadata-only";
+export type SessionIndexFreshness = "fresh" | "stale" | "unavailable";
+export type ConversationEventKind = "user-message" | "agent-message" | "tool-summary";
+export interface ConversationSessionSummary { id: string; workspace_id: string; agent: "codex" | "claude-code"; title?: string; created_at?: string; updated_at?: string; message_count?: number; git_branch?: string; archived: boolean; sidechain: boolean; availability: SessionAvailability }
+export interface ConversationIndexStatus { workspace_id: string; agent: "codex" | "claude-code"; freshness: SessionIndexFreshness; session_count: number; last_attempt_at?: string; last_success_at?: string; error_key?: string; error_detail?: string }
+export interface ConversationEvent { id: string; kind: ConversationEventKind; timestamp?: string; content?: string; tool_name?: string; tool_status?: string; duration_ms?: number; attachment_count: number; truncated: boolean }
+export interface ConversationEventPage { events: ConversationEvent[]; next_cursor?: string; warnings: string[] }

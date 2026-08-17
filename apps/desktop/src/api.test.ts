@@ -69,6 +69,29 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("request_refresh", { kind: "storage", force: true });
   });
 
+  it("keeps conversation bodies behind an explicit on-demand IPC call", async () => {
+    vi.mocked(invoke).mockResolvedValue({ events: [], warnings: [] });
+
+    await api.sessionEvents("hashed-session", "p64", 100);
+
+    expect(invoke).toHaveBeenCalledWith("read_session_events", {
+      sessionId: "hashed-session",
+      cursor: "p64",
+      limit: 100,
+    });
+  });
+
+  it("refreshes only the selected workspace conversation index", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+
+    await api.refreshWorkspaceSessions("workspace-1", true);
+
+    expect(invoke).toHaveBeenCalledWith("refresh_workspace_sessions", {
+      workspaceId: "workspace-1",
+      force: true,
+    });
+  });
+
   it("persists quota popover display preferences through desktop preferences", async () => {
     const preferences = {
       hidden_providers: ["claude"],

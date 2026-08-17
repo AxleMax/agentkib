@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use agentkib_conversations::{
+    ConversationIndexStatus, ConversationSessionSummary, NativeSessionSummary,
+    SessionIndexFreshness,
+};
 use agentkib_core::{
     ActivityRecord, AgentInstallation, AgentKind, AssetKind, CatalogAsset, CatalogScope,
     DiscoveryCandidate, DiscoveryEvidence, DiscoveryReport, ExcludedWorkspace, McpInstallation,
@@ -358,6 +362,40 @@ impl Store {
                  COMMIT;",
             )?;
         }
+        if current_version.is_none_or(|version| version < 9) {
+            self.connection.execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS conversation_sessions (
+                   id TEXT PRIMARY KEY,
+                   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                   agent TEXT NOT NULL,
+                   title TEXT,
+                   created_at TEXT,
+                   updated_at TEXT,
+                   message_count INTEGER,
+                   git_branch TEXT,
+                   archived INTEGER NOT NULL DEFAULT 0,
+                   sidechain INTEGER NOT NULL DEFAULT 0,
+                   availability TEXT NOT NULL,
+                   last_indexed_at TEXT NOT NULL,
+                   UNIQUE(workspace_id, agent, id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_conversation_sessions_workspace_updated
+                   ON conversation_sessions(workspace_id, updated_at DESC, created_at DESC);
+                 CREATE TABLE IF NOT EXISTS conversation_index_status (
+                   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                   agent TEXT NOT NULL,
+                   session_count INTEGER NOT NULL DEFAULT 0,
+                   last_attempt_at TEXT NOT NULL,
+                   last_success_at TEXT,
+                   error_key TEXT,
+                   error_detail TEXT,
+                   PRIMARY KEY(workspace_id, agent)
+                 );
+                 INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '9');
+                 COMMIT;",
+            )?;
+        }
         let has_usage_events: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'usage_events')",
             [],
@@ -540,7 +578,10 @@ impl Store {
         let mut grouped: BTreeMap<String, (PathBuf, Vec<&DiscoveryCandidate>)> = BTreeMap::new();
         for candidate in candidates {
             let identity = platform_path::identity(&candidate.path);
-            if candidate.path.is_dir() && !excluded.contains(&identity) {
+            if candidate.path.is_dir()
+                && !platform_path::is_known_agent_probe_workspace(&candidate.path)
+                && !excluded.contains(&identity)
+            {
                 grouped
                     .entry(identity)
                     .or_insert_with(|| (candidate.path.clone(), Vec::new()))
@@ -570,8 +611,8 @@ impl Store {
             for row in rows {
                 let (id, path) = row?;
                 // Provider 读取失败或用户撤销扫描目录时，不能误删仍然存在的工作区。
-                // 历史清理由路径是否仍存在驱动，来源在后续成功发现时再聚合更新。
-                if !path.is_dir() {
+                // 仅清理已经失效的路径，以及有稳定标记的第三方合成探针目录。
+                if !path.is_dir() || platform_path::is_known_agent_probe_workspace(&path) {
                     stale.push(id);
                 }
             }
@@ -642,6 +683,187 @@ impl Store {
             workspace.sources = self.workspace_sources(id)?;
         }
         Ok(value)
+    }
+
+    pub fn sync_conversation_sessions(
+        &self,
+        workspace_id: &str,
+        agent: AgentKind,
+        sessions: &[NativeSessionSummary],
+    ) -> Result<Vec<ConversationSessionSummary>> {
+        if !matches!(agent, AgentKind::Codex | AgentKind::ClaudeCode) {
+            bail!("Conversation indexing is not supported for this Agent");
+        }
+        self.get_workspace(workspace_id)?
+            .context("Workspace does not exist")?;
+        let salt = self.conversation_salt()?;
+        let agent_value = enum_string(agent)?;
+        let indexed_at = Utc::now();
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM conversation_sessions WHERE workspace_id = ?1 AND agent = ?2",
+            params![workspace_id, agent_value],
+        )?;
+        for session in sessions {
+            if session.agent != agent {
+                bail!("Conversation batch contains a different Agent");
+            }
+            let id = conversation_identifier(&salt, agent, &session.native_ref);
+            transaction.execute(
+                "INSERT INTO conversation_sessions(
+                   id, workspace_id, agent, title, created_at, updated_at, message_count,
+                   git_branch, archived, sidechain, availability, last_indexed_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    id,
+                    workspace_id,
+                    &agent_value,
+                    session.title.as_deref(),
+                    session.created_at.map(|value| value.to_rfc3339()),
+                    session.updated_at.map(|value| value.to_rfc3339()),
+                    session.message_count.map(to_i64),
+                    session.git_branch.as_deref(),
+                    session.archived,
+                    session.sidechain,
+                    enum_string(session.availability)?,
+                    indexed_at.to_rfc3339(),
+                ],
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO conversation_index_status(
+               workspace_id, agent, session_count, last_attempt_at, last_success_at, error_key, error_detail
+             ) VALUES (?1, ?2, ?3, ?4, ?4, NULL, NULL)
+             ON CONFLICT(workspace_id, agent) DO UPDATE SET
+               session_count = excluded.session_count,
+               last_attempt_at = excluded.last_attempt_at,
+               last_success_at = excluded.last_success_at,
+               error_key = NULL,
+               error_detail = NULL",
+            params![workspace_id, agent_value, to_i64(sessions.len() as u64), indexed_at.to_rfc3339()],
+        )?;
+        transaction.commit()?;
+        self.list_conversation_sessions(workspace_id)
+    }
+
+    pub fn record_conversation_index_failure(
+        &self,
+        workspace_id: &str,
+        agent: AgentKind,
+        error_key: &str,
+        error_detail: &str,
+    ) -> Result<()> {
+        let agent_value = enum_string(agent)?;
+        let now = Utc::now().to_rfc3339();
+        self.connection.execute(
+            "INSERT INTO conversation_index_status(
+               workspace_id, agent, session_count, last_attempt_at, last_success_at, error_key, error_detail
+             ) VALUES (?1, ?2, 0, ?3, NULL, ?4, ?5)
+             ON CONFLICT(workspace_id, agent) DO UPDATE SET
+               last_attempt_at = excluded.last_attempt_at,
+               error_key = excluded.error_key,
+               error_detail = excluded.error_detail",
+            params![workspace_id, agent_value, now, error_key, error_detail],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_conversation_sessions(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<ConversationSessionSummary>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, workspace_id, agent, title, created_at, updated_at, message_count,
+                    git_branch, archived, sidechain, availability
+             FROM conversation_sessions WHERE workspace_id = ?1
+             ORDER BY COALESCE(updated_at, created_at) DESC, id DESC",
+        )?;
+        statement
+            .query_map([workspace_id], row_to_conversation_session)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_conversation_session(&self, id: &str) -> Result<Option<ConversationSessionSummary>> {
+        self.connection
+            .query_row(
+                "SELECT id, workspace_id, agent, title, created_at, updated_at, message_count,
+                        git_branch, archived, sidechain, availability
+                 FROM conversation_sessions WHERE id = ?1",
+                [id],
+                row_to_conversation_session,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn conversation_index_status(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<ConversationIndexStatus>> {
+        let mut statement = self.connection.prepare(
+            "SELECT workspace_id, agent, session_count, last_attempt_at, last_success_at,
+                    error_key, error_detail
+             FROM conversation_index_status WHERE workspace_id = ?1 ORDER BY agent",
+        )?;
+        let now = Utc::now();
+        let rows = statement.query_map([workspace_id], |row| {
+            let last_attempt_at = parse_time(&row.get::<_, String>(3)?).map_err(sql_error)?;
+            let last_success_at = row
+                .get::<_, Option<String>>(4)?
+                .map(|value| parse_time(&value).map_err(sql_error))
+                .transpose()?;
+            let error_key = row.get::<_, Option<String>>(5)?;
+            let freshness = match last_success_at.as_ref() {
+                Some(success)
+                    if now.signed_duration_since(*success).num_minutes() < 5
+                        && error_key.is_none() =>
+                {
+                    SessionIndexFreshness::Fresh
+                }
+                Some(_) => SessionIndexFreshness::Stale,
+                None => SessionIndexFreshness::Unavailable,
+            };
+            Ok(ConversationIndexStatus {
+                workspace_id: row.get(0)?,
+                agent: parse_enum(&row.get::<_, String>(1)?).map_err(sql_error)?,
+                freshness,
+                session_count: as_u64(row, 2)?,
+                last_attempt_at: Some(last_attempt_at),
+                last_success_at,
+                error_key,
+                error_detail: row.get(6)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn clear_conversation_index(&self, workspace_id: Option<&str>) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        if let Some(workspace_id) = workspace_id {
+            transaction.execute(
+                "DELETE FROM conversation_sessions WHERE workspace_id = ?1",
+                [workspace_id],
+            )?;
+            transaction.execute(
+                "DELETE FROM conversation_index_status WHERE workspace_id = ?1",
+                [workspace_id],
+            )?;
+        } else {
+            transaction.execute("DELETE FROM conversation_sessions", [])?;
+            transaction.execute("DELETE FROM conversation_index_status", [])?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn conversation_id(&self, agent: AgentKind, native_ref: &str) -> Result<String> {
+        Ok(conversation_identifier(
+            &self.conversation_salt()?,
+            agent,
+            native_ref,
+        ))
     }
 
     pub fn workspace_path(&self, id: &str) -> Result<PathBuf> {
@@ -1734,6 +1956,32 @@ impl Store {
             .map_err(Into::into)
     }
 
+    fn conversation_salt(&self) -> Result<String> {
+        if let Some(value) = self
+            .connection
+            .query_row(
+                "SELECT value FROM schema_meta WHERE key = 'conversation_salt'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return Ok(value);
+        }
+        let value = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('conversation_salt', ?1)",
+            params![value],
+        )?;
+        self.connection
+            .query_row(
+                "SELECT value FROM schema_meta WHERE key = 'conversation_salt'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     fn workspace_path_index(&self) -> Result<Vec<(PathBuf, String)>> {
         let mut statement = self.connection.prepare(
             "SELECT canonical_path, id FROM workspaces ORDER BY length(canonical_path) DESC",
@@ -2300,6 +2548,13 @@ fn keyed_hash(key: &str, value: &[u8]) -> String {
     hex::encode(outer.finalize())
 }
 
+fn conversation_identifier(key: &str, agent: AgentKind, native_ref: &str) -> String {
+    keyed_hash(
+        key,
+        format!("conversation:{}:{native_ref}", agent.as_str()).as_bytes(),
+    )
+}
+
 fn calculate_streaks(active: &BTreeSet<NaiveDate>, today: NaiveDate) -> (u64, u64) {
     let mut longest = 0_u64;
     let mut run = 0_u64;
@@ -2732,6 +2987,32 @@ fn row_to_workspace(row: &Row<'_>) -> rusqlite::Result<WorkspaceSummary> {
     })
 }
 
+fn row_to_conversation_session(row: &Row<'_>) -> rusqlite::Result<ConversationSessionSummary> {
+    let created_at = row.get::<_, Option<String>>(4)?;
+    let updated_at = row.get::<_, Option<String>>(5)?;
+    Ok(ConversationSessionSummary {
+        id: row.get(0)?,
+        workspace_id: row.get(1)?,
+        agent: parse_enum(&row.get::<_, String>(2)?).map_err(sql_error)?,
+        title: row.get(3)?,
+        created_at: created_at
+            .map(|value| parse_time(&value))
+            .transpose()
+            .map_err(sql_error)?,
+        updated_at: updated_at
+            .map(|value| parse_time(&value))
+            .transpose()
+            .map_err(sql_error)?,
+        message_count: row
+            .get::<_, Option<i64>>(6)?
+            .map(|value| value.max(0) as u64),
+        git_branch: row.get(7)?,
+        archived: row.get(8)?,
+        sidechain: row.get(9)?,
+        availability: parse_enum(&row.get::<_, String>(10)?).map_err(sql_error)?,
+    })
+}
+
 fn row_to_catalog_asset(row: &Row<'_>) -> rusqlite::Result<CatalogAsset> {
     let scope: String = row.get(1)?;
     let agent: Option<String> = row.get(3)?;
@@ -2974,6 +3255,58 @@ mod tests {
     }
 
     #[test]
+    fn discovery_removes_known_agent_probe_workspaces() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("ClaudeProbe");
+        fs::create_dir_all(&workspace).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let candidate = candidate(&workspace);
+        store
+            .sync_discovery(std::slice::from_ref(&candidate), &[], &[], Utc::now(), &[])
+            .unwrap();
+        let workspace_id = store.list_workspaces().unwrap()[0].id.clone();
+        store
+            .sync_conversation_sessions(
+                &workspace_id,
+                AgentKind::ClaudeCode,
+                &[NativeSessionSummary {
+                    native_ref: "old-probe-session".into(),
+                    agent: AgentKind::ClaudeCode,
+                    title: None,
+                    created_at: None,
+                    updated_at: None,
+                    message_count: None,
+                    git_branch: None,
+                    archived: false,
+                    sidechain: false,
+                    availability: agentkib_conversations::SessionAvailability::MetadataOnly,
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .list_conversation_sessions(&workspace_id)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        fs::write(workspace.join(".codexbar-session-id"), "probe-session").unwrap();
+        let report = store
+            .sync_discovery(std::slice::from_ref(&candidate), &[], &[], Utc::now(), &[])
+            .unwrap();
+        assert_eq!(report.discovered_count, 0);
+        assert_eq!(report.removed_count, 1);
+        assert!(store.list_workspaces().unwrap().is_empty());
+        assert!(
+            store
+                .list_conversation_sessions(&workspace_id)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn schema_upgrade_keeps_existing_memories() {
         let dir = tempdir().unwrap();
         let database = dir.path().join("db.sqlite");
@@ -3007,6 +3340,113 @@ mod tests {
             )
             .unwrap();
         assert!(exists);
+    }
+
+    #[test]
+    fn conversation_index_hashes_native_ids_and_preserves_last_good_on_failure() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        let native_ref = "native-session-secret";
+        let session = NativeSessionSummary {
+            native_ref: native_ref.into(),
+            agent: AgentKind::Codex,
+            title: Some("A cached title".into()),
+            created_at: Some(Utc::now()),
+            updated_at: Some(Utc::now()),
+            message_count: Some(4),
+            git_branch: Some("main".into()),
+            archived: false,
+            sidechain: false,
+            availability: agentkib_conversations::SessionAvailability::Readable,
+        };
+
+        let indexed = store
+            .sync_conversation_sessions(&registered.id, AgentKind::Codex, &[session])
+            .unwrap();
+        assert_eq!(indexed.len(), 1);
+        assert_ne!(indexed[0].id, native_ref);
+        assert_eq!(
+            indexed[0].id,
+            store.conversation_id(AgentKind::Codex, native_ref).unwrap()
+        );
+
+        store
+            .record_conversation_index_failure(
+                &registered.id,
+                AgentKind::Codex,
+                "errors.conversations.sourceUnavailable",
+                "source unavailable",
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .list_conversation_sessions(&registered.id)
+                .unwrap()
+                .len(),
+            1
+        );
+        let status = store.conversation_index_status(&registered.id).unwrap();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].freshness, SessionIndexFreshness::Stale);
+
+        let raw_id_rows: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_sessions WHERE id = ?1",
+                [native_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw_id_rows, 0);
+    }
+
+    #[test]
+    fn version_nine_adds_conversation_index_without_touching_existing_data() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO schema_meta(key, value) VALUES ('schema_version', '8');
+                 CREATE TABLE workspaces(id TEXT PRIMARY KEY);
+                 CREATE TABLE workspace_storage(workspace_id TEXT PRIMARY KEY);
+                 INSERT INTO workspaces(id) VALUES ('kept');",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&database).unwrap();
+        let version: String = store
+            .connection
+            .query_row(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let tables: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('conversation_sessions', 'conversation_index_status')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let kept: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM workspaces WHERE id = 'kept'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "9");
+        assert_eq!(tables, 2);
+        assert_eq!(kept, 1);
     }
 
     #[test]

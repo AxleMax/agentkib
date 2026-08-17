@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 agentkib-platform.workspace = true
 agentkib-core.workspace = true
+agentkib-conversations.workspace = true
 agentkib-adapters.workspace = true
 agentkib-discovery.workspace = true
 agentkib-insights.workspace = true

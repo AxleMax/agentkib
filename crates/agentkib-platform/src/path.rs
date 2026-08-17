@@ -104,6 +104,15 @@ pub fn is_safe_scan_entry(path: &Path) -> bool {
     is_reparse_or_symlink(path).is_ok_and(|unsafe_link| !unsafe_link)
 }
 
+/// Returns whether the directory belongs to a known synthetic Agent probe.
+///
+/// CodexBar runs Claude Code in a dedicated working directory and marks it with
+/// this file. It is operational state owned by another tool, not a user project.
+pub fn is_known_agent_probe_workspace(path: &Path) -> bool {
+    fs::symlink_metadata(path.join(".codexbar-session-id"))
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
 fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {
@@ -255,5 +264,14 @@ mod tests {
             file_uri_to_path("file:///tmp/a%20b"),
             Some(PathBuf::from("/tmp/a b"))
         );
+    }
+
+    #[test]
+    fn recognizes_codexbar_claude_probe_workspace() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(!is_known_agent_probe_workspace(directory.path()));
+
+        fs::write(directory.path().join(".codexbar-session-id"), "probe").unwrap();
+        assert!(is_known_agent_probe_workspace(directory.path()));
     }
 }

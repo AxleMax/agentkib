@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::io::Read;
@@ -12,6 +12,9 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use agentkib_adapters::{HomeTargets, default_manifest, plan_workspace_changes};
+use agentkib_conversations::{
+    ConversationEventPage, ConversationIndexStatus, ConversationSessionSummary, provider, providers,
+};
 use agentkib_core::{
     ActivityRecord, AgentInstallation, AgentKind, ApplyOptions, CatalogAsset, ChangeSet,
     ContextPreview, DiscoveryReport, ExcludedWorkspace, Manifest, McpHubStatus, McpInstallation,
@@ -156,7 +159,7 @@ struct QuotaPopoverPreferences {
     hidden_windows: Vec<QuotaWindowSelector>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct DesktopPreferences {
     #[serde(default)]
     close_behavior: Option<CloseBehavior>,
@@ -168,6 +171,25 @@ struct DesktopPreferences {
     mcp_network: McpNetworkSettings,
     #[serde(default)]
     quota_popover: QuotaPopoverPreferences,
+    #[serde(default = "default_true")]
+    session_index_enabled: bool,
+}
+
+impl Default for DesktopPreferences {
+    fn default() -> Self {
+        Self {
+            close_behavior: None,
+            locale_preference: LocalePreference::default(),
+            theme_preference: ThemePreference::default(),
+            mcp_network: McpNetworkSettings::default(),
+            quota_popover: QuotaPopoverPreferences::default(),
+            session_index_enabled: true,
+        }
+    }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug)]
@@ -176,6 +198,7 @@ struct LifecycleState {
     locale_preference: Mutex<LocalePreference>,
     effective_locale: Mutex<SupportedLocale>,
     theme_preference: Mutex<ThemePreference>,
+    session_index_enabled: AtomicBool,
     close_prompt_open: AtomicBool,
     quitting: AtomicBool,
     tray_available: AtomicBool,
@@ -203,6 +226,11 @@ struct StorageRuntime {
     cancel_requested: AtomicBool,
 }
 
+#[derive(Debug, Default)]
+struct ConversationRuntime {
+    running_workspaces: Mutex<BTreeSet<String>>,
+}
+
 impl LifecycleState {
     fn new(preferences: &DesktopPreferences) -> Self {
         let effective_locale = preferences.locale_preference.effective();
@@ -211,6 +239,7 @@ impl LifecycleState {
             locale_preference: Mutex::new(preferences.locale_preference),
             effective_locale: Mutex::new(effective_locale),
             theme_preference: Mutex::new(preferences.theme_preference),
+            session_index_enabled: AtomicBool::new(preferences.session_index_enabled),
             close_prompt_open: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
             tray_available: AtomicBool::new(false),
@@ -252,6 +281,14 @@ impl LifecycleState {
         *self.theme_preference.lock().expect("theme state lock") = preference;
     }
 
+    fn session_index_enabled(&self) -> bool {
+        self.session_index_enabled.load(Ordering::SeqCst)
+    }
+
+    fn set_session_index_enabled(&self, enabled: bool) {
+        self.session_index_enabled.store(enabled, Ordering::SeqCst);
+    }
+
     fn tray_available(&self) -> bool {
         self.tray_available.load(Ordering::SeqCst)
     }
@@ -276,6 +313,7 @@ struct RuntimeInfo {
     theme_preference: ThemePreference,
     effective_theme: EffectiveTheme,
     tray_available: bool,
+    session_index_enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -367,6 +405,177 @@ fn get_workspace(id: String) -> CommandResult<Option<WorkspaceSummary>> {
     Store::open_default()
         .and_then(|store| store.get_workspace(&id))
         .map_err(format_error)
+}
+
+#[tauri::command]
+fn list_workspace_sessions(
+    workspace_id: String,
+    lifecycle: tauri::State<'_, Arc<LifecycleState>>,
+) -> CommandResult<Vec<ConversationSessionSummary>> {
+    if !lifecycle.session_index_enabled() {
+        return Ok(Vec::new());
+    }
+    Store::open_default()
+        .and_then(|store| store.list_conversation_sessions(&workspace_id))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn get_workspace_session_status(
+    workspace_id: String,
+) -> CommandResult<Vec<ConversationIndexStatus>> {
+    Store::open_default()
+        .and_then(|store| store.conversation_index_status(&workspace_id))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn refresh_workspace_sessions(
+    app: AppHandle,
+    workspace_id: String,
+    force: Option<bool>,
+    lifecycle: tauri::State<'_, Arc<LifecycleState>>,
+    runtime: tauri::State<'_, Arc<ConversationRuntime>>,
+) -> CommandResult<Vec<ConversationSessionSummary>> {
+    if !lifecycle.session_index_enabled() {
+        return Err(LocalizedMessage::new("errors.conversations.indexDisabled"));
+    }
+    if !force.unwrap_or(false) {
+        let store = Store::open_default().map_err(format_error)?;
+        let statuses = store
+            .conversation_index_status(&workspace_id)
+            .map_err(format_error)?;
+        if statuses.len() == 2
+            && statuses.iter().all(|status| {
+                status.freshness == agentkib_conversations::SessionIndexFreshness::Fresh
+            })
+        {
+            return store
+                .list_conversation_sessions(&workspace_id)
+                .map_err(format_error);
+        }
+    }
+    {
+        let mut running = runtime
+            .running_workspaces
+            .lock()
+            .expect("conversation runtime lock");
+        if !running.insert(workspace_id.clone()) {
+            return Store::open_default()
+                .and_then(|store| store.list_conversation_sessions(&workspace_id))
+                .map_err(format_error);
+        }
+    }
+
+    let refresh_workspace_id = workspace_id.clone();
+    let lifecycle_state = Arc::clone(lifecycle.inner());
+    let joined = tauri::async_runtime::spawn_blocking(
+        move || -> anyhow::Result<Vec<ConversationSessionSummary>> {
+            let store = Store::open_default()?;
+            let workspace = store.workspace_path(&refresh_workspace_id)?;
+            for source in providers() {
+                if !lifecycle_state.session_index_enabled() {
+                    store.clear_conversation_index(Some(&refresh_workspace_id))?;
+                    return Ok(Vec::new());
+                }
+                let agent = source.agent();
+                match source.list_sessions(&workspace) {
+                    Ok(sessions) => {
+                        store.sync_conversation_sessions(
+                            &refresh_workspace_id,
+                            agent,
+                            &sessions,
+                        )?;
+                    }
+                    Err(_) => {
+                        // Paths and parser diagnostics can identify private transcript locations,
+                        // so only a stable, non-sensitive failure is persisted.
+                        store.record_conversation_index_failure(
+                            &refresh_workspace_id,
+                            agent,
+                            "errors.conversations.sourceUnavailable",
+                            "Conversation source could not be read",
+                        )?;
+                    }
+                }
+            }
+            if !lifecycle_state.session_index_enabled() {
+                store.clear_conversation_index(Some(&refresh_workspace_id))?;
+                return Ok(Vec::new());
+            }
+            store.list_conversation_sessions(&refresh_workspace_id)
+        },
+    )
+    .await;
+
+    runtime
+        .running_workspaces
+        .lock()
+        .expect("conversation runtime lock")
+        .remove(&workspace_id);
+    let _ = app.emit("agentkib:conversations-updated", &workspace_id);
+    match joined {
+        Ok(result) => result.map_err(format_error),
+        Err(_) => Err(LocalizedMessage::new("errors.conversations.refreshFailed")),
+    }
+}
+
+#[tauri::command]
+async fn read_session_events(
+    session_id: String,
+    cursor: Option<String>,
+    limit: Option<usize>,
+    lifecycle: tauri::State<'_, Arc<LifecycleState>>,
+) -> CommandResult<ConversationEventPage> {
+    if !lifecycle.session_index_enabled() {
+        return Err(LocalizedMessage::new("errors.conversations.indexDisabled"));
+    }
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<ConversationEventPage> {
+        let store = Store::open_default()?;
+        let session = store
+            .get_conversation_session(&session_id)?
+            .context("Conversation metadata is no longer available")?;
+        let workspace = store.workspace_path(&session.workspace_id)?;
+        let source = provider(session.agent).context("Conversation Provider is unavailable")?;
+        let native = source
+            .list_sessions(&workspace)?
+            .into_iter()
+            .find(|candidate| {
+                store
+                    .conversation_id(session.agent, &candidate.native_ref)
+                    .is_ok_and(|id| id == session_id)
+            })
+            .context("Conversation transcript is no longer available")?;
+        source.read_events(&native.native_ref, cursor.as_deref(), limit.unwrap_or(100))
+    })
+    .await
+    .map_err(|_| LocalizedMessage::new("errors.conversations.readFailed"))?
+    .map_err(|_| LocalizedMessage::new("errors.conversations.readFailed"))
+}
+
+#[tauri::command]
+fn clear_session_index(workspace_id: Option<String>) -> CommandResult<()> {
+    Store::open_default()
+        .and_then(|store| store.clear_conversation_index(workspace_id.as_deref()))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+fn set_session_index_enabled(
+    enabled: bool,
+    app: AppHandle,
+    lifecycle: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    update_preferences(|preferences| preferences.session_index_enabled = enabled)
+        .map_err(format_error)?;
+    lifecycle.set_session_index_enabled(enabled);
+    if !enabled {
+        Store::open_default()
+            .and_then(|store| store.clear_conversation_index(None))
+            .map_err(format_error)?;
+    }
+    runtime_info(app, lifecycle, hub)
 }
 
 #[tauri::command]
@@ -933,6 +1142,7 @@ fn runtime_info(
         theme_preference,
         effective_theme: effective_theme(&app, theme_preference),
         tray_available: state.tray_available(),
+        session_index_enabled: state.session_index_enabled(),
     })
 }
 
@@ -3157,6 +3367,7 @@ pub fn run() {
     let insights = Arc::new(InsightsRuntime::default());
     let quota = Arc::new(QuotaRuntime::default());
     let storage = Arc::new(StorageRuntime::default());
+    let conversations = Arc::new(ConversationRuntime::default());
     let refresh = Arc::new(RefreshCoordinator::default());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -3168,6 +3379,7 @@ pub fn run() {
         .manage(insights)
         .manage(quota)
         .manage(storage)
+        .manage(conversations)
         .manage(refresh)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -3248,6 +3460,12 @@ pub fn run() {
             discover_workspaces,
             list_workspaces,
             get_workspace,
+            list_workspace_sessions,
+            refresh_workspace_sessions,
+            read_session_events,
+            get_workspace_session_status,
+            clear_session_index,
+            set_session_index_enabled,
             add_workspace,
             refresh_workspace,
             exclude_workspace,
@@ -3365,6 +3583,7 @@ mod tests {
                         label: "Weekly".into(),
                     }],
                 },
+                session_index_enabled: false,
             },
         )
         .unwrap();
@@ -3387,17 +3606,15 @@ mod tests {
                 .hidden_providers,
             ["claude"]
         );
+        assert!(!load_preferences(&path).unwrap().session_index_enabled);
     }
 
     #[test]
     fn missing_preferences_asks_on_first_close() {
         let dir = tempdir().unwrap();
-        assert_eq!(
-            load_preferences(&dir.path().join("missing.json"))
-                .unwrap()
-                .close_behavior,
-            None
-        );
+        let preferences = load_preferences(&dir.path().join("missing.json")).unwrap();
+        assert_eq!(preferences.close_behavior, None);
+        assert!(preferences.session_index_enabled);
     }
 
     #[test]
@@ -3409,6 +3626,7 @@ mod tests {
         assert_eq!(preferences.close_behavior, Some(CloseBehavior::Quit));
         assert_eq!(preferences.locale_preference, LocalePreference::System);
         assert_eq!(preferences.theme_preference, ThemePreference::System);
+        assert!(preferences.session_index_enabled);
         assert_eq!(
             preferences.quota_popover,
             QuotaPopoverPreferences::default()

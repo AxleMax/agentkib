@@ -22,6 +22,7 @@ function testRuntime(trayAvailable: boolean): RuntimeInfo {
     theme_preference: "system",
     effective_theme: "dark",
     tray_available: trayAvailable,
+    session_index_enabled: true,
   };
 }
 
@@ -50,11 +51,17 @@ vi.mock("./api", () => ({
     saveRemoteGateway: vi.fn(),
     refreshRemoteGateway: vi.fn(),
     removeRemoteGateway: vi.fn(),
-    runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark" }),
+    runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark", session_index_enabled: true }),
     quitApp: vi.fn().mockResolvedValue(undefined),
     openFilesAndFoldersSettings: vi.fn().mockResolvedValue(undefined),
     setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale, theme_preference: "system", effective_theme: "dark" })),
     setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark" })),
+    workspaceSessions: vi.fn().mockResolvedValue([]),
+    refreshWorkspaceSessions: vi.fn().mockResolvedValue([]),
+    sessionEvents: vi.fn().mockResolvedValue({ events: [], warnings: [] }),
+    workspaceSessionStatus: vi.fn().mockResolvedValue([]),
+    clearSessionIndex: vi.fn().mockResolvedValue(undefined),
+    setSessionIndexEnabled: vi.fn().mockImplementation((enabled: boolean) => Promise.resolve({ ...testRuntime(true), session_index_enabled: enabled })),
     requestRefresh: vi.fn().mockResolvedValue({ kind: "discovery", disposition: "queued", request_id: "test-refresh" }),
     refreshStatus: vi.fn().mockResolvedValue([]),
     storageOverview: vi.fn().mockResolvedValue({ total_workspace_count: 1, scanned_workspace_count: 0, allocated_bytes: 0, logical_bytes: 0, regenerable_bytes: 0, agent_asset_bytes: 0, workspaces: [] }),

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, StorageOverview, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ConversationEventPage, ConversationIndexStatus, ConversationSessionSummary, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, StorageOverview, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -49,6 +49,12 @@ export const api = {
   discoverWorkspaces: () => invoke<RefreshReceipt>("discover_workspaces"),
   workspaces: () => invoke<WorkspaceSummary[]>("list_workspaces"),
   workspace: (id: string) => invoke<WorkspaceSummary | undefined>("get_workspace", { id }),
+  workspaceSessions: (workspaceId: string) => invoke<ConversationSessionSummary[]>("list_workspace_sessions", { workspaceId }),
+  refreshWorkspaceSessions: (workspaceId: string, force = false) => invoke<ConversationSessionSummary[]>("refresh_workspace_sessions", { workspaceId, force }),
+  sessionEvents: (sessionId: string, cursor?: string, limit = 100) => invoke<ConversationEventPage>("read_session_events", { sessionId, cursor, limit }),
+  workspaceSessionStatus: (workspaceId: string) => invoke<ConversationIndexStatus[]>("get_workspace_session_status", { workspaceId }),
+  clearSessionIndex: (workspaceId?: string) => invoke<void>("clear_session_index", { workspaceId }),
+  setSessionIndexEnabled: (enabled: boolean) => invoke<RuntimeInfo>("set_session_index_enabled", { enabled }),
   addWorkspace: (path: string) => invoke<WorkspaceSummary>("add_workspace", { path }),
   refreshWorkspace: (id: string) => invoke<WorkspaceSummary>("refresh_workspace", { id }),
   excludeWorkspace: (id: string) => invoke<void>("exclude_workspace", { id }),

@@ -273,16 +273,15 @@ impl WorkspaceDiscoveryProvider for ClaudeProvider {
                 let Some(path) = value.get("project").and_then(JsonValue::as_str) else {
                     continue;
                 };
+                let path = PathBuf::from(path);
+                if platform_path::is_known_agent_probe_workspace(&path) {
+                    continue;
+                }
                 let timestamp = value
                     .get("timestamp")
                     .and_then(JsonValue::as_i64)
                     .and_then(timestamp_from_integer);
-                merge_activity(
-                    &mut aggregate,
-                    PathBuf::from(path),
-                    session_identifier(&value),
-                    timestamp,
-                );
+                merge_activity(&mut aggregate, path, session_identifier(&value), timestamp);
             }
         }
         let projects = home.join("projects");
@@ -302,17 +301,16 @@ impl WorkspaceDiscoveryProvider for ClaudeProvider {
                     let Some(path) = item.get("projectPath").and_then(JsonValue::as_str) else {
                         continue;
                     };
+                    let path = PathBuf::from(path);
+                    if platform_path::is_known_agent_probe_workspace(&path) {
+                        continue;
+                    }
                     let timestamp = item
                         .get("modified")
                         .or_else(|| item.get("modifiedAt"))
                         .or_else(|| item.get("lastActivityAt"))
                         .and_then(parse_json_timestamp);
-                    merge_activity(
-                        &mut aggregate,
-                        PathBuf::from(path),
-                        session_identifier(item),
-                        timestamp,
-                    );
+                    merge_activity(&mut aggregate, path, session_identifier(item), timestamp);
                 }
             }
         }
@@ -1455,6 +1453,43 @@ mod tests {
         assert_eq!(candidates[0].session_count, 1);
         assert!(!format!("{candidates:?}").contains("private-session"));
         assert!(!format!("{candidates:?}").contains("private prompt"));
+    }
+
+    #[test]
+    fn claude_excludes_codexbar_probe_workspace() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let probe = dir.path().join("ClaudeProbe");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        fs::create_dir_all(&probe).unwrap();
+        fs::write(probe.join(".codexbar-session-id"), "probe-session").unwrap();
+        let agent_home = dir.path().join("claude");
+        fs::create_dir_all(&agent_home).unwrap();
+        let records = [
+            serde_json::json!({"project":workspace,"sessionId":"user-session"}),
+            serde_json::json!({"project":probe,"sessionId":"probe-session-1"}),
+            serde_json::json!({"project":probe,"sessionId":"probe-session-2"}),
+        ];
+        fs::write(
+            agent_home.join("history.jsonl"),
+            records
+                .iter()
+                .map(serde_json::Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+
+        let candidates = ClaudeProvider {
+            home: Some(agent_home),
+        }
+        .discover()
+        .unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            platform_path::identity(&candidates[0].path),
+            platform_path::identity(&workspace)
+        );
     }
 
     #[test]

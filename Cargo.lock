@@ -38,6 +38,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentkib-conversations"
+version = "0.1.0"
+dependencies = [
+ "agentkib-core",
+ "agentkib-platform",
+ "anyhow",
+ "chrono",
+ "dirs",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
 name = "agentkib-core"
 version = "0.1.0"
 dependencies = [
@@ -61,6 +77,7 @@ name = "agentkib-desktop"
 version = "0.1.0"
 dependencies = [
  "agentkib-adapters",
+ "agentkib-conversations",
  "agentkib-core",
  "agentkib-discovery",
  "agentkib-gateways",
@@ -207,6 +224,7 @@ dependencies = [
 name = "agentkib-store"
 version = "0.1.0"
 dependencies = [
+ "agentkib-conversations",
  "agentkib-core",
  "agentkib-insights",
  "agentkib-platform",
