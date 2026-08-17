@@ -21,6 +21,7 @@ function testRuntime(trayAvailable: boolean): RuntimeInfo {
     effective_locale: "en-US",
     theme_preference: "system",
     effective_theme: "dark",
+    app_icon_preference: "white",
     tray_available: trayAvailable,
     session_index_enabled: true,
   };
@@ -51,17 +52,24 @@ vi.mock("./api", () => ({
     saveRemoteGateway: vi.fn(),
     refreshRemoteGateway: vi.fn(),
     removeRemoteGateway: vi.fn(),
-    runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark", session_index_enabled: true }),
+    runtime: vi.fn().mockResolvedValue({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: "system", effective_theme: "dark", app_icon_preference: "white", session_index_enabled: true }),
     quitApp: vi.fn().mockResolvedValue(undefined),
     openFilesAndFoldersSettings: vi.fn().mockResolvedValue(undefined),
-    setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale, theme_preference: "system", effective_theme: "dark" })),
-    setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark" })),
+    setLocale: vi.fn().mockImplementation((locale: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: locale, effective_locale: locale === "system" ? "en-US" : locale, theme_preference: "system", effective_theme: "dark", app_icon_preference: "white" })),
+    setThemePreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ close_behavior: "minimize-to-tray", locale_preference: "system", effective_locale: "en-US", theme_preference: preference, effective_theme: preference === "light" ? "light" : "dark", app_icon_preference: "white" })),
+    setAppIconPreference: vi.fn().mockImplementation((preference: string) => Promise.resolve({ ...testRuntime(true), app_icon_preference: preference })),
     workspaceSessions: vi.fn().mockResolvedValue([]),
     refreshWorkspaceSessions: vi.fn().mockResolvedValue([]),
     sessionEvents: vi.fn().mockResolvedValue({ events: [], warnings: [] }),
     workspaceSessionStatus: vi.fn().mockResolvedValue([]),
     clearSessionIndex: vi.fn().mockResolvedValue(undefined),
     setSessionIndexEnabled: vi.fn().mockImplementation((enabled: boolean) => Promise.resolve({ ...testRuntime(true), session_index_enabled: enabled })),
+    workspaceOpeners: vi.fn().mockResolvedValue([{ id: "finder", name: "Finder", category: "file-manager", preferred: true }]),
+    openWorkspaceWithApp: vi.fn().mockResolvedValue(undefined),
+    workspaceGitSummary: vi.fn().mockResolvedValue(undefined),
+    workspaceGitHistory: vi.fn().mockResolvedValue(undefined),
+    gitCommitFiles: vi.fn().mockResolvedValue(undefined),
+    gitDiff: vi.fn().mockResolvedValue(undefined),
     requestRefresh: vi.fn().mockResolvedValue({ kind: "discovery", disposition: "queued", request_id: "test-refresh" }),
     refreshStatus: vi.fn().mockResolvedValue([]),
     storageOverview: vi.fn().mockResolvedValue({ total_workspace_count: 1, scanned_workspace_count: 0, allocated_bytes: 0, logical_bytes: 0, regenerable_bytes: 0, agent_asset_bytes: 0, workspaces: [] }),
@@ -334,6 +342,33 @@ describe("AgentKib desktop", () => {
     expect(screen.getByRole("button", { name: "Review changes" })).toBeDisabled();
   });
 
+  it("shows and clears the Git detail breadcrumb", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy",
+      asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    vi.mocked(api.workspaceGitSummary).mockResolvedValue({
+      repository_root: "/tmp/project", worktree_root: "/tmp/project", head: "main",
+      head_oid: "cccccccc", ahead: 0, behind: 0, stash_count: 0, detached: false, refs: [], changes: [],
+    });
+    vi.mocked(api.workspaceGitHistory).mockResolvedValue({
+      commits: [{ oid: "cccccccc", parents: [], subject: "Commit subject", author_name: "Test", authored_at: "2026-08-17T00:00:00Z", refs: [] }],
+      repository_fingerprint: "fingerprint",
+    });
+    vi.mocked(api.gitCommitFiles).mockResolvedValue([]);
+    vi.mocked(api.gitDiff).mockResolvedValue({ patch: "+change", binary: false, submodule: false, encoding_lossy: false, truncated: false });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Git" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Commit subject Test/ }));
+
+    expect(await screen.findByText("Commit ccccccc")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    expect(await screen.findByPlaceholderText("Search commits or hashes")).toBeInTheDocument();
+    expect(screen.queryByText("Commit ccccccc")).not.toBeInTheDocument();
+  });
+
   it("treats the native quit request as a real app exit", async () => {
     render(<App />);
     await waitFor(() => expect(tauriListeners.has("agentkib:quit-requested")).toBe(true));
@@ -497,6 +532,18 @@ describe("AgentKib desktop", () => {
     expect(document.documentElement.style.colorScheme).toBe("light");
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
     expect(api.setThemePreference).toHaveBeenCalledWith("light");
+  });
+
+  it("uses the white app icon by default and switches it from Settings", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect(screen.getByRole("button", { name: "White" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Black" }));
+
+    await waitFor(() => expect(api.setAppIconPreference).toHaveBeenCalledWith("black"));
+    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
   });
 
   it("disables background hiding when the system tray is unavailable", async () => {

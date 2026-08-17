@@ -7,6 +7,7 @@ members = [
   "crates/agentkib-adapters",
   "crates/agentkib-discovery",
   "crates/agentkib-conversations",
+  "crates/agentkib-git",
   "crates/agentkib-insights",
   "crates/agentkib-quota",
   "crates/agentkib-storage",
@@ -27,6 +28,7 @@ agentkib-core = { path = "crates/agentkib-core" }
 agentkib-adapters = { path = "crates/agentkib-adapters" }
 agentkib-discovery = { path = "crates/agentkib-discovery" }
 agentkib-conversations = { path = "crates/agentkib-conversations" }
+agentkib-git = { path = "crates/agentkib-git" }
 agentkib-insights = { path = "crates/agentkib-insights" }
 agentkib-quota = { path = "crates/agentkib-quota" }
 agentkib-storage = { path = "crates/agentkib-storage" }

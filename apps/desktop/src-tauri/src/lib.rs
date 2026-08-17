@@ -26,12 +26,19 @@ use agentkib_core::{
 };
 use agentkib_discovery::discover as discover_local_workspaces;
 use agentkib_gateways::{RemoteGatewayInput, RemoteGatewaySummary};
+use agentkib_git::{
+    GitCommitPage, GitDiff, GitDiffRequest, GitFileChange, GitHistoryQuery, GitWorkspaceSummary,
+};
 use agentkib_insights::{
     Achievement, AgentUsageBreakdown, GitIdentitySummary, HeatmapPoint, InsightsCollectionPolicy,
     InsightsQuery, InsightsStatus, InsightsSummary, ModelUsageBreakdown, RepositoryCommitBreakdown,
     WorkspaceUsageBreakdown, collect_git, collect_usage, shutdown_external_commands,
 };
 use agentkib_mcp::{HubController, config as mcp_config, installation_root};
+use agentkib_platform::applications::{
+    WorkspaceApplication, WorkspaceApplicationCategory, detect_workspace_applications,
+    open_workspace as open_workspace_application,
+};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use agentkib_platform::process::ProcessTree;
 #[cfg(target_os = "linux")]
@@ -125,6 +132,14 @@ enum ThemePreference {
     Dark,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum AppIconPreference {
+    #[default]
+    White,
+    Black,
+}
+
 impl ThemePreference {
     fn native(self) -> Option<Theme> {
         match self {
@@ -159,6 +174,22 @@ struct QuotaPopoverPreferences {
     hidden_windows: Vec<QuotaWindowSelector>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct WorkspaceOpenerPreferences {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    global_recent: Option<String>,
+    #[serde(default)]
+    by_workspace: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct WorkspaceOpener {
+    id: String,
+    name: String,
+    category: WorkspaceApplicationCategory,
+    preferred: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct DesktopPreferences {
     #[serde(default)]
@@ -168,9 +199,13 @@ struct DesktopPreferences {
     #[serde(default)]
     theme_preference: ThemePreference,
     #[serde(default)]
+    app_icon_preference: AppIconPreference,
+    #[serde(default)]
     mcp_network: McpNetworkSettings,
     #[serde(default)]
     quota_popover: QuotaPopoverPreferences,
+    #[serde(default)]
+    workspace_openers: WorkspaceOpenerPreferences,
     #[serde(default = "default_true")]
     session_index_enabled: bool,
 }
@@ -181,8 +216,10 @@ impl Default for DesktopPreferences {
             close_behavior: None,
             locale_preference: LocalePreference::default(),
             theme_preference: ThemePreference::default(),
+            app_icon_preference: AppIconPreference::default(),
             mcp_network: McpNetworkSettings::default(),
             quota_popover: QuotaPopoverPreferences::default(),
+            workspace_openers: WorkspaceOpenerPreferences::default(),
             session_index_enabled: true,
         }
     }
@@ -198,6 +235,7 @@ struct LifecycleState {
     locale_preference: Mutex<LocalePreference>,
     effective_locale: Mutex<SupportedLocale>,
     theme_preference: Mutex<ThemePreference>,
+    app_icon_preference: Mutex<AppIconPreference>,
     session_index_enabled: AtomicBool,
     close_prompt_open: AtomicBool,
     quitting: AtomicBool,
@@ -239,6 +277,7 @@ impl LifecycleState {
             locale_preference: Mutex::new(preferences.locale_preference),
             effective_locale: Mutex::new(effective_locale),
             theme_preference: Mutex::new(preferences.theme_preference),
+            app_icon_preference: Mutex::new(preferences.app_icon_preference),
             session_index_enabled: AtomicBool::new(preferences.session_index_enabled),
             close_prompt_open: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
@@ -281,6 +320,20 @@ impl LifecycleState {
         *self.theme_preference.lock().expect("theme state lock") = preference;
     }
 
+    fn app_icon_preference(&self) -> AppIconPreference {
+        *self
+            .app_icon_preference
+            .lock()
+            .expect("app icon state lock")
+    }
+
+    fn set_app_icon_preference(&self, preference: AppIconPreference) {
+        *self
+            .app_icon_preference
+            .lock()
+            .expect("app icon state lock") = preference;
+    }
+
     fn session_index_enabled(&self) -> bool {
         self.session_index_enabled.load(Ordering::SeqCst)
     }
@@ -312,6 +365,7 @@ struct RuntimeInfo {
     effective_locale: SupportedLocale,
     theme_preference: ThemePreference,
     effective_theme: EffectiveTheme,
+    app_icon_preference: AppIconPreference,
     tray_available: bool,
     session_index_enabled: bool,
 }
@@ -405,6 +459,153 @@ fn get_workspace(id: String) -> CommandResult<Option<WorkspaceSummary>> {
     Store::open_default()
         .and_then(|store| store.get_workspace(&id))
         .map_err(format_error)
+}
+
+fn workspace_path(workspace_id: &str) -> CommandResult<PathBuf> {
+    Store::open_default()
+        .and_then(|store| store.workspace_path(workspace_id))
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn get_workspace_git_summary(
+    workspace_id: String,
+) -> CommandResult<Option<GitWorkspaceSummary>> {
+    let path = workspace_path(&workspace_id)?;
+    tauri::async_runtime::spawn_blocking(move || agentkib_git::workspace_summary(&path))
+        .await
+        .map_err(|_| LocalizedMessage::new("errors.git.queryFailed"))?
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn list_workspace_git_history(
+    workspace_id: String,
+    query: GitHistoryQuery,
+) -> CommandResult<Option<GitCommitPage>> {
+    let path = workspace_path(&workspace_id)?;
+    tauri::async_runtime::spawn_blocking(move || agentkib_git::history(&path, &query))
+        .await
+        .map_err(|_| LocalizedMessage::new("errors.git.queryFailed"))?
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn list_git_commit_files(
+    workspace_id: String,
+    oid: String,
+) -> CommandResult<Option<Vec<GitFileChange>>> {
+    let path = workspace_path(&workspace_id)?;
+    tauri::async_runtime::spawn_blocking(move || agentkib_git::commit_files(&path, &oid))
+        .await
+        .map_err(|_| LocalizedMessage::new("errors.git.queryFailed"))?
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn get_git_diff(
+    workspace_id: String,
+    request: GitDiffRequest,
+) -> CommandResult<Option<GitDiff>> {
+    let path = workspace_path(&workspace_id)?;
+    tauri::async_runtime::spawn_blocking(move || agentkib_git::diff(&path, &request))
+        .await
+        .map_err(|_| LocalizedMessage::new("errors.git.queryFailed"))?
+        .map_err(format_error)
+}
+
+#[tauri::command]
+async fn list_workspace_openers(workspace_id: String) -> CommandResult<Vec<WorkspaceOpener>> {
+    let _ = workspace_path(&workspace_id)?;
+    let preferences = load_desktop_preferences();
+    let applications = tauri::async_runtime::spawn_blocking(detect_workspace_applications)
+        .await
+        .map_err(|_| LocalizedMessage::new("errors.workspaceOpener.unavailable"))?;
+    let preferred = preferred_opener(&applications, &preferences.workspace_openers, &workspace_id);
+    Ok(applications
+        .into_iter()
+        .map(|application| WorkspaceOpener {
+            preferred: preferred.as_deref() == Some(application.id.as_str()),
+            id: application.id,
+            name: application.name,
+            category: application.category,
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn open_workspace_with_app(
+    workspace_id: String,
+    opener_id: Option<String>,
+) -> CommandResult<()> {
+    let path = workspace_path(&workspace_id)?;
+    let preferences = load_desktop_preferences();
+    let selected = tauri::async_runtime::spawn_blocking({
+        let workspace_id = workspace_id.clone();
+        let requested = opener_id.clone();
+        move || -> CommandResult<String> {
+            let applications = detect_workspace_applications();
+            let selected = requested
+                .or_else(|| {
+                    preferred_opener(&applications, &preferences.workspace_openers, &workspace_id)
+                })
+                .ok_or_else(|| LocalizedMessage::new("errors.workspaceOpener.unavailable"))?;
+            if !applications
+                .iter()
+                .any(|application| application.id == selected)
+            {
+                return Err(LocalizedMessage::new("errors.workspaceOpener.unavailable"));
+            }
+            open_workspace_application(&selected, &path).map_err(|error| {
+                LocalizedMessage::with_detail(
+                    "errors.workspaceOpener.openFailed",
+                    error.to_string(),
+                )
+            })?;
+            Ok(selected)
+        }
+    })
+    .await
+    .map_err(|_| LocalizedMessage::new("errors.workspaceOpener.openFailed"))??;
+    if opener_id.is_some() {
+        update_preferences(|preferences| {
+            preferences.workspace_openers.global_recent = Some(selected.clone());
+            preferences
+                .workspace_openers
+                .by_workspace
+                .insert(workspace_id, selected);
+        })
+        .map_err(format_error)?;
+    }
+    Ok(())
+}
+
+fn preferred_opener(
+    applications: &[WorkspaceApplication],
+    preferences: &WorkspaceOpenerPreferences,
+    workspace_id: &str,
+) -> Option<String> {
+    let installed = |id: &str| applications.iter().any(|application| application.id == id);
+    preferences
+        .by_workspace
+        .get(workspace_id)
+        .filter(|id| installed(id))
+        .cloned()
+        .or_else(|| {
+            preferences
+                .global_recent
+                .as_ref()
+                .filter(|id| installed(id))
+                .cloned()
+        })
+        .or_else(|| {
+            applications
+                .iter()
+                .find(|application| {
+                    application.category == WorkspaceApplicationCategory::FileManager
+                })
+                .map(|application| application.id.clone())
+        })
 }
 
 #[tauri::command]
@@ -1141,6 +1342,7 @@ fn runtime_info(
         effective_locale: state.effective_locale(),
         theme_preference,
         effective_theme: effective_theme(&app, theme_preference),
+        app_icon_preference: state.app_icon_preference(),
         tray_available: state.tray_available(),
         session_index_enabled: state.session_index_enabled(),
     })
@@ -1222,6 +1424,20 @@ fn set_theme_preference(
         .map_err(format_error)?;
     apply_native_theme(&app, preference).map_err(format_error)?;
     state.set_theme_preference(preference);
+    runtime_info(app, state, hub)
+}
+
+#[tauri::command]
+fn set_app_icon_preference(
+    preference: AppIconPreference,
+    app: AppHandle,
+    state: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    update_preferences(|preferences| preferences.app_icon_preference = preference)
+        .map_err(format_error)?;
+    apply_application_icon(&app, preference).map_err(format_error)?;
+    state.set_app_icon_preference(preference);
     runtime_info(app, state, hub)
 }
 
@@ -1742,6 +1958,42 @@ fn apply_native_theme(app: &AppHandle, preference: ThemePreference) -> tauri::Re
         if let Some(window) = app.get_webview_window(label) {
             window.set_theme(preference.native())?;
         }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn application_icon(preference: AppIconPreference) -> tauri::image::Image<'static> {
+    match preference {
+        AppIconPreference::White => tauri::include_image!("icons/app-icon-white.png"),
+        AppIconPreference::Black => tauri::include_image!("icons/app-icon-black.png"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_application_icon(app: &AppHandle, preference: AppIconPreference) -> tauri::Result<()> {
+    use objc2::{AllocAnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    let bytes: &'static [u8] = match preference {
+        AppIconPreference::White => include_bytes!("../icons/app-icon-white.png"),
+        AppIconPreference::Black => include_bytes!("../icons/app-icon-black.png"),
+    };
+    app.run_on_main_thread(move || {
+        let marker = unsafe { MainThreadMarker::new_unchecked() };
+        let application = NSApplication::sharedApplication(marker);
+        let data = NSData::with_bytes(bytes);
+        if let Some(icon) = NSImage::initWithData(NSImage::alloc(), &data) {
+            unsafe { application.setApplicationIconImage(Some(&icon)) };
+        }
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_application_icon(app: &AppHandle, preference: AppIconPreference) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_icon(application_icon(preference))?;
     }
     Ok(())
 }
@@ -2728,9 +2980,12 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .separator()
         .text("quit", translate(locale, "tray.quit", &[]))
         .build()?;
+    #[cfg(target_os = "windows")]
+    let tray_image = tauri::include_image!("icons/tray-icon-windows.png");
+    #[cfg(not(target_os = "windows"))]
+    let tray_image = tauri::include_image!("icons/tray-icon.png");
     let mut tray = TrayIconBuilder::with_id("agentkib-status")
-        .icon(tauri::include_image!("icons/tray-icon.png"))
-        .icon_as_template(true)
+        .icon(tray_image)
         .menu(&menu)
         .tooltip(translate(locale, "tray.tooltip", &[]))
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -2762,6 +3017,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     {
         use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
         tray = tray
+            .icon_as_template(true)
             .show_menu_on_left_click(false)
             .on_tray_icon_event(|tray, event| {
                 if let TrayIconEvent::Click {
@@ -3386,8 +3642,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let theme = app.state::<Arc<LifecycleState>>().theme_preference();
+            let app_icon = app.state::<Arc<LifecycleState>>().app_icon_preference();
             setup_quota_popover(app)?;
             apply_native_theme(app.handle(), theme)?;
+            apply_application_icon(app.handle(), app_icon)?;
             #[cfg(target_os = "macos")]
             let _ = refresh_app_menu(app.handle());
             let tray_result = setup_tray(app);
@@ -3460,6 +3718,12 @@ pub fn run() {
             discover_workspaces,
             list_workspaces,
             get_workspace,
+            get_workspace_git_summary,
+            list_workspace_git_history,
+            list_git_commit_files,
+            get_git_diff,
+            list_workspace_openers,
+            open_workspace_with_app,
             list_workspace_sessions,
             refresh_workspace_sessions,
             read_session_events,
@@ -3520,6 +3784,7 @@ pub fn run() {
             set_close_behavior,
             set_locale,
             set_theme_preference,
+            set_app_icon_preference,
             get_mcp_network_settings,
             update_mcp_network_settings,
             get_mcp_hub_status,
@@ -3573,6 +3838,7 @@ mod tests {
                 close_behavior: Some(CloseBehavior::MinimizeToTray),
                 locale_preference: LocalePreference::JaJp,
                 theme_preference: ThemePreference::Light,
+                app_icon_preference: AppIconPreference::Black,
                 mcp_network: McpNetworkSettings::default(),
                 quota_popover: QuotaPopoverPreferences {
                     hidden_providers: vec!["claude".into()],
@@ -3583,6 +3849,7 @@ mod tests {
                         label: "Weekly".into(),
                     }],
                 },
+                workspace_openers: WorkspaceOpenerPreferences::default(),
                 session_index_enabled: false,
             },
         )
@@ -3598,6 +3865,10 @@ mod tests {
         assert_eq!(
             load_preferences(&path).unwrap().theme_preference,
             ThemePreference::Light
+        );
+        assert_eq!(
+            load_preferences(&path).unwrap().app_icon_preference,
+            AppIconPreference::Black
         );
         assert_eq!(
             load_preferences(&path)
@@ -3618,6 +3889,45 @@ mod tests {
     }
 
     #[test]
+    fn workspace_opener_prefers_workspace_then_recent_then_file_manager() {
+        let applications = vec![
+            WorkspaceApplication {
+                id: "finder".into(),
+                name: "Finder".into(),
+                category: WorkspaceApplicationCategory::FileManager,
+            },
+            WorkspaceApplication {
+                id: "pycharm".into(),
+                name: "PyCharm".into(),
+                category: WorkspaceApplicationCategory::Editor,
+            },
+        ];
+        let mut preferences = WorkspaceOpenerPreferences {
+            global_recent: Some("pycharm".into()),
+            by_workspace: BTreeMap::new(),
+        };
+        assert_eq!(
+            preferred_opener(&applications, &preferences, "workspace").as_deref(),
+            Some("pycharm")
+        );
+        preferences
+            .by_workspace
+            .insert("workspace".into(), "finder".into());
+        assert_eq!(
+            preferred_opener(&applications, &preferences, "workspace").as_deref(),
+            Some("finder")
+        );
+        preferences
+            .by_workspace
+            .insert("workspace".into(), "removed-app".into());
+        preferences.global_recent = Some("removed-app".into());
+        assert_eq!(
+            preferred_opener(&applications, &preferences, "workspace").as_deref(),
+            Some("finder")
+        );
+    }
+
+    #[test]
     fn old_preferences_default_to_system_locale_and_theme() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("preferences.json");
@@ -3626,6 +3936,7 @@ mod tests {
         assert_eq!(preferences.close_behavior, Some(CloseBehavior::Quit));
         assert_eq!(preferences.locale_preference, LocalePreference::System);
         assert_eq!(preferences.theme_preference, ThemePreference::System);
+        assert_eq!(preferences.app_icon_preference, AppIconPreference::White);
         assert!(preferences.session_index_enabled);
         assert_eq!(
             preferences.quota_popover,

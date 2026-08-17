@@ -42,6 +42,14 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("set_theme_preference", { preference: "light" });
   });
 
+  it("sends app icon preferences through the desktop preference boundary", async () => {
+    vi.mocked(invoke).mockResolvedValue({ app_icon_preference: "black" });
+
+    await api.setAppIconPreference("black");
+
+    expect(invoke).toHaveBeenCalledWith("set_app_icon_preference", { preference: "black" });
+  });
+
   it("queues refresh work without waiting for collector results", async () => {
     vi.mocked(invoke).mockResolvedValue({ kind: "insights", disposition: "queued", request_id: "refresh-1", status: { kind: "insights", state: "queued" } });
 

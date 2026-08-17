@@ -14,15 +14,17 @@ import { RemoteGatewaysSettings } from "./components/RemoteGateways";
 import { QuotaDiagnostics } from "./components/QuotaDiagnostics";
 import { WorkspaceStoragePage } from "./components/WorkspaceStoragePage";
 import { WorkspaceSessionsPage } from "./components/WorkspaceSessionsPage";
+import { WorkspaceGitPage, type GitSubview } from "./components/WorkspaceGitPage";
+import { WorkspaceOpenWith } from "./components/WorkspaceOpenWith";
 import type { InsightsSection } from "./components/InsightsPage";
 import { groupCatalogAssets, groupWorkspaceAssets, workspaceAssetCounts, type CatalogAssetGroup } from "./catalog";
 import { diffLines } from "./diff";
 import { changeLocale, formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "./i18n";
 import { applyTheme } from "./theme";
 import { normalizePlatform, primaryShortcutModifier, usesSystemTrayWording } from "./platform";
-import type { ActivityRecord, AgentInstallation, AgentKind, AppMenuCommandRequest, AppNavigationRequest, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, QuotaCollectorStatus, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RemoteGatewaySummary, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary } from "./types";
+import type { ActivityRecord, AgentInstallation, AgentKind, AppIconPreference, AppMenuCommandRequest, AppNavigationRequest, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, QuotaCollectorStatus, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RemoteGatewaySummary, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary } from "./types";
 
-type Page = "overview" | "sessions" | "assets" | "context" | "changes";
+type Page = "overview" | "sessions" | "git" | "assets" | "context" | "changes";
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
 type AppMode = "main" | "settings";
 type AssetSection = "instructions" | "skills" | "mcp" | "memory" | "other";
@@ -39,7 +41,7 @@ const hasFileAccessSettings = ["macos", "windows"].includes(appPlatform);
 const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes", "deepseek-harness": "DeepSeek Harness" };
 const writableAgentKinds: AgentKind[] = ["codex", "claude-code", "cursor", "open-claw", "hermes"];
 const workspaceTabs = [
-  ["overview", "nav.overview", LayoutDashboard], ["sessions", "nav.sessions", MessageSquareText], ["assets", "nav.assets", Boxes],
+  ["overview", "nav.overview", LayoutDashboard], ["sessions", "nav.sessions", MessageSquareText], ["git", "nav.git", GitCommitHorizontal], ["assets", "nav.assets", Boxes],
   ["context", "nav.context", Code2], ["changes", "nav.changes", GitCompareArrows],
 ] as const;
 const globalNav: SidebarEntry<GlobalPage>[] = [
@@ -54,6 +56,7 @@ const globalNav: SidebarEntry<GlobalPage>[] = [
 export function App() {
   useTranslation();
   const [page, setPage] = useState<Page>("overview"); const [globalPage, setGlobalPage] = useState<GlobalPage>("home");
+  const [gitSubview, setGitSubview] = useState<GitSubview>();
   const [appMode, setAppMode] = useState<AppMode>("main");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("agentkib.sidebar.collapsed") === "true");
@@ -223,13 +226,13 @@ export function App() {
   const leaveWorkspace = (next: () => void) => {
     if (hasUnsavedDraft && !window.confirm(tr("workspace.leaveDraftConfirm"))) return;
     if (selectedWorkspace) setWorkspaceDrafts((drafts) => { const nextDrafts = { ...drafts }; delete nextDrafts[selectedWorkspace.id]; return nextDrafts; });
-    setSelectedWorkspace(undefined); setProject(""); setScan(undefined); setManifest(undefined); setChangeSet(undefined); setBaselineManifest(""); next();
+    setGitSubview(undefined); setSelectedWorkspace(undefined); setProject(""); setScan(undefined); setManifest(undefined); setChangeSet(undefined); setBaselineManifest(""); next();
   };
   const openWorkspace = async (workspace: WorkspaceSummary) => {
     persistWorkspaceDraft(); setBusy(true); setMessage("");
     try {
       const [nextScan, nextManifest, nextRuntime] = await Promise.all([api.scan(workspace.path), api.manifest(workspace.path), api.runtime()]);
-      setPage("overview"); setChangeSet(undefined); setProject(workspace.path); setScan(nextScan);
+      setPage("overview"); setGitSubview(undefined); setChangeSet(undefined); setProject(workspace.path); setScan(nextScan);
       setManifest(workspaceDrafts[workspace.id] ?? nextManifest); setBaselineManifest(JSON.stringify(nextManifest)); setRuntime(nextRuntime);
       // Commit the route last so the workspace list remains visible while native scanning runs.
       setSelectedWorkspace(workspace);
@@ -308,13 +311,14 @@ export function App() {
       <WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <AppSidebar active="workspaces" entries={navigation} collapsed={sidebarCollapsed} onNavigate={navigateGlobal} onSettings={openSettings} />
       {!sidebarCollapsed && <button className="sidebar-backdrop" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}
-      <main>
-        <header className="page-header workspace-header" data-tauri-drag-region><div className="page-title-row"><button className="breadcrumb" onClick={closeWorkspace}>{tr("nav.workspaces")}</button><span className="breadcrumb-separator" data-tauri-drag-region>/</span><h1 data-tauri-drag-region>{selectedWorkspace.name}</h1></div><div className="header-actions">{selectedWorkspace.status === "attention" && <span className="workspace-status attention">{workspaceStatusLabel("attention")}</span>}<details className="row-menu header-menu"><summary title={tr("common.moreActions")} aria-label={tr("common.moreActions")}><MoreHorizontal size={16} /></summary><div><button className="menu-neutral" onClick={() => void navigator.clipboard?.writeText(selectedWorkspace.path)}><Copy size={13} />{tr("workspace.copyPath")}</button></div></details><button className="ghost icon-only" title={tr("common.scan")} aria-label={tr("common.scan")} onClick={() => load(project, manifest)} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /></button><button className="primary" onClick={() => plan(false)} disabled={busy || !hasUnsavedDraft}><GitCompareArrows size={15} />{tr("workspace.reviewChanges")}</button></div></header>
+      <main className={page === "git" ? "workspace-git-main" : undefined}>
+        <header className="page-header workspace-header" data-tauri-drag-region><div className="page-title-row"><button className="breadcrumb" onClick={closeWorkspace}>{tr("nav.workspaces")}</button><span className="breadcrumb-separator" data-tauri-drag-region>/</span><h1 data-tauri-drag-region>{selectedWorkspace.name}</h1>{page === "git" && gitSubview && <><span className="breadcrumb-separator" data-tauri-drag-region>/</span><button className="breadcrumb" onClick={() => setGitSubview(undefined)}>{tr("nav.git")}</button><span className="breadcrumb-separator" data-tauri-drag-region>/</span><span className="breadcrumb-current" data-tauri-drag-region>{gitSubview.kind === "commit" ? tr("git.commitBreadcrumb", { oid: gitSubview.oid.slice(0, 7) }) : tr("git.worktreeDetail")}</span></>}</div><div className="header-actions">{selectedWorkspace.status === "attention" && <span className="workspace-status attention">{workspaceStatusLabel("attention")}</span>}<WorkspaceOpenWith workspace={selectedWorkspace} onError={setMessage} /><details className="row-menu header-menu"><summary title={tr("common.moreActions")} aria-label={tr("common.moreActions")}><MoreHorizontal size={16} /></summary><div><button className="menu-neutral" onClick={() => void navigator.clipboard?.writeText(selectedWorkspace.path)}><Copy size={13} />{tr("workspace.copyPath")}</button></div></details><button className="ghost icon-only" title={tr("common.scan")} aria-label={tr("common.scan")} onClick={() => load(project, manifest)} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /></button><button className="primary" onClick={() => plan(false)} disabled={busy || !hasUnsavedDraft}><GitCompareArrows size={15} />{tr("workspace.reviewChanges")}</button></div></header>
         {message && <div className="alert"><CircleAlert size={17} />{message}</div>}
-        <div className="workspace-tabs" role="tablist" aria-label={selectedWorkspace.name} onKeyDown={handleTabKey}>{workspaceTabs.map(([id, label, Icon]) => <button key={id} role="tab" aria-selected={page === id} className={page === id ? "active" : ""} onClick={() => setPage(id)}><Icon size={15} />{tr(label)}{id === "changes" && changeSet?.changes.length ? <em>{changeSet.changes.length}</em> : null}</button>)}</div>
-        <section className="content workspace-content">
+        <div className="workspace-tabs" role="tablist" aria-label={selectedWorkspace.name} onKeyDown={handleTabKey}>{workspaceTabs.map(([id, label, Icon]) => <button key={id} role="tab" aria-selected={page === id} className={page === id ? "active" : ""} onClick={() => { if (id !== "git") setGitSubview(undefined); setPage(id); }}><Icon size={15} />{tr(label)}{id === "changes" && changeSet?.changes.length ? <em>{changeSet.changes.length}</em> : null}</button>)}</div>
+        <section className={`content workspace-content${page === "git" ? " workspace-git-content" : ""}`}>
           {page === "overview" && <Overview workspace={selectedWorkspace} scan={scan} manifest={manifest} />}
           {page === "sessions" && <WorkspaceSessionsPage workspace={selectedWorkspace} enabled={runtime?.session_index_enabled !== false} onRuntimeChanged={async (enabled) => { setRuntime(await api.setSessionIndexEnabled(enabled)); }} />}
+          {page === "git" && <WorkspaceGitPage workspace={selectedWorkspace} subview={gitSubview} onSubviewChange={setGitSubview} />}
           {page === "assets" && <Assets section={workspaceAssetSection} onSection={setWorkspaceAssetSection} scan={scan} manifest={manifest} onChange={setManifest} />}
           {page === "context" && <ContextPage project={project} onOpenInstructions={() => { setWorkspaceAssetSection("instructions"); setPage("assets"); }} />}
           {page === "changes" && <Changes changeSet={changeSet} onPlanHome={() => plan(true)} onApplied={async () => { await load(); await loadGlobal(); }} onRejected={() => setChangeSet(undefined)} onApplyingChange={setApplyingChanges} />}
@@ -450,7 +454,7 @@ function McpMigrationInventory({ project, onPlanned }: { project?: string; onPla
 }
 
 function GlobalSettings({ section, runtime, workspaces, discovery, insightsStatus, quotaStatus, remoteGateways, scanRoots, excluded, activity, onAddRoot, onRemoveRoot, onRestore, onCloseBehaviorChanged, onLocaleChanged, onRemoteGatewaysChanged }: { section: SettingsSection; runtime?: RuntimeInfo; workspaces: WorkspaceSummary[]; discovery?: DiscoveryReport; insightsStatus?: InsightsStatus; quotaStatus?: QuotaCollectorStatus; remoteGateways: RemoteGatewaySummary[]; scanRoots: ScanRoot[]; excluded: ExcludedWorkspace[]; activity: ActivityRecord[]; onAddRoot: () => Promise<void>; onRemoveRoot: (id: string) => Promise<void>; onRestore: (path: string) => Promise<void>; onCloseBehaviorChanged: (behavior?: CloseBehavior) => Promise<void>; onLocaleChanged: (runtime: RuntimeInfo) => void; onRemoteGatewaysChanged: () => Promise<void> }) {
-  if (section === "general") return <div className="settings-groups"><section className="panel settings-section settings-general"><div className="setting-rows"><ThemeSetting runtime={runtime} onChanged={onLocaleChanged} /><LanguageSetting runtime={runtime} onChanged={onLocaleChanged} /><div className="setting-row"><div><strong>{tr("settings.closeBehavior")}</strong></div><CloseBehaviorSelect value={runtime?.close_behavior} trayAvailable={runtime?.tray_available !== false} onChange={onCloseBehaviorChanged} /></div>{runtime?.tray_available === false && <div className="setting-detail warning" role="status"><CircleAlert size={14} />{tr("settings.trayUnavailable")}</div>}</div></section></div>;
+  if (section === "general") return <div className="settings-groups"><section className="panel settings-section settings-general"><div className="setting-rows"><ThemeSetting runtime={runtime} onChanged={onLocaleChanged} /><AppIconSetting runtime={runtime} onChanged={onLocaleChanged} /><LanguageSetting runtime={runtime} onChanged={onLocaleChanged} /><div className="setting-row"><div><strong>{tr("settings.closeBehavior")}</strong></div><CloseBehaviorSelect value={runtime?.close_behavior} trayAvailable={runtime?.tray_available !== false} onChange={onCloseBehaviorChanged} /></div>{runtime?.tray_available === false && <div className="setting-detail warning" role="status"><CircleAlert size={14} />{tr("settings.trayUnavailable")}</div>}</div></section></div>;
   if (section === "discovery") return <div className="settings-groups"><SettingGroup title={tr("settings.discovery")}><div className="setting-row"><div><strong>{tr("settings.discoveryStatus")}</strong></div><span className={discovery?.errors.length ? "status rejected" : "ready"}>{discovery ? tr("settings.workspaceCount", { count: discovery.discovered_count }) : tr("home.discovering")}</span></div>{discovery?.errors.map((error) => <div className="setting-detail error" key={error}>{error}</div>)}</SettingGroup><div className="panel settings-section"><div className="panel-head"><h2>{tr("settings.scanRoots")}</h2><button className="primary" onClick={() => void onAddRoot()}>{tr("settings.addFolder")}</button></div><div className="settings-list">{scanRoots.map((root) => <div key={root.id}><FolderGit2 size={16} /><span><strong>{root.path}</strong><small>{tr("settings.maxDepth", { depth: root.max_depth })}</small></span><button className="icon-danger" onClick={() => void onRemoveRoot(root.id)}><Trash2 size={15} /></button></div>)}{!scanRoots.length && <p>{tr("settings.noScanRoots")}</p>}</div></div><div className="panel settings-section"><div className="panel-head"><h2>{tr("settings.excluded")}</h2></div><div className="settings-list">{excluded.map((item) => <div key={item.path}><X size={16} /><span><strong>{item.path}</strong><small>{formatDateTime(item.created_at)}</small></span><button className="ghost" onClick={() => void onRestore(item.path)}>{tr("common.restore")}</button></div>)}{!excluded.length && <p>{tr("settings.noExcluded")}</p>}</div></div></div>;
   if (section === "integrations") return <div className="settings-groups"><SettingGroup title="AgentKib MCP Hub"><div className="setting-row"><div><strong>{tr("mcp.network")}</strong><code>{runtime?.mcp_hub ? runtime.mcp_hub.accessible_addresses.join(" · ") : "—"}</code></div><span className={runtime?.mcp_hub?.running ? "ready" : "status neutral"}>{tr(runtime?.mcp_hub?.running ? "mcp.running" : "mcp.stopped")}</span></div></SettingGroup><RemoteGatewaysSettings gateways={remoteGateways} onChanged={onRemoteGatewaysChanged} /><ObsidianSettingsCard /></div>;
   if (section === "privacy") return <div className="settings-groups"><SettingGroup title={tr("settings.localData")}><div className="setting-row"><div><strong>{tr("settings.dataLocation")}</strong><code>{runtime?.data_dir ?? "—"}</code></div><span className="ready"><Check size={14} />{tr("common.localOnly")}</span></div>{hasFileAccessSettings && <FileAccessSettingsRow />}</SettingGroup><ConversationPrivacySettings runtime={runtime} workspaces={workspaces} onChanged={onLocaleChanged} /><GitIdentitySettings /></div>;
@@ -518,6 +522,13 @@ function ThemeSetting({ runtime, onChanged }: { runtime?: RuntimeInfo; onChanged
     onChanged(nextRuntime);
   };
   return <div className="setting-row"><div><strong>{tr("settings.theme")}</strong></div><div className="theme-segments" role="group" aria-label={tr("settings.theme")}>{(["light", "dark", "system"] as ThemePreference[]).map((theme) => <button key={theme} type="button" className={(runtime?.theme_preference ?? "system") === theme ? "active" : ""} aria-pressed={(runtime?.theme_preference ?? "system") === theme} onClick={() => void update(theme)}>{tr(`settings.theme.${theme}`)}</button>)}</div></div>;
+}
+
+function AppIconSetting({ runtime, onChanged }: { runtime?: RuntimeInfo; onChanged: (runtime: RuntimeInfo) => void }) {
+  const update = async (preference: AppIconPreference) => {
+    onChanged(await api.setAppIconPreference(preference));
+  };
+  return <div className="setting-row"><div><strong>{tr("settings.appIcon")}</strong></div><div className="theme-segments app-icon-segments" role="group" aria-label={tr("settings.appIcon")}>{(["white", "black"] as AppIconPreference[]).map((icon) => <button key={icon} type="button" className={(runtime?.app_icon_preference ?? "white") === icon ? "active" : ""} aria-pressed={(runtime?.app_icon_preference ?? "white") === icon} onClick={() => void update(icon)}><span className={`app-icon-preview ${icon}`} aria-hidden="true" />{tr(`settings.appIcon.${icon}`)}</button>)}</div></div>;
 }
 
 function CloseBehaviorSelect({ value, trayAvailable = true, onChange }: { value?: CloseBehavior; trayAvailable?: boolean; onChange: (behavior?: CloseBehavior) => Promise<void> }) {

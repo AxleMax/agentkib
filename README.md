@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="apps/desktop/src-tauri/icons/icon.png" width="128" alt="AgentKib" />
+  <img src="apps/desktop/src-tauri/assets/app-icon-white.png" width="128" alt="AgentKib" />
 </p>
 
 <h1 align="center">AgentKib</h1>
@@ -38,10 +38,11 @@ AgentKib 提供一个统一入口来解决这些问题：
 - **预览有效上下文**：查看指定 Agent 在当前目录中的加载顺序、作用域、覆盖关系、可见 Skills 和潜在冲突。
 - **安全同步公共资产**：先生成完整 Diff，再由用户确认写入；发现和浏览本身不会创建 manifest 或修改 Agent 配置。
 - **集中连接 MCP**：通过本地 MCP Hub 管理下游 Server，并向支持的 Agent 提供统一入口。
+- **只读浏览 Git**：查看复杂分支图、工作树、Commit 文件树和 Diff，并用已安装的 IDE、终端或文件管理器打开项目；不执行任何 Git 写操作。
 - **查看额度与使用轨迹**：汇总可获得的滚动额度、重置时间、Token、会话、Git 提交、热力图和成就；不完整数据会明确标注。
 - **后台常驻**：关闭主窗口后可继续在系统托盘运行。macOS 支持额度菜单栏面板，Windows 和 Linux 使用原生托盘菜单。
 
-界面支持简体中文、繁體中文、日本語和 English，并提供浅色、深色与跟随系统三种主题。
+界面支持简体中文、繁體中文、日本語和 English，并提供浅色、深色与跟随系统三种主题。应用图标可在白底与黑底之间切换，默认使用白底；Windows 托盘使用彩色图形的透明底小图标。
 
 ### 支持的 Agent
 
@@ -140,10 +141,11 @@ AgentKib is a local-first asset center for people who use multiple coding agents
 - Previews the effective context for an agent and working directory, including load order, scope, overrides, visible Skills, and conflicts.
 - Generates a complete ChangeSet and diff before writing shared assets or native agent configuration.
 - Runs a local MCP Hub that provides a single entry point to downstream MCP servers.
+- Browses complex Git history, working-tree changes, commit file trees, and diffs without modifying the repository, and opens projects in verified installed apps.
 - Shows available rolling quota windows, Token usage, sessions, Git activity, contribution heatmaps, streaks, and achievements.
 - Continues working from the system tray after the main window is hidden.
 
-AgentKib supports light, dark, and system appearance, with Simplified Chinese, Traditional Chinese, Japanese, and English UI.
+AgentKib supports light, dark, and system appearance, with Simplified Chinese, Traditional Chinese, Japanese, and English UI. The app icon can use a white or black background (white by default), while the Windows tray uses a compact transparent version of the colored mark.
 
 ### Supported agents
 

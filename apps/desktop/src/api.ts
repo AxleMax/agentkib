@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ConversationEventPage, ConversationIndexStatus, ConversationSessionSummary, ExcludedWorkspace, GitIdentitySummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, StorageOverview, ThemePreference, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, AppIconPreference, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ConversationEventPage, ConversationIndexStatus, ConversationSessionSummary, ExcludedWorkspace, GitCommitPage, GitDiff, GitDiffRequest, GitFileChange, GitHistoryQuery, GitIdentitySummary, GitWorkspaceSummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, StorageOverview, ThemePreference, WorkspaceOpener, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -22,6 +22,7 @@ export const api = {
   setCloseBehavior: (behavior?: CloseBehavior) => invoke<void>("set_close_behavior", { behavior: behavior ?? null }),
   setLocale: (preference: LocalePreference) => invoke<RuntimeInfo>("set_locale", { preference }),
   setThemePreference: (preference: ThemePreference) => invoke<RuntimeInfo>("set_theme_preference", { preference }),
+  setAppIconPreference: (preference: AppIconPreference) => invoke<RuntimeInfo>("set_app_icon_preference", { preference }),
   mcpHubStatus: () => invoke<McpHubStatus>("get_mcp_hub_status"),
   updateMcpNetwork: (settings: McpNetworkSettings) => invoke<McpHubStatus>("update_mcp_network_settings", { settings }),
   mcpServers: (project?: string) => invoke<McpServerConfig[]>("list_mcp_servers", { project }),
@@ -49,6 +50,12 @@ export const api = {
   discoverWorkspaces: () => invoke<RefreshReceipt>("discover_workspaces"),
   workspaces: () => invoke<WorkspaceSummary[]>("list_workspaces"),
   workspace: (id: string) => invoke<WorkspaceSummary | undefined>("get_workspace", { id }),
+  workspaceGitSummary: (workspaceId: string) => invoke<GitWorkspaceSummary | undefined>("get_workspace_git_summary", { workspaceId }),
+  workspaceGitHistory: (workspaceId: string, query: GitHistoryQuery = {}) => invoke<GitCommitPage | undefined>("list_workspace_git_history", { workspaceId, query }),
+  gitCommitFiles: (workspaceId: string, oid: string) => invoke<GitFileChange[] | undefined>("list_git_commit_files", { workspaceId, oid }),
+  gitDiff: (workspaceId: string, request: GitDiffRequest) => invoke<GitDiff | undefined>("get_git_diff", { workspaceId, request }),
+  workspaceOpeners: (workspaceId: string) => invoke<WorkspaceOpener[]>("list_workspace_openers", { workspaceId }),
+  openWorkspaceWithApp: (workspaceId: string, openerId?: string) => invoke<void>("open_workspace_with_app", { workspaceId, openerId }),
   workspaceSessions: (workspaceId: string) => invoke<ConversationSessionSummary[]>("list_workspace_sessions", { workspaceId }),
   refreshWorkspaceSessions: (workspaceId: string, force = false) => invoke<ConversationSessionSummary[]>("refresh_workspace_sessions", { workspaceId, force }),
   sessionEvents: (sessionId: string, cursor?: string, limit = 100) => invoke<ConversationEventPage>("read_session_events", { sessionId, cursor, limit }),

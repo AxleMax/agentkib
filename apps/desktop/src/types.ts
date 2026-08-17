@@ -19,6 +19,7 @@ export type SupportedLocale = "zh-CN" | "zh-TW" | "ja-JP" | "en-US";
 export type LocalePreference = "system" | SupportedLocale;
 export type ThemePreference = "system" | "light" | "dark";
 export type EffectiveTheme = "light" | "dark";
+export type AppIconPreference = "white" | "black";
 export interface LocalizedMessage { key: string; params?: Record<string, string | number>; detail?: string }
 export interface McpNetworkSettings { port: number; lan_enabled: boolean; lan_risk_accepted: boolean }
 export interface McpHubStatus { running: boolean; bind_address: string; port: number; lan_enabled: boolean; accessible_addresses: string[]; runtime_count: number; error_count: number; last_error?: string }
@@ -33,7 +34,7 @@ export interface McpInstallation { id: string; name: string; package_kind: McpPa
 export interface McpMigrationCandidate { id: string; agent: AgentKind; scope: string; name: string; source_path: string; transport: string; endpoint: string; has_secret_values: boolean; supported: boolean; warnings: string[] }
 export interface McpOAuthStart { authorization_url: string }
 export interface McpInstallResult { installation: McpInstallation; server: McpServerConfig; tools: McpToolDescriptor[] }
-export interface RuntimeInfo { data_dir: string; database_path: string; mcp_package_root: string; mcp_hub: McpHubStatus; mcp_network: McpNetworkSettings; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale; theme_preference: ThemePreference; effective_theme: EffectiveTheme; tray_available: boolean; session_index_enabled: boolean }
+export interface RuntimeInfo { data_dir: string; database_path: string; mcp_package_root: string; mcp_hub: McpHubStatus; mcp_network: McpNetworkSettings; openclaw_config?: string; hermes_config?: string; close_behavior?: CloseBehavior; locale_preference: LocalePreference; effective_locale: SupportedLocale; theme_preference: ThemePreference; effective_theme: EffectiveTheme; app_icon_preference: AppIconPreference; tray_available: boolean; session_index_enabled: boolean }
 export type WorkspaceStatus = "healthy" | "attention";
 export type DiscoveryEvidence = "session-cwd" | "configured-workspace" | "scan-marker" | "manual";
 export interface WorkspaceSource { agent?: AgentKind; evidence: DiscoveryEvidence; session_count: number; last_active_at?: string }
@@ -78,6 +79,20 @@ export interface WorkspaceStorage { workspace_id: string; name: string; path: st
 export interface StorageOverview { total_workspace_count: number; scanned_workspace_count: number; allocated_bytes: number; logical_bytes: number; regenerable_bytes: number; agent_asset_bytes: number; last_scanned_at?: string; workspaces: WorkspaceStorage[] }
 export interface InsightsView { summary: InsightsSummary; heatmap: HeatmapPoint[]; agents: AgentUsageBreakdown[]; models: ModelUsageBreakdown[]; workspaces: WorkspaceUsageBreakdown[]; repositories: RepositoryCommitBreakdown[]; achievements: Achievement[]; status: InsightsStatus }
 export interface GitIdentitySummary { id: string; label: string; source: string; enabled: boolean }
+export type GitRefKind = "head" | "local-branch" | "remote-branch" | "tag" | "other";
+export interface GitRefLabel { name: string; full_name: string; kind: GitRefKind; current: boolean }
+export type GitChangeKind = "modified" | "added" | "deleted" | "renamed" | "copied" | "untracked" | "conflict" | "type-changed" | "unknown";
+export interface GitWorkingTreeChange { path: string; old_path?: string; kind: GitChangeKind; index_status?: string; worktree_status?: string; conflicted: boolean }
+export interface GitWorkspaceSummary { repository_root: string; worktree_root: string; head?: string; head_oid?: string; upstream?: string; ahead: number; behind: number; stash_count: number; detached: boolean; refs: GitRefLabel[]; changes: GitWorkingTreeChange[] }
+export interface GitHistoryQuery { cursor?: string; limit?: number; reference?: string; author?: string; since?: string; until?: string; path?: string; merges_only?: boolean }
+export interface GitCommitSummary { oid: string; parents: string[]; subject: string; author_name: string; authored_at: string; refs: GitRefLabel[] }
+export interface GitCommitPage { commits: GitCommitSummary[]; next_cursor?: string; repository_fingerprint: string }
+export interface GitFileChange { status: string; path: string; old_path?: string }
+export type GitDiffKind = "commit" | "worktree" | "staged";
+export interface GitDiffRequest { kind: GitDiffKind; path?: string; oid?: string }
+export interface GitDiff { patch: string; binary: boolean; submodule: boolean; encoding_lossy: boolean; truncated: boolean }
+export type WorkspaceOpenerCategory = "editor" | "terminal" | "file-manager";
+export interface WorkspaceOpener { id: string; name: string; category: WorkspaceOpenerCategory; preferred: boolean }
 export type QuotaBackend = "codex-bar-cli" | "win-codex-bar";
 export type QuotaFreshness = "fresh" | "stale" | "unavailable";
 export interface QuotaIdentity { account_email?: string; plan?: string }
