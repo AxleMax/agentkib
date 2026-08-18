@@ -193,6 +193,7 @@ fn write_launcher_script(command: &InteractiveCommand) -> io::Result<PathBuf> {
     Ok(path)
 }
 
+#[cfg(any(not(windows), test))]
 fn build_posix_script(command: &InteractiveCommand) -> String {
     let mut invocation = posix_quote(command.executable.as_os_str());
     for argument in &command.arguments {
@@ -230,6 +231,7 @@ fn build_windows_script(command: &InteractiveCommand) -> String {
     )
 }
 
+#[cfg(any(not(windows), test))]
 fn posix_quote(value: &OsStr) -> String {
     format!("'{}'", value.to_string_lossy().replace('\'', "'\"'\"'"))
 }

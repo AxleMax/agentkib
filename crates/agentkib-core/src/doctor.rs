@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -129,7 +130,7 @@ pub fn diagnose_workspace(
                 .skills
                 .iter()
                 .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
-                .filter(|skill| generated_skill_exists(project, agent, &skill.name))
+                .filter(|skill| generated_skill_exists(project, agent, skill))
                 .count();
         }
 
@@ -469,7 +470,11 @@ fn diagnose_exact_duplicates(
     }
 }
 
-fn generated_skill_exists(project: &Path, agent: AgentKind, name: &str) -> bool {
+fn generated_skill_exists(
+    project: &Path,
+    agent: AgentKind,
+    skill: &crate::SkillDefinition,
+) -> bool {
     let roots: &[&str] = match agent {
         AgentKind::ClaudeCode => &[".claude/skills"],
         AgentKind::Cursor => &[".cursor/skills"],
@@ -477,22 +482,37 @@ fn generated_skill_exists(project: &Path, agent: AgentKind, name: &str) -> bool 
         AgentKind::OpenClaw => &["skills", ".agents/skills"],
         AgentKind::Codex | AgentKind::Hermes => &[".agents/skills"],
     };
-    roots
-        .iter()
-        .any(|root| project.join(root).join(name).exists())
+    let source = project.join(&skill.path);
+    let entrypoint = source
+        .is_file()
+        .then(|| source.file_name())
+        .flatten()
+        .unwrap_or_else(|| OsStr::new("SKILL.md"));
+    roots.iter().any(|root| {
+        project
+            .join(root)
+            .join(&skill.name)
+            .join(entrypoint)
+            .is_file()
+    })
 }
 
 fn asset_kind_for_path(path: &Path) -> AssetKind {
-    let value = path.to_string_lossy();
-    if value.contains("skills") {
+    let value = path.to_string_lossy().replace('\\', "/");
+    let normalized = value.to_ascii_lowercase();
+    let components = normalized.split('/').collect::<Vec<_>>();
+    let file_name = components.last().copied().unwrap_or_default();
+    if components.contains(&"skills") {
         AssetKind::Skill
-    } else if value.ends_with("AGENTS.md")
-        || value.ends_with("CLAUDE.md")
-        || value.ends_with(".hermes.md")
-        || value.contains("/rules/")
+    } else if matches!(
+        file_name,
+        "agents.md" | "agents.override.md" | "claude.md" | "tools.md" | ".hermes.md" | "hermes.md"
+    ) || components
+        .windows(2)
+        .any(|pair| pair == [".cursor", "rules"])
     {
         AssetKind::Instruction
-    } else if value.contains("mcp") || value.ends_with("config.toml") {
+    } else if normalized.contains("mcp") || file_name == "config.toml" {
         AssetKind::Connection
     } else {
         AssetKind::Configuration
@@ -664,6 +684,77 @@ mod tests {
                 .issues
                 .iter()
                 .any(|issue| issue.code == "skill.source-unavailable" && !issue.repairable)
+        );
+    }
+
+    #[test]
+    fn empty_generated_skill_directory_is_not_counted_as_visible() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::ClaudeCode],
+        });
+        fs::create_dir_all(dir.path().join("skill-sources/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(".claude/skills/reviewer")).unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::ClaudeCode]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = report
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::ClaudeCode)
+            .unwrap();
+        assert_eq!(row.skills.expected, 1);
+        assert_eq!(row.skills.actual, 0);
+        assert_eq!(row.skills.status, DoctorStatus::Attention);
+
+        fs::write(
+            dir.path().join(".claude/skills/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        let repaired = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::ClaudeCode]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = repaired
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::ClaudeCode)
+            .unwrap();
+        assert_eq!(row.skills.actual, 1);
+    }
+
+    #[test]
+    fn managed_instruction_paths_are_classified_portably() {
+        assert_eq!(
+            asset_kind_for_path(Path::new("TOOLS.md")),
+            AssetKind::Instruction
+        );
+        assert_eq!(
+            asset_kind_for_path(Path::new(r".cursor\rules\agentkib.mdc")),
+            AssetKind::Instruction
         );
     }
 

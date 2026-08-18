@@ -768,14 +768,14 @@ fn sanitize_json_value(
     home: Option<&Path>,
     redaction_count: &mut usize,
 ) {
+    if key.is_some_and(is_sensitive_key) {
+        *value = serde_json::Value::String("[REDACTED]".into());
+        *redaction_count += 1;
+        return;
+    }
     match value {
         serde_json::Value::String(content) => {
-            if key.is_some_and(is_sensitive_key) {
-                *content = "[REDACTED]".into();
-                *redaction_count += 1;
-            } else {
-                *content = sanitize_handoff_content(content, home, redaction_count);
-            }
+            *content = sanitize_handoff_content(content, home, redaction_count);
         }
         serde_json::Value::Array(values) => {
             for value in values {
@@ -2711,6 +2711,27 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["credentials"], "[REDACTED]");
         assert_eq!(json_count, 1);
+    }
+
+    #[test]
+    fn sensitive_json_containers_are_redacted_as_a_whole() {
+        let content = serde_json::json!({
+            "schema_version": 1,
+            "context": {"messages": []},
+            "tokens": ["first-secret", {"value": "second-secret"}],
+            "credentials": {"username": "agent", "password": "third-secret"}
+        })
+        .to_string();
+
+        let (json, redaction_count) =
+            sanitize_handoff_export(&content, HandoffFormat::Json, None).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["tokens"], "[REDACTED]");
+        assert_eq!(value["credentials"], "[REDACTED]");
+        assert!(!json.contains("first-secret"));
+        assert!(!json.contains("second-secret"));
+        assert!(!json.contains("third-secret"));
+        assert_eq!(redaction_count, 2);
     }
 
     #[test]
