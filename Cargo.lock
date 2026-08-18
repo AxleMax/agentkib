@@ -214,6 +214,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "windows-sys 0.61.2",
+ "winreg",
 ]
 
 [[package]]

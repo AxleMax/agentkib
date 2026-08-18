@@ -39,6 +39,8 @@ use agentkib_platform::applications::{
     WorkspaceApplication, WorkspaceApplicationCategory, detect_workspace_applications,
     open_workspace as open_workspace_application,
 };
+#[cfg(target_os = "windows")]
+use agentkib_platform::network::system_proxy_url;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use agentkib_platform::process::ProcessTree;
 #[cfg(target_os = "linux")]
@@ -2573,6 +2575,17 @@ fn quota_collection_context(app: &AppHandle) -> anyhow::Result<QuotaCollectionCo
     let config_source = resolve_win_codexbar_config(&process_environment)
         .map(|_| "win-codexbar".to_string())
         .unwrap_or_else(|| "automatic".to_string());
+    #[cfg(target_os = "windows")]
+    if !process_environment.keys().any(|key| {
+        matches!(
+            key.to_ascii_uppercase().as_str(),
+            "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY"
+        )
+    }) && let Some(proxy) = system_proxy_url()
+    {
+        environment.insert("HTTP_PROXY".to_string(), proxy.clone());
+        environment.insert("HTTPS_PROXY".to_string(), proxy);
+    }
     #[cfg(not(target_os = "windows"))]
     let (config_path, config_source) =
         if let Some(path) = resolve_codexbar_config(&home, &process_environment) {
