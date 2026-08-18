@@ -315,12 +315,13 @@ fn windows_app_path(executable_name: &str) -> Option<PathBuf> {
     ];
     ROOTS.into_iter().find_map(|root| {
         let key = format!(r"{root}\{executable_name}");
-        let output = Command::new("reg.exe")
+        let mut command = Command::new("reg.exe");
+        command
             .args(["query", &key, "/ve"])
             .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
+            .stderr(Stdio::null());
+        crate::process::configure_process_group(&mut command);
+        let output = command.output().ok()?;
         if !output.status.success() {
             return None;
         }

@@ -40,9 +40,7 @@ use agentkib_platform::applications::{
     open_workspace as open_workspace_application,
 };
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-use agentkib_platform::process::ProcessTree;
-#[cfg(target_os = "linux")]
-use agentkib_platform::process::configure_process_group;
+use agentkib_platform::process::{ProcessTree, configure_process_group};
 use agentkib_platform::{fs::atomic_write, path as platform_path};
 #[cfg(target_os = "windows")]
 use agentkib_quota::resolve_win_codexbar_config;
@@ -2470,6 +2468,7 @@ impl QuotaCommandRunner for WindowsQuotaRunner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        configure_process_group(&mut command);
         let mut child = command.spawn()?;
         let process_tree = ProcessTree::attach(&child).inspect_err(|_| {
             let _ = child.kill();
