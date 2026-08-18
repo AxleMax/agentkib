@@ -34,10 +34,16 @@ function Get-CommandOutput {
 
 $os = Get-CimInstance Win32_OperatingSystem
 $architecture = $os.OSArchitecture
-if ($architecture -match "64") {
-  Add-Result "Windows x64" "PASS" "$($os.Caption) $($os.Version) ($architecture)"
+$buildNumber = 0
+$hasBuildNumber = [int]::TryParse([string] $os.BuildNumber, [ref] $buildNumber)
+$isWindows11 = $hasBuildNumber -and $os.ProductType -eq 1 -and $buildNumber -ge 22000
+$isX64 = $architecture -match "64"
+$osDetail = "$($os.Caption) $($os.Version) build $($os.BuildNumber) ($architecture)"
+
+if ($isWindows11 -and $isX64) {
+  Add-Result "Windows 11 x64" "PASS" $osDetail
 } else {
-  Add-Result "Windows x64" "FAIL" "Windows 11 x64 is required; current architecture: $architecture"
+  Add-Result "Windows 11 x64" "FAIL" "Windows 11 x64 is required; current system: $osDetail"
 }
 
 $gitVersion = Get-CommandOutput "git" @("--version")
