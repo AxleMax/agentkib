@@ -69,6 +69,15 @@ describe("layoutCommitGraph", () => {
 });
 
 describe("WorkspaceGitPage Diff", () => {
+  it("does not reload unchanged filters after the initial debounce window", async () => {
+    render(<WorkspaceGitPage workspace={workspace} />);
+
+    await waitFor(() => expect(api.workspaceGitSummary).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+
+    expect(api.workspaceGitSummary).toHaveBeenCalledTimes(1);
+  });
+
   it("loads the complete commit Diff by default and switches to a file Diff", async () => {
     vi.mocked(api.gitDiff).mockImplementation(async (_workspaceId, request) => request.path
       ? { ...fullDiff, patch: `single:${request.path}` }
