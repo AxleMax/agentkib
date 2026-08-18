@@ -72,6 +72,7 @@ use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
 mod i18n;
 mod obsidian;
+mod platform;
 mod refresh;
 use i18n::{LocalePreference, SupportedLocale, translate};
 use obsidian::{ObsidianIntegration, ObsidianWorkspaceLink};
@@ -1496,39 +1497,16 @@ fn runtime_info(
 
 #[tauri::command]
 fn open_files_and_folders_settings() -> CommandResult<()> {
-    #[cfg(target_os = "macos")]
-    {
-        const FILES_AND_FOLDERS_SETTINGS_URL: &str =
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders";
-        std::process::Command::new("/usr/bin/open")
-            .arg(FILES_AND_FOLDERS_SETTINGS_URL)
-            .spawn()
-            .map_err(|error| {
-                LocalizedMessage::with_detail("errors.openSystemSettings", error.to_string())
-            })?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd.exe")
-            .args([
-                "/D",
-                "/C",
-                "start",
-                "",
-                "ms-settings:privacy-broadfilesystemaccess",
-            ])
-            .spawn()
-            .map_err(|error| {
-                LocalizedMessage::with_detail("errors.openSystemSettings", error.to_string())
-            })?;
-        Ok(())
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        Err(LocalizedMessage::new("errors.unsupportedPlatform"))
+    match platform::open_files_and_folders_settings() {
+        Ok(()) => Ok(()),
+        #[cfg(target_os = "linux")]
+        Err(platform::OpenSystemSettingsError::Unsupported) => {
+            Err(LocalizedMessage::new("errors.unsupportedPlatform"))
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        Err(platform::OpenSystemSettingsError::Launch(detail)) => Err(
+            LocalizedMessage::with_detail("errors.openSystemSettings", detail),
+        ),
     }
 }
 
@@ -2170,15 +2148,10 @@ fn save_preferences(path: &Path, preferences: &DesktopPreferences) -> anyhow::Re
 fn hide_to_tray(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let lifecycle = app.state::<Arc<LifecycleState>>();
-        let tray_available = lifecycle.tray_available();
-        #[cfg(target_os = "linux")]
-        let tray_available = tray_available && {
-            let available = linux_tray_host_available();
-            if !available {
-                lifecycle.set_tray_available(false);
-            }
-            available
-        };
+        let tray_available = lifecycle.tray_available() && platform::tray_host_available();
+        if !tray_available {
+            lifecycle.set_tray_available(false);
+        }
         if tray_available {
             let _ = window.hide();
         } else {
@@ -2186,73 +2159,12 @@ fn hide_to_tray(app: &AppHandle) {
             // Keep a taskbar entry so the user can always recover the window.
             let _ = window.minimize();
         }
-        #[cfg(target_os = "macos")]
-        if tray_available {
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-        }
+        platform::after_hide_to_tray(app, tray_available);
     }
-}
-
-#[cfg(target_os = "linux")]
-fn linux_tray_host_available() -> bool {
-    let Some(executable) = agentkib_platform::command::resolve("gdbus") else {
-        return false;
-    };
-    let mut command = Command::new(executable);
-    command
-        .args([
-            "call",
-            "--session",
-            "--dest",
-            "org.freedesktop.DBus",
-            "--object-path",
-            "/org/freedesktop/DBus",
-            "--method",
-            "org.freedesktop.DBus.NameHasOwner",
-            "org.kde.StatusNotifierWatcher",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    configure_process_group(&mut command);
-    let Ok(mut child) = command.spawn() else {
-        return false;
-    };
-    let Ok(process_tree) = ProcessTree::attach(&child) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return false;
-    };
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => {
-                return child
-                    .wait_with_output()
-                    .ok()
-                    .is_some_and(|output| linux_tray_watcher_response(&output.stdout));
-            }
-            Ok(Some(_)) | Err(_) => return false,
-            Ok(None) if started.elapsed() < Duration::from_secs(2) => {
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Ok(None) => {
-                let _ = process_tree.terminate();
-                let _ = child.wait();
-                return false;
-            }
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn linux_tray_watcher_response(output: &[u8]) -> bool {
-    std::str::from_utf8(output).is_ok_and(|value| value.trim() == "(true,)")
 }
 
 fn show_main_window(app: &AppHandle) {
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    platform::before_show_main_window(app);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
@@ -3130,7 +3042,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let tray_image = tauri::include_image!("icons/tray-icon-windows.png");
     #[cfg(not(target_os = "windows"))]
     let tray_image = tauri::include_image!("icons/tray-icon.png");
-    let mut tray = TrayIconBuilder::with_id("agentkib-status")
+    let tray = TrayIconBuilder::with_id("agentkib-status")
         .icon(tray_image)
         .menu(&menu)
         .tooltip(translate(locale, "tray.tooltip", &[]))
@@ -3157,14 +3069,13 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 request_guarded_exit(app);
             }
             _ => {}
-        });
+        })
+        .show_menu_on_left_click(platform::SHOW_TRAY_MENU_ON_LEFT_CLICK);
 
     #[cfg(target_os = "macos")]
-    {
+    let tray = {
         use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-        tray = tray
-            .icon_as_template(true)
-            .show_menu_on_left_click(false)
+        tray.icon_as_template(true)
             .on_tray_icon_event(|tray, event| {
                 if let TrayIconEvent::Click {
                     rect,
@@ -3175,13 +3086,9 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 {
                     toggle_quota_popover(tray.app_handle(), &rect);
                 }
-            });
-    }
+            })
+    };
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        tray = tray.show_menu_on_left_click(true);
-    }
     tray.build(app)?;
     Ok(())
 }
@@ -3798,17 +3705,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let _ = refresh_app_menu(app.handle());
             let tray_result = setup_tray(app);
-            let tray_available = tray_result.is_ok();
-            #[cfg(target_os = "linux")]
-            let tray_available = tray_available && linux_tray_host_available();
+            let tray_available = platform::resolve_tray_setup(tray_result)?;
             app.state::<Arc<LifecycleState>>()
                 .set_tray_available(tray_available);
-            #[cfg(not(target_os = "linux"))]
-            tray_result?;
-            #[cfg(target_os = "linux")]
-            if let Err(error) = tray_result {
-                eprintln!("AgentKib system tray is unavailable: {error}");
-            }
             app.state::<Arc<HubController>>().start()?;
             seed_refresh_freshness(app.handle());
             start_refresh_schedulers(app.handle().clone());
@@ -4217,12 +4116,5 @@ mod tests {
         assert!(!lifecycle.tray_available());
         lifecycle.set_tray_available(true);
         assert!(lifecycle.tray_available());
-    }
-
-    #[test]
-    fn parses_status_notifier_watcher_response_strictly() {
-        assert!(linux_tray_watcher_response(b"(true,)\n"));
-        assert!(!linux_tray_watcher_response(b"(false,)\n"));
-        assert!(!linux_tray_watcher_response(b"unexpected"));
     }
 }

@@ -3,6 +3,7 @@
   "private": true,
   "packageManager": "pnpm@10.8.1",
   "scripts": {
+    "diagnose:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/diagnose-windows.ps1",
     "dev": "pnpm --filter @agentkib/desktop dev",
     "build": "pnpm --filter @agentkib/desktop build",
     "test": "pnpm --filter @agentkib/desktop test",
