@@ -77,6 +77,22 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("request_refresh", { kind: "storage", force: true });
   });
 
+  it("keeps recursive storage exploration within the workspace IPC boundary", async () => {
+    vi.mocked(invoke).mockResolvedValue({ id: "directory:target", name: "target", children: [] });
+
+    await api.workspaceStorageChildren("workspace-1", "target/debug");
+    expect(invoke).toHaveBeenCalledWith("get_workspace_storage_children", {
+      workspaceId: "workspace-1",
+      relativePath: "target/debug",
+    });
+
+    await api.openWorkspaceStoragePath("workspace-1", "target/debug");
+    expect(invoke).toHaveBeenCalledWith("open_workspace_storage_path", {
+      workspaceId: "workspace-1",
+      relativePath: "target/debug",
+    });
+  });
+
   it("keeps conversation bodies behind an explicit on-demand IPC call", async () => {
     vi.mocked(invoke).mockResolvedValue({ events: [], warnings: [] });
 

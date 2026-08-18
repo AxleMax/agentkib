@@ -1152,6 +1152,8 @@ impl Store {
                     workspace_id,
                     name,
                     path: PathBuf::from(path),
+                    snapshot_version: 0,
+                    root: None,
                     measurement: default_storage_measurement(),
                     quality: StorageQuality::Unavailable,
                     allocated_bytes: 0,
@@ -3548,6 +3550,23 @@ mod tests {
             workspace_id: registered.id.clone(),
             name: registered.name,
             path: registered.path,
+            snapshot_version: 2,
+            root: Some(agentkib_storage::StorageNode {
+                id: "workspace:".into(),
+                name: "workspace".into(),
+                relative_path: PathBuf::new(),
+                kind: agentkib_storage::StorageNodeKind::Workspace,
+                allocated_bytes: 4096,
+                logical_bytes: 1024,
+                regenerable_bytes: 2048,
+                agent_asset_bytes: 128,
+                file_count: 2,
+                directory_count: 1,
+                child_count: 0,
+                children: Vec::new(),
+                expandable: false,
+                partial: false,
+            }),
             measurement: agentkib_storage::StorageMeasurement::AllocatedExact,
             quality: StorageQuality::Complete,
             allocated_bytes: 4096,
@@ -3575,6 +3594,8 @@ mod tests {
         let overview = store.storage_overview().unwrap();
         assert_eq!(overview.allocated_bytes, 4096);
         assert_eq!(overview.workspaces[0].quality, StorageQuality::Partial);
+        assert_eq!(overview.workspaces[0].snapshot_version, 2);
+        assert_eq!(overview.workspaces[0].root.as_ref().unwrap().file_count, 2);
 
         store.exclude_workspace(&registered.id).unwrap();
         let rows: i64 = store
@@ -3584,6 +3605,42 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn legacy_storage_snapshot_remains_readable_without_recursive_root() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        let now = Utc::now().to_rfc3339();
+        let snapshot = serde_json::json!({
+            "workspace_id": registered.id.clone(),
+            "name": registered.name.clone(),
+            "path": registered.path.clone(),
+            "measurement": "logical-estimate",
+            "quality": "complete",
+            "allocated_bytes": 64,
+            "logical_bytes": 64,
+            "regenerable_bytes": 0,
+            "agent_asset_bytes": 0,
+            "file_count": 1,
+            "directory_count": 0,
+            "breakdown": [],
+            "last_attempt_at": now,
+            "last_success_at": now
+        });
+        store.connection.execute(
+            "INSERT INTO workspace_storage(workspace_id, snapshot_json, last_attempt_at, last_success_at) VALUES (?1, ?2, ?3, ?3)",
+            params![registered.id, snapshot.to_string(), now],
+        ).unwrap();
+
+        let overview = store.storage_overview().unwrap();
+
+        assert_eq!(overview.workspaces[0].snapshot_version, 0);
+        assert!(overview.workspaces[0].root.is_none());
+        assert_eq!(overview.allocated_bytes, 64);
     }
 
     #[test]

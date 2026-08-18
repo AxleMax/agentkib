@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::Metadata;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use agentkib_platform::path as platform_path;
 use chrono::{DateTime, Utc};
@@ -31,6 +31,33 @@ pub enum StorageBreakdownKind {
     RootFiles,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StorageNodeKind {
+    Workspace,
+    Directory,
+    RootFiles,
+    Aggregate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageNode {
+    pub id: String,
+    pub name: String,
+    pub relative_path: PathBuf,
+    pub kind: StorageNodeKind,
+    pub allocated_bytes: u64,
+    pub logical_bytes: u64,
+    pub regenerable_bytes: u64,
+    pub agent_asset_bytes: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub child_count: u64,
+    pub children: Vec<StorageNode>,
+    pub expandable: bool,
+    pub partial: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageBreakdown {
     pub name: String,
@@ -47,6 +74,10 @@ pub struct WorkspaceStorage {
     pub workspace_id: String,
     pub name: String,
     pub path: PathBuf,
+    #[serde(default)]
+    pub snapshot_version: u32,
+    #[serde(default)]
+    pub root: Option<StorageNode>,
     pub measurement: StorageMeasurement,
     pub quality: StorageQuality,
     pub allocated_bytes: u64,
@@ -112,19 +143,51 @@ pub struct WorkspaceScanResult {
     pub cancelled: bool,
 }
 
+#[derive(Debug)]
+pub struct StorageNodeScanResult {
+    pub node: StorageNode,
+    pub cancelled: bool,
+}
+
 #[derive(Default)]
 pub struct HardLinkSet {
     #[cfg(unix)]
     entries: HashSet<(u64, u64)>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Totals {
     allocated: u64,
     logical: u64,
     regenerable: u64,
     agent_asset: u64,
+    file_count: u64,
+    directory_count: u64,
 }
+
+impl Totals {
+    fn merge(&mut self, other: &Self) {
+        self.allocated = self.allocated.saturating_add(other.allocated);
+        self.logical = self.logical.saturating_add(other.logical);
+        self.regenerable = self.regenerable.saturating_add(other.regenerable);
+        self.agent_asset = self.agent_asset.saturating_add(other.agent_asset);
+        self.file_count = self.file_count.saturating_add(other.file_count);
+        self.directory_count = self.directory_count.saturating_add(other.directory_count);
+    }
+}
+
+#[derive(Default)]
+struct DirectoryTotals {
+    totals: Totals,
+    direct_files: Totals,
+    children: BTreeSet<PathBuf>,
+}
+
+const STORAGE_SNAPSHOT_VERSION: u32 = 2;
+const SNAPSHOT_DEPTH: usize = 4;
+const SNAPSHOT_NODE_BUDGET: usize = 10_000;
+const MAX_VISIBLE_CHILDREN: usize = 200;
+pub const INTERACTIVE_ENTRY_LIMIT: usize = 100_000;
 
 pub fn scan_workspace(
     workspace: &StorageWorkspace,
@@ -133,17 +196,165 @@ pub fn scan_workspace(
     cancelled: impl Fn() -> bool,
 ) -> WorkspaceScanResult {
     let attempted_at = Utc::now();
-    let mut totals = Totals::default();
-    let mut breakdowns: BTreeMap<String, (StorageBreakdownKind, PathBuf, Totals)> = BTreeMap::new();
-    let mut file_count = 0_u64;
-    let mut directory_count = 0_u64;
+    let tree = scan_tree(
+        &workspace.path,
+        &workspace.path,
+        excluded_roots,
+        hard_links,
+        usize::MAX,
+        cancelled,
+    );
+    let totals = tree
+        .directories
+        .get(Path::new(""))
+        .map(|value| value.totals.clone())
+        .unwrap_or_default();
+    let unavailable = !tree.cancelled
+        && !tree.errors.is_empty()
+        && totals.file_count == 0
+        && totals.directory_count == 0;
+    let quality = if unavailable {
+        StorageQuality::Unavailable
+    } else if tree.cancelled || tree.limit_reached || !tree.errors.is_empty() {
+        StorageQuality::Partial
+    } else {
+        StorageQuality::Complete
+    };
+    let error_key = if tree.cancelled {
+        Some("storage.scanStopped".to_string())
+    } else if unavailable {
+        Some("storage.scanUnavailable".to_string())
+    } else if tree.errors.is_empty() {
+        None
+    } else {
+        Some("storage.scanPartial".to_string())
+    };
+    let error_detail = (!tree.errors.is_empty()).then(|| {
+        let remaining = tree.errors.len().saturating_sub(3);
+        let mut detail = tree
+            .errors
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        if remaining > 0 {
+            detail.push_str(&format!("\n+{remaining} more"));
+        }
+        detail
+    });
+    let success_at = (!tree.cancelled && !unavailable).then_some(Utc::now());
+    let breakdown = legacy_breakdown(&tree.directories, Path::new(""));
+    let mut budget = 1;
+    let root = (!unavailable).then(|| {
+        build_directory_node(
+            Path::new(""),
+            workspace.name.clone(),
+            StorageNodeKind::Workspace,
+            &tree.directories,
+            0,
+            SNAPSHOT_DEPTH,
+            &mut budget,
+            SNAPSHOT_NODE_BUDGET,
+            quality == StorageQuality::Partial,
+        )
+    });
+
+    WorkspaceScanResult {
+        storage: WorkspaceStorage {
+            workspace_id: workspace.id.clone(),
+            name: workspace.name.clone(),
+            path: workspace.path.clone(),
+            snapshot_version: STORAGE_SNAPSHOT_VERSION,
+            root,
+            measurement: measurement(),
+            quality,
+            allocated_bytes: totals.allocated,
+            logical_bytes: totals.logical,
+            regenerable_bytes: totals.regenerable,
+            agent_asset_bytes: totals.agent_asset,
+            file_count: totals.file_count,
+            directory_count: totals.directory_count,
+            breakdown,
+            last_attempt_at: attempted_at,
+            last_success_at: success_at,
+            error_key,
+            error_detail,
+        },
+        cancelled: tree.cancelled,
+    }
+}
+
+pub fn scan_workspace_children(
+    workspace: &StorageWorkspace,
+    relative_path: &Path,
+    excluded_roots: &[PathBuf],
+    hard_links: &mut HardLinkSet,
+    cancelled: impl Fn() -> bool,
+) -> StorageNodeScanResult {
+    let target = workspace.path.join(relative_path);
+    let tree = scan_tree(
+        &workspace.path,
+        &target,
+        excluded_roots,
+        hard_links,
+        INTERACTIVE_ENTRY_LIMIT,
+        cancelled,
+    );
+    let name = relative_path
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| workspace.name.clone());
+    let mut budget = 1;
+    let node = build_directory_node(
+        relative_path,
+        name,
+        if relative_path.as_os_str().is_empty() {
+            StorageNodeKind::Workspace
+        } else {
+            StorageNodeKind::Directory
+        },
+        &tree.directories,
+        0,
+        1,
+        &mut budget,
+        SNAPSHOT_NODE_BUDGET,
+        tree.cancelled || tree.limit_reached || !tree.errors.is_empty(),
+    );
+    StorageNodeScanResult {
+        node,
+        cancelled: tree.cancelled,
+    }
+}
+
+struct TreeScan {
+    directories: BTreeMap<PathBuf, DirectoryTotals>,
+    errors: Vec<String>,
+    cancelled: bool,
+    limit_reached: bool,
+}
+
+fn scan_tree(
+    workspace_root: &Path,
+    target_root: &Path,
+    excluded_roots: &[PathBuf],
+    hard_links: &mut HardLinkSet,
+    max_entries: usize,
+    cancelled: impl Fn() -> bool,
+) -> TreeScan {
+    let base_relative = target_root
+        .strip_prefix(workspace_root)
+        .unwrap_or_else(|_| Path::new(""));
+    let mut directories = BTreeMap::new();
+    directories.insert(base_relative.to_path_buf(), DirectoryTotals::default());
     let mut errors = Vec::new();
     let mut was_cancelled = false;
-
-    let walker = WalkDir::new(&workspace.path)
+    let mut limit_reached = false;
+    let mut visited = 0_usize;
+    let walker = WalkDir::new(target_root)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|entry| should_visit(entry, &workspace.path, excluded_roots));
+        .filter_entry(|entry| should_visit(entry, target_root, excluded_roots));
 
     for entry in walker {
         if cancelled() {
@@ -157,6 +368,14 @@ pub fn scan_workspace(
                 continue;
             }
         };
+        if entry.path() == target_root {
+            continue;
+        }
+        if visited >= max_entries {
+            limit_reached = true;
+            break;
+        }
+        visited += 1;
         let metadata = match entry.path().symlink_metadata() {
             Ok(metadata) => metadata,
             Err(error) => {
@@ -164,21 +383,12 @@ pub fn scan_workspace(
                 continue;
             }
         };
-        if entry.path() == workspace.path {
-            continue;
-        }
         if metadata.is_file() && !hard_links.insert(&metadata) {
             continue;
         }
-        if metadata.is_file() {
-            file_count = file_count.saturating_add(1);
-        } else if metadata.is_dir() {
-            directory_count = directory_count.saturating_add(1);
-        }
-
         let relative = entry
             .path()
-            .strip_prefix(&workspace.path)
+            .strip_prefix(workspace_root)
             .unwrap_or_else(|_| entry.path());
         let logical = if metadata.is_file() || metadata.file_type().is_symlink() {
             metadata.len()
@@ -186,78 +396,321 @@ pub fn scan_workspace(
             0
         };
         let allocated = allocated_size(&metadata);
-        let regenerable = is_regenerable(relative);
-        let agent_asset = is_agent_asset(relative);
-        add_size(&mut totals, allocated, logical, regenerable, agent_asset);
+        let entry_totals = Totals {
+            allocated,
+            logical,
+            regenerable: if is_regenerable(relative) {
+                allocated
+            } else {
+                0
+            },
+            agent_asset: if is_agent_asset(relative) {
+                allocated
+            } else {
+                0
+            },
+            file_count: u64::from(metadata.is_file()),
+            directory_count: 0,
+        };
 
-        let (key, kind, path) = breakdown_key(relative, metadata.is_dir());
-        let value = breakdowns
-            .entry(key)
-            .or_insert_with(|| (kind, path, Totals::default()));
-        add_size(&mut value.2, allocated, logical, regenerable, agent_asset);
+        if metadata.is_dir() {
+            directories.entry(relative.to_path_buf()).or_default();
+            if let Some(parent) = relative.parent() {
+                directories
+                    .entry(parent.to_path_buf())
+                    .or_default()
+                    .children
+                    .insert(relative.to_path_buf());
+            }
+            for ancestor in ancestors_between(base_relative, relative) {
+                let value = directories.entry(ancestor.clone()).or_default();
+                value.totals.merge(&entry_totals);
+                if ancestor != relative {
+                    value.totals.directory_count = value.totals.directory_count.saturating_add(1);
+                }
+            }
+        } else {
+            let parent = relative.parent().unwrap_or(base_relative);
+            for ancestor in ancestors_between(base_relative, parent) {
+                directories
+                    .entry(ancestor)
+                    .or_default()
+                    .totals
+                    .merge(&entry_totals);
+            }
+            let direct = &mut directories
+                .entry(parent.to_path_buf())
+                .or_default()
+                .direct_files;
+            direct.merge(&entry_totals);
+        }
     }
 
-    let unavailable =
-        !was_cancelled && !errors.is_empty() && file_count == 0 && directory_count == 0;
-    let quality = if unavailable {
-        StorageQuality::Unavailable
-    } else if was_cancelled || !errors.is_empty() {
-        StorageQuality::Partial
-    } else {
-        StorageQuality::Complete
-    };
-    let error_key = if was_cancelled {
-        Some("storage.scanStopped".to_string())
-    } else if unavailable {
-        Some("storage.scanUnavailable".to_string())
-    } else if errors.is_empty() {
-        None
-    } else {
-        Some("storage.scanPartial".to_string())
-    };
-    let error_detail = (!errors.is_empty()).then(|| {
-        let remaining = errors.len().saturating_sub(3);
-        let mut detail = errors.into_iter().take(3).collect::<Vec<_>>().join("\n");
-        if remaining > 0 {
-            detail.push_str(&format!("\n+{remaining} more"));
-        }
-        detail
-    });
-    let success_at = (!was_cancelled && !unavailable).then_some(Utc::now());
-    let breakdown = breakdowns
-        .into_iter()
-        .map(|(name, (kind, relative_path, value))| StorageBreakdown {
-            name,
-            relative_path,
-            kind,
-            allocated_bytes: value.allocated,
-            logical_bytes: value.logical,
-            regenerable_bytes: value.regenerable,
-            agent_asset_bytes: value.agent_asset,
-        })
-        .collect();
+    TreeScan {
+        directories,
+        errors,
+        cancelled: was_cancelled,
+        limit_reached,
+    }
+}
 
-    WorkspaceScanResult {
-        storage: WorkspaceStorage {
-            workspace_id: workspace.id.clone(),
-            name: workspace.name.clone(),
-            path: workspace.path.clone(),
-            measurement: measurement(),
-            quality,
+fn ancestors_between(base: &Path, value: &Path) -> Vec<PathBuf> {
+    let mut output = vec![base.to_path_buf()];
+    let mut current = base.to_path_buf();
+    if let Ok(suffix) = value.strip_prefix(base) {
+        for component in suffix.components() {
+            current.push(component.as_os_str());
+            output.push(current.clone());
+        }
+    }
+    output
+}
+
+#[derive(Clone)]
+struct NodeCandidate {
+    name: String,
+    relative_path: PathBuf,
+    kind: StorageNodeKind,
+    totals: Totals,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_directory_node(
+    relative_path: &Path,
+    name: String,
+    kind: StorageNodeKind,
+    directories: &BTreeMap<PathBuf, DirectoryTotals>,
+    depth: usize,
+    max_depth: usize,
+    budget: &mut usize,
+    max_nodes: usize,
+    partial: bool,
+) -> StorageNode {
+    let current = directories.get(relative_path);
+    let totals = current
+        .map(|value| value.totals.clone())
+        .unwrap_or_default();
+    let mut candidates = current
+        .map(|value| {
+            value
+                .children
+                .iter()
+                .map(|path| {
+                    let totals = directories
+                        .get(path)
+                        .map(|child| child.totals.clone())
+                        .unwrap_or_default();
+                    NodeCandidate {
+                        name: path
+                            .file_name()
+                            .map(|value| value.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                        relative_path: path.clone(),
+                        kind: StorageNodeKind::Directory,
+                        totals,
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if let Some(files) = current.map(|value| value.direct_files.clone())
+        && (files.allocated > 0 || files.file_count > 0)
+    {
+        candidates.push(NodeCandidate {
+            name: "__root_files__".to_string(),
+            relative_path: relative_path.to_path_buf(),
+            kind: StorageNodeKind::RootFiles,
+            totals: files,
+        });
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .totals
+            .allocated
+            .cmp(&left.totals.allocated)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    let child_count = candidates.len() as u64;
+    let mut children = Vec::new();
+    let mut omitted = Vec::new();
+    let visible_limit = if max_depth == 1 {
+        max_nodes.saturating_sub(1)
+    } else {
+        MAX_VISIBLE_CHILDREN.saturating_sub(1)
+    };
+    if depth < max_depth {
+        for candidate in candidates {
+            let reserve_aggregate = usize::from(!omitted.is_empty());
+            if children.len() >= visible_limit
+                || budget.saturating_add(reserve_aggregate) >= max_nodes
+            {
+                omitted.push(candidate);
+                continue;
+            }
+            *budget = budget.saturating_add(1);
+            let child = if candidate.kind == StorageNodeKind::Directory {
+                build_directory_node(
+                    &candidate.relative_path,
+                    candidate.name,
+                    candidate.kind,
+                    directories,
+                    depth + 1,
+                    max_depth,
+                    budget,
+                    max_nodes,
+                    partial,
+                )
+            } else {
+                leaf_node(candidate, partial)
+            };
+            children.push(child);
+        }
+    }
+    if !omitted.is_empty() && *budget < max_nodes {
+        let omitted_count = omitted.len() as u64;
+        let mut omitted_totals = Totals::default();
+        for candidate in &omitted {
+            omitted_totals.merge(&candidate.totals);
+        }
+        *budget = budget.saturating_add(1);
+        children.push(StorageNode {
+            id: node_id(StorageNodeKind::Aggregate, relative_path),
+            name: "__other__".to_string(),
+            relative_path: relative_path.to_path_buf(),
+            kind: StorageNodeKind::Aggregate,
+            allocated_bytes: omitted_totals.allocated,
+            logical_bytes: omitted_totals.logical,
+            regenerable_bytes: omitted_totals.regenerable,
+            agent_asset_bytes: omitted_totals.agent_asset,
+            file_count: omitted_totals.file_count,
+            directory_count: omitted_totals.directory_count,
+            child_count: omitted_count,
+            children: Vec::new(),
+            expandable: true,
+            partial,
+        });
+    } else if !omitted.is_empty()
+        && let Some(last) = children.pop()
+    {
+        let removed_nodes = count_nodes(&last);
+        *budget = budget.saturating_sub(removed_nodes);
+        let omitted_count = omitted.len() as u64 + 1;
+        let mut omitted_totals = Totals {
+            allocated: last.allocated_bytes,
+            logical: last.logical_bytes,
+            regenerable: last.regenerable_bytes,
+            agent_asset: last.agent_asset_bytes,
+            file_count: last.file_count,
+            directory_count: last.directory_count,
+        };
+        for candidate in &omitted {
+            omitted_totals.merge(&candidate.totals);
+        }
+        *budget = budget.saturating_add(1);
+        children.push(StorageNode {
+            id: node_id(StorageNodeKind::Aggregate, relative_path),
+            name: "__other__".to_string(),
+            relative_path: relative_path.to_path_buf(),
+            kind: StorageNodeKind::Aggregate,
+            allocated_bytes: omitted_totals.allocated,
+            logical_bytes: omitted_totals.logical,
+            regenerable_bytes: omitted_totals.regenerable,
+            agent_asset_bytes: omitted_totals.agent_asset,
+            file_count: omitted_totals.file_count,
+            directory_count: omitted_totals.directory_count,
+            child_count: omitted_count,
+            children: Vec::new(),
+            expandable: true,
+            partial,
+        });
+    }
+    StorageNode {
+        id: node_id(kind, relative_path),
+        name,
+        relative_path: relative_path.to_path_buf(),
+        kind,
+        allocated_bytes: totals.allocated,
+        logical_bytes: totals.logical,
+        regenerable_bytes: totals.regenerable,
+        agent_asset_bytes: totals.agent_asset,
+        file_count: totals.file_count,
+        directory_count: totals.directory_count,
+        child_count,
+        expandable: child_count > 0,
+        children,
+        partial,
+    }
+}
+
+fn count_nodes(node: &StorageNode) -> usize {
+    1 + node.children.iter().map(count_nodes).sum::<usize>()
+}
+
+fn leaf_node(candidate: NodeCandidate, partial: bool) -> StorageNode {
+    StorageNode {
+        id: node_id(candidate.kind, &candidate.relative_path),
+        name: candidate.name,
+        relative_path: candidate.relative_path,
+        kind: candidate.kind,
+        allocated_bytes: candidate.totals.allocated,
+        logical_bytes: candidate.totals.logical,
+        regenerable_bytes: candidate.totals.regenerable,
+        agent_asset_bytes: candidate.totals.agent_asset,
+        file_count: candidate.totals.file_count,
+        directory_count: candidate.totals.directory_count,
+        child_count: 0,
+        children: Vec::new(),
+        expandable: false,
+        partial,
+    }
+}
+
+fn node_id(kind: StorageNodeKind, relative_path: &Path) -> String {
+    let prefix = match kind {
+        StorageNodeKind::Workspace => "workspace",
+        StorageNodeKind::Directory => "directory",
+        StorageNodeKind::RootFiles => "root-files",
+        StorageNodeKind::Aggregate => "aggregate",
+    };
+    format!("{prefix}:{}", relative_path.to_string_lossy())
+}
+
+fn legacy_breakdown(
+    directories: &BTreeMap<PathBuf, DirectoryTotals>,
+    root: &Path,
+) -> Vec<StorageBreakdown> {
+    let Some(value) = directories.get(root) else {
+        return Vec::new();
+    };
+    let mut output = value
+        .children
+        .iter()
+        .filter_map(|path| directories.get(path).map(|child| (path, &child.totals)))
+        .map(|(path, totals)| StorageBreakdown {
+            name: path
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            relative_path: path.clone(),
+            kind: StorageBreakdownKind::Directory,
             allocated_bytes: totals.allocated,
             logical_bytes: totals.logical,
             regenerable_bytes: totals.regenerable,
             agent_asset_bytes: totals.agent_asset,
-            file_count,
-            directory_count,
-            breakdown,
-            last_attempt_at: attempted_at,
-            last_success_at: success_at,
-            error_key,
-            error_detail,
-        },
-        cancelled: was_cancelled,
+        })
+        .collect::<Vec<_>>();
+    if value.direct_files.allocated > 0 || value.direct_files.file_count > 0 {
+        output.push(StorageBreakdown {
+            name: "__root_files__".to_string(),
+            relative_path: root.to_path_buf(),
+            kind: StorageBreakdownKind::RootFiles,
+            allocated_bytes: value.direct_files.allocated,
+            logical_bytes: value.direct_files.logical,
+            regenerable_bytes: value.direct_files.regenerable,
+            agent_asset_bytes: value.direct_files.agent_asset,
+        });
     }
+    output
 }
 
 fn should_visit(entry: &DirEntry, root: &Path, excluded_roots: &[PathBuf]) -> bool {
@@ -266,41 +719,6 @@ fn should_visit(entry: &DirEntry, root: &Path, excluded_roots: &[PathBuf]) -> bo
             && !excluded_roots
                 .iter()
                 .any(|path| platform_path::equivalent(entry.path(), path)))
-}
-
-fn breakdown_key(relative: &Path, is_directory: bool) -> (String, StorageBreakdownKind, PathBuf) {
-    if relative.as_os_str().is_empty() || (relative.components().count() == 1 && !is_directory) {
-        return (
-            "__root_files__".to_string(),
-            StorageBreakdownKind::RootFiles,
-            PathBuf::new(),
-        );
-    }
-    match relative.components().next() {
-        Some(Component::Normal(name)) => (
-            name.to_string_lossy().into_owned(),
-            StorageBreakdownKind::Directory,
-            PathBuf::from(name),
-        ),
-        _ => unreachable!("non-empty relative paths have a first component"),
-    }
-}
-
-fn add_size(
-    totals: &mut Totals,
-    allocated: u64,
-    logical: u64,
-    regenerable: bool,
-    agent_asset: bool,
-) {
-    totals.allocated = totals.allocated.saturating_add(allocated);
-    totals.logical = totals.logical.saturating_add(logical);
-    if regenerable {
-        totals.regenerable = totals.regenerable.saturating_add(allocated);
-    }
-    if agent_asset {
-        totals.agent_asset = totals.agent_asset.saturating_add(allocated);
-    }
 }
 
 fn is_regenerable(relative: &Path) -> bool {
@@ -328,8 +746,8 @@ fn is_regenerable(relative: &Path) -> bool {
 }
 
 fn is_agent_asset(relative: &Path) -> bool {
-    let first = relative.components().next().map(|value| value.as_os_str());
-    first.is_some_and(|name| {
+    relative.components().any(|component| {
+        let name = component.as_os_str();
         [
             ".agentkib",
             ".agents",
@@ -422,6 +840,119 @@ mod tests {
         assert!(result.storage.agent_asset_bytes > 0);
         assert_eq!(result.storage.quality, StorageQuality::Complete);
         assert_eq!(result.storage.file_count, 2);
+    }
+
+    #[test]
+    fn snapshot_preserves_recursive_directory_structure() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("target/debug/deps")).unwrap();
+        fs::write(
+            directory.path().join("target/debug/deps/library.rlib"),
+            vec![1; 1024],
+        )
+        .unwrap();
+
+        let result = scan_workspace(
+            &workspace(directory.path()),
+            &[],
+            &mut HardLinkSet::default(),
+            || false,
+        );
+        let root = result.storage.root.expect("recursive root");
+        let target = root
+            .children
+            .iter()
+            .find(|node| node.name == "target")
+            .expect("target node");
+        let debug = target
+            .children
+            .iter()
+            .find(|node| node.name == "debug")
+            .expect("debug node");
+
+        assert_eq!(result.storage.snapshot_version, STORAGE_SNAPSHOT_VERSION);
+        assert_eq!(target.regenerable_bytes, result.storage.regenerable_bytes);
+        assert!(debug.children.iter().any(|node| node.name == "deps"));
+    }
+
+    #[test]
+    fn interactive_scan_returns_direct_children_for_a_subtree() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("src/features/profile")).unwrap();
+        fs::create_dir_all(directory.path().join("src/features/settings")).unwrap();
+        fs::write(
+            directory.path().join("src/features/profile/view.ts"),
+            vec![1; 256],
+        )
+        .unwrap();
+
+        let result = scan_workspace_children(
+            &workspace(directory.path()),
+            Path::new("src/features"),
+            &[],
+            &mut HardLinkSet::default(),
+            || false,
+        );
+
+        assert_eq!(result.node.relative_path, Path::new("src/features"));
+        assert!(
+            result
+                .node
+                .children
+                .iter()
+                .any(|node| node.name == "profile")
+        );
+        assert!(
+            result
+                .node
+                .children
+                .iter()
+                .any(|node| node.name == "settings")
+        );
+    }
+
+    #[test]
+    fn snapshot_budget_keeps_an_expandable_aggregate() {
+        let directory = tempfile::tempdir().unwrap();
+        for index in 0..(MAX_VISIBLE_CHILDREN + 5) {
+            let child = directory.path().join(format!("child-{index:03}"));
+            fs::create_dir(&child).unwrap();
+            fs::write(child.join("file.bin"), vec![1; 32]).unwrap();
+        }
+
+        let result = scan_workspace(
+            &workspace(directory.path()),
+            &[],
+            &mut HardLinkSet::default(),
+            || false,
+        );
+        let root = result.storage.root.expect("recursive root");
+        let aggregate = root
+            .children
+            .iter()
+            .find(|node| node.kind == StorageNodeKind::Aggregate)
+            .expect("aggregate node");
+
+        assert!(aggregate.expandable);
+        assert!(aggregate.child_count > 0);
+        assert!(root.children.len() <= MAX_VISIBLE_CHILDREN);
+    }
+
+    #[test]
+    fn entry_limit_marks_lazy_scan_as_partial() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("one/two")).unwrap();
+        fs::write(directory.path().join("one/two/file.bin"), vec![1; 16]).unwrap();
+        let tree = scan_tree(
+            directory.path(),
+            directory.path(),
+            &[],
+            &mut HardLinkSet::default(),
+            1,
+            || false,
+        );
+
+        assert!(tree.limit_reached);
     }
 
     #[test]

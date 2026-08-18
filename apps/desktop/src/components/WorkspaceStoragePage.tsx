@@ -1,20 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { CircleAlert, Folder, Gauge, HardDrive, Pause, RefreshCw, Search } from "lucide-react";
+import { CircleAlert, ExternalLink, HardDrive, Pause, RefreshCw, Search, X } from "lucide-react";
 import { api } from "../api";
 import { currentLocale, formatDateTime, localizeMessage, tr } from "../i18n";
 import { squarifyTreemap } from "../treemap";
-import type { AgentKind, RefreshJobStatus, StorageBreakdown, StorageOverview, WorkspaceStorage, WorkspaceSummary } from "../types";
+import type { AgentKind, RefreshJobStatus, StorageNode, StorageOverview, WorkspaceStorage, WorkspaceSummary } from "../types";
 
 const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes", "deepseek-harness": "DeepSeek Harness" };
+type StorageMetric = "allocated" | "regenerable" | "agent-assets";
+interface StorageLocation { workspaceId: string; node: StorageNode }
+interface StorageSelection extends StorageLocation { parentBytes: number; workspaceBytes: number }
 
 export function WorkspaceStoragePage({ workspaces, job }: { workspaces: WorkspaceSummary[]; job?: RefreshJobStatus }) {
   const [overview, setOverview] = useState<StorageOverview>();
   const [loaded, setLoaded] = useState(false);
-  const [selectedId, setSelectedId] = useState<string>();
   const [query, setQuery] = useState("");
   const [agent, setAgent] = useState<"all" | AgentKind>("all");
-  const [sort, setSort] = useState<"allocated" | "regenerable">("allocated");
+  const [metric, setMetric] = useState<StorageMetric>("allocated");
+  const [trail, setTrail] = useState<StorageLocation[]>([]);
+  const [selected, setSelected] = useState<StorageSelection>();
+  const [expanding, setExpanding] = useState(false);
   const [error, setError] = useState("");
   const active = job?.state === "queued" || job?.state === "running";
 
@@ -23,7 +28,11 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
     let unlisten: (() => void) | undefined;
     void (async () => {
       unlisten = await listen<StorageOverview>("agentkib:storage-updated", (event) => {
-        if (!disposed) setOverview(event.payload);
+        if (!disposed) {
+          setOverview(event.payload);
+          setTrail([]);
+          setSelected(undefined);
+        }
       });
       try {
         const cached = await api.storageOverview();
@@ -37,34 +46,84 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
     return () => { disposed = true; unlisten?.(); };
   }, []);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const tag = (event.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if (selected) setSelected(undefined);
+      else if (trail.length) setTrail((value) => value.slice(0, -1));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected, trail.length]);
+
   const workspaceById = useMemo(() => new Map(workspaces.map((workspace) => [workspace.id, workspace])), [workspaces]);
-  const filtered = useMemo(() => (overview?.workspaces ?? []).filter((item) => {
-    const workspace = workspaceById.get(item.workspace_id);
-    const matchesQuery = `${item.name} ${item.path}`.toLowerCase().includes(query.toLowerCase());
+  const storageById = useMemo(() => new Map((overview?.workspaces ?? []).map((storage) => [storage.workspace_id, storage])), [overview]);
+  const workspaceNodes = useMemo(() => (overview?.workspaces ?? []).filter((storage) => {
+    const workspace = workspaceById.get(storage.workspace_id);
     const matchesAgent = agent === "all" || workspace?.sources.some((source) => source.agent === agent);
-    return matchesQuery && matchesAgent;
-  }).sort((left, right) => sort === "allocated" ? right.allocated_bytes - left.allocated_bytes : right.regenerable_bytes - left.regenerable_bytes), [agent, overview, query, sort, workspaceById]);
-  const selected = filtered.find((item) => item.workspace_id === selectedId) ?? overview?.workspaces.find((item) => item.workspace_id === selectedId);
-  const mapItems = selected ? compactBreakdown(selected.breakdown) : compactWorkspaces(filtered);
-  const rects = squarifyTreemap(mapItems.map((item) => ({ id: item.id, value: item.value })));
+    return matchesAgent;
+  }).map((storage) => ({ workspaceId: storage.workspace_id, node: storage.root ?? legacyRoot(storage) })), [agent, overview, workspaceById]);
+  const current = trail.at(-1);
+  const currentStorage = current ? storageById.get(current.workspaceId) : undefined;
+  const displayed = current
+    ? current.node.children.map((node) => ({ workspaceId: current.workspaceId, node }))
+    : workspaceNodes;
+  const values = displayed.map((item) => ({ id: `${item.workspaceId}:${item.node.id}`, value: metricBytes(item.node, metric) })).filter((item) => item.value > 0);
+  const rects = squarifyTreemap(values);
+  const visibleById = new Map(displayed.map((item) => [`${item.workspaceId}:${item.node.id}`, item]));
+  const parentBytes = current ? metricBytes(current.node, metric) : values.reduce((sum, item) => sum + item.value, 0);
+  const stale = Boolean(overview?.last_scanned_at && Date.now() - new Date(overview.last_scanned_at).getTime() > 86_400_000);
+  const legacy = Boolean(overview?.workspaces.some((storage) => storage.snapshot_version < 2 || !storage.root));
+  const hasCache = Boolean(overview?.scanned_workspace_count);
+  const estimated = overview?.workspaces.some((item) => item.measurement === "logical-estimate") ?? false;
+  const coverage = overview?.total_workspace_count ? Math.round((overview.scanned_workspace_count / overview.total_workspace_count) * 100) : 0;
 
   const start = async () => {
     setError("");
     try { await api.requestRefresh("storage", true); } catch (reason) { setError(localizeMessage(reason)); }
   };
   const stop = async () => { await api.cancelStorageScan(); };
-  const coverage = overview?.total_workspace_count ? Math.round((overview.scanned_workspace_count / overview.total_workspace_count) * 100) : 0;
-  const estimated = overview?.workspaces.some((item) => item.measurement === "logical-estimate") ?? false;
-  const hasCache = Boolean(overview?.scanned_workspace_count);
+
+  const enter = async (location: StorageLocation) => {
+    if (location.node.kind === "root-files") return;
+    setSelected(undefined);
+    if (location.node.children.length) {
+      setTrail((value) => [...value, location]);
+      return;
+    }
+    if (!location.node.expandable && location.node.kind !== "aggregate") return;
+    const relativePath = location.node.kind === "aggregate" ? current?.node.relative_path ?? "" : location.node.relative_path;
+    setExpanding(true);
+    setError("");
+    try {
+      const node = await api.workspaceStorageChildren(location.workspaceId, relativePath);
+      if (location.node.kind === "aggregate" && current) {
+        setTrail((value) => [...value.slice(0, -1), { workspaceId: location.workspaceId, node }]);
+      } else {
+        setTrail((value) => [...value, { workspaceId: location.workspaceId, node }]);
+      }
+    } catch (reason) {
+      setError(`${tr("storage.expandFailed")}: ${localizeMessage(reason)}`);
+    } finally {
+      setExpanding(false);
+    }
+  };
+
+  const select = (location: StorageLocation) => {
+    const storage = storageById.get(location.workspaceId);
+    setSelected({ ...location, parentBytes, workspaceBytes: storage ? metricStorageBytes(storage, metric) : metricBytes(location.node, metric) });
+  };
 
   if (!loaded) return <div className="panel storage-empty"><p>{tr("common.loading")}</p></div>;
 
   return <div className="stack storage-page">
     {hasCache && <div className="storage-toolbar toolbar">
       <div className="search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("storage.searchPlaceholder")} /></div>
-      <select className="setting-select" value={agent} onChange={(event) => setAgent(event.target.value as typeof agent)}><option value="all">{tr("workspace.allAgents")}</option>{Object.entries(agentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <select className="setting-select" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="allocated">{tr("storage.sortAllocated")}</option><option value="regenerable">{tr("storage.sortRegenerable")}</option></select>
-      {active ? <button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</button> : <button className="primary" onClick={() => void start()}><RefreshCw size={14} />{overview?.scanned_workspace_count ? tr("storage.scanAgain") : tr("storage.startScan")}</button>}
+      <select className="setting-select" value={agent} onChange={(event) => { setAgent(event.target.value as typeof agent); setTrail([]); setSelected(undefined); }}><option value="all">{tr("workspace.allAgents")}</option>{Object.entries(agentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <div className="segmented storage-metrics" role="tablist" aria-label={tr("storage.metricLabel")}>{(["allocated", "regenerable", "agent-assets"] as StorageMetric[]).map((value) => <button key={value} role="tab" aria-selected={metric === value} className={metric === value ? "active" : ""} onClick={() => { setMetric(value); setSelected(undefined); }}>{tr(`storage.metric.${value}`)}</button>)}</div>
+      {active ? <button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</button> : <button className="primary" onClick={() => void start()}><RefreshCw size={14} />{tr("storage.scanAgain")}</button>}
     </div>}
     {error && <div className="alert"><CircleAlert size={16} />{error}</div>}
     {hasCache && <div className="storage-summary">
@@ -74,39 +133,122 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
       <Metric label={tr("storage.coverage")} value={`${overview?.scanned_workspace_count ?? 0} / ${overview?.total_workspace_count ?? workspaces.length}`} meta={`${coverage}%`} />
     </div>}
     {active && <div className="storage-progress"><span>{job?.state === "queued" ? tr("storage.waiting") : tr("storage.scanning")}</span><progress max={job?.progress_total || 1} value={job?.progress_current || 0} /><strong>{job?.progress_current ?? 0} / {job?.progress_total ?? workspaces.length}</strong></div>}
-    {!hasCache ? <div className="panel storage-empty"><HardDrive size={32} /><h2>{active ? tr("storage.scanning") : tr("storage.emptyTitle")}</h2>{!active && <p>{tr("storage.emptyText")}</p>}{overview?.workspaces.map((item) => <span className="storage-unavailable" key={item.workspace_id}><CircleAlert size={13} />{item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}</span>)}{active ? <button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</button> : <button className="primary" onClick={() => void start()}>{tr("storage.startScan")}</button>}</div> : <div className={`storage-main${selected ? " has-inspector" : ""}`}>
+    {hasCache && (stale || legacy) && <div className="storage-notices">{stale && <span><CircleAlert size={14} />{tr("storage.stale")}</span>}{legacy && <span><CircleAlert size={14} />{tr("storage.legacySnapshot")}</span>}</div>}
+    {!hasCache ? <EmptyState active={active} overview={overview} start={start} stop={stop} /> : <div className={`storage-main${selected ? " has-inspector" : ""}`}>
       <section className="panel storage-map-panel">
-        <div className="panel-head storage-map-head"><div>{selected && <button className="breadcrumb" onClick={() => setSelectedId(undefined)}>{tr("storage.allWorkspaces")}</button>}<h2>{selected?.name ?? tr("storage.mapTitle")}</h2></div><span>{overview?.last_scanned_at ? tr("storage.scannedAt", { time: formatDateTime(overview.last_scanned_at) }) : ""}</span></div>
-        <div className="storage-treemap" role="list" aria-label={selected?.name ?? tr("storage.mapTitle")}>{rects.map((rect, index) => { const item = mapItems.find((value) => value.id === rect.id)!; return <button key={rect.id} role="listitem" className={`storage-tile tone-${index % 8}`} style={{ left: `${rect.x}%`, top: `${rect.y}%`, width: `${rect.width}%`, height: `${rect.height}%` }} title={`${item.label} · ${formatBytes(item.value)}`} onClick={() => !selected && item.workspaceId && setSelectedId(item.workspaceId)}><strong>{item.label}</strong><span>{formatBytes(item.value)}</span></button>; })}</div>
+        <div className="panel-head storage-map-head">
+          <nav className="storage-breadcrumbs" aria-label={tr("storage.location")}>
+            <button onClick={() => { setTrail([]); setSelected(undefined); }}>{tr("storage.allWorkspaces")}</button>
+            {trail.map((item, index) => <span key={`${item.workspaceId}:${item.node.id}`}><b>/</b><button aria-current={index === trail.length - 1 ? "page" : undefined} onClick={() => { setTrail((value) => value.slice(0, index + 1)); setSelected(undefined); }}>{nodeLabel(item.node)}</button></span>)}
+          </nav>
+          <span>{expanding ? tr("storage.loadingDirectory") : overview?.last_scanned_at ? tr("storage.scannedAt", { time: formatDateTime(overview.last_scanned_at) }) : ""}</span>
+        </div>
+        {rects.length ? <div className="storage-treemap" role="tree" aria-label={current ? nodeLabel(current.node) : tr("storage.allWorkspaces")}>
+          {rects.map((rect) => {
+            const location = visibleById.get(rect.id)!;
+            const bytes = metricBytes(location.node, metric);
+            const ratio = parentBytes > 0 ? bytes / parentBytes : 0;
+            const area = rect.width * rect.height;
+            const match = matchesNode(location.node, query);
+            const hasDescendantMatch = containsMatch(location.node, query);
+            const detail = area >= 500 ? "rich" : area >= 150 ? "medium" : area >= 42 ? "name" : "tiny";
+            return <button key={rect.id} role="treeitem" aria-label={`${nodeLabel(location.node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`} className={`storage-tile semantic-${semanticKind(location.node)} detail-${detail}${query.trim() && !hasDescendantMatch ? " search-dim" : ""}${query.trim() && match ? " search-match" : ""}${location.node.partial ? " partial" : ""}`} style={{ left: `${rect.x}%`, top: `${rect.y}%`, width: `${rect.width}%`, height: `${rect.height}%` }} title={`${nodeLabel(location.node)} · ${formatBytes(bytes)} · ${formatPercent(ratio)}`} onClick={() => select(location)} onDoubleClick={() => void enter(location)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void enter(location); } }}>
+              {detail !== "tiny" && <strong>{nodeLabel(location.node)}</strong>}
+              {(detail === "medium" || detail === "rich") && <span>{formatBytes(bytes)}</span>}
+              {detail === "rich" && <small>{formatPercent(ratio)} · {tr(`storage.type.${semanticKind(location.node)}`)}</small>}
+            </button>;
+          })}
+        </div> : <div className="storage-map-empty"><HardDrive size={26} /><span>{tr("storage.noItemsForMetric")}</span></div>}
       </section>
-      <aside className="panel storage-inspector">{selected ? <WorkspaceInspector storage={selected} workspace={workspaceById.get(selected.workspace_id)} /> : <><div className="panel-head"><h2>{tr("storage.workspaceRanking")}</h2><span>{filtered.length}</span></div><div className="storage-ranking">{filtered.map((item) => <button key={item.workspace_id} onClick={() => setSelectedId(item.workspace_id)}><Folder size={15} /><span><strong>{item.name}</strong><small>{formatBytes(item.regenerable_bytes)} {tr("storage.regenerableShort")}</small></span><b>{formatBytes(item.allocated_bytes)}</b></button>)}</div></>}</aside>
+      {selected && <StorageInspector selection={selected} storage={storageById.get(selected.workspaceId)} workspace={workspaceById.get(selected.workspaceId)} metric={metric} onClose={() => setSelected(undefined)} onError={(reason) => setError(localizeMessage(reason))} />}
     </div>}
   </div>;
 }
 
+function EmptyState({ active, overview, start, stop }: { active: boolean; overview?: StorageOverview; start: () => Promise<void>; stop: () => Promise<void> }) {
+  return <div className="panel storage-empty"><HardDrive size={32} /><h2>{active ? tr("storage.scanning") : tr("storage.emptyTitle")}</h2>{!active && <p>{tr("storage.emptyText")}</p>}{overview?.workspaces.map((item) => <span className="storage-unavailable" key={item.workspace_id}><CircleAlert size={13} />{item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}</span>)}{active ? <button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</button> : <button className="primary" onClick={() => void start()}>{tr("storage.startScan")}</button>}</div>;
+}
+
 function Metric({ label, value, meta }: { label: string; value: string; meta?: string }) { return <div><span>{label}</span><strong>{value}</strong>{meta && <small>{meta}</small>}</div>; }
 
-function WorkspaceInspector({ storage, workspace }: { storage: WorkspaceStorage; workspace?: WorkspaceSummary }) {
-  const agents = workspace?.sources.map((source) => source.agent && agentLabels[source.agent]).filter(Boolean).filter((value, index, values) => values.indexOf(value) === index).join(" · ") || "—";
-  return <><div className="panel-head"><div><h2>{storage.name}</h2><span className={`quality-badge ${storage.quality}`}>{tr(`storage.quality.${storage.quality}`)}</span></div></div><dl className="storage-facts"><div><dt>{tr("storage.allocated")}</dt><dd>{formatBytes(storage.allocated_bytes)}</dd></div><div><dt>{tr("storage.logical")}</dt><dd>{formatBytes(storage.logical_bytes)}</dd></div><div><dt>{tr("storage.files")}</dt><dd>{storage.file_count.toLocaleString(currentLocale())}</dd></div><div><dt>{tr("storage.directories")}</dt><dd>{storage.directory_count.toLocaleString(currentLocale())}</dd></div><div><dt>{tr("storage.sourceAgents")}</dt><dd>{agents}</dd></div><div><dt>{tr("storage.measurement")}</dt><dd>{tr(`storage.measurement.${storage.measurement}`)}</dd></div></dl><code className="storage-path">{storage.path}</code>{storage.error_key && <div className="storage-warning"><CircleAlert size={14} /><span>{tr(storage.error_key)}{storage.error_detail && <small>{storage.error_detail}</small>}</span></div>}<div className="storage-breakdown-list"><h3>{tr("storage.largestItems")}</h3>{storage.breakdown.slice().sort((left, right) => right.allocated_bytes - left.allocated_bytes).slice(0, 8).map((item) => <div key={item.name}><span>{item.kind === "root-files" ? tr("storage.rootFiles") : item.name}</span><strong>{formatBytes(item.allocated_bytes)}</strong></div>)}</div></>;
+function StorageInspector({ selection, storage, workspace, metric, onClose, onError }: { selection: StorageSelection; storage?: WorkspaceStorage; workspace?: WorkspaceSummary; metric: StorageMetric; onClose: () => void; onError: (reason: unknown) => void }) {
+  const { node } = selection;
+  const agents = workspace?.sources.flatMap((source) => source.agent ? [agentLabels[source.agent]] : []).filter((value, index, values) => values.indexOf(value) === index).join(" · ") || "—";
+  const fullPath = displayPath(storage?.path ?? "", node.relative_path);
+  const open = async () => {
+    try { await api.openWorkspaceStoragePath(selection.workspaceId, node.kind === "aggregate" ? "" : node.relative_path); }
+    catch (reason) { onError(reason); }
+  };
+  return <aside className="panel storage-inspector">
+    <div className="panel-head"><div><h2>{nodeLabel(node)}</h2>{node.partial && <span className="quality-badge partial">{tr("storage.partialNode")}</span>}</div><button className="icon-button" aria-label={tr("common.close")} onClick={onClose}><X size={16} /></button></div>
+    <dl className="storage-facts">
+      <Fact label={tr("storage.allocated")} value={formatBytes(node.allocated_bytes)} />
+      <Fact label={tr("storage.logical")} value={formatBytes(node.logical_bytes)} />
+      <Fact label={tr("storage.parentShare")} value={formatPercent(selection.parentBytes ? metricBytes(node, metric) / selection.parentBytes : 0)} />
+      <Fact label={tr("storage.workspaceShare")} value={formatPercent(selection.workspaceBytes ? metricBytes(node, metric) / selection.workspaceBytes : 0)} />
+      <Fact label={tr("storage.regenerable")} value={formatBytes(node.regenerable_bytes)} />
+      <Fact label={tr("storage.agentAssets")} value={formatBytes(node.agent_asset_bytes)} />
+      <Fact label={tr("storage.files")} value={node.file_count.toLocaleString(currentLocale())} />
+      <Fact label={tr("storage.directories")} value={node.directory_count.toLocaleString(currentLocale())} />
+      <Fact label={tr("storage.sourceAgents")} value={agents} />
+      <Fact label={tr("storage.itemType")} value={tr(`storage.type.${semanticKind(node)}`)} />
+    </dl>
+    {fullPath && <code className="storage-path" title={fullPath}>{fullPath}</code>}
+    {storage?.error_key && <div className="storage-warning"><CircleAlert size={14} /><span>{tr(storage.error_key)}{storage.error_detail && <small>{storage.error_detail}</small>}</span></div>}
+    {node.kind !== "aggregate" && <div className="storage-inspector-actions"><button className="ghost" onClick={() => void open()}><ExternalLink size={14} />{tr("storage.openLocation")}</button></div>}
+  </aside>;
 }
 
-interface MapItem { id: string; label: string; value: number; workspaceId?: string }
+function Fact({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }
 
-function compactWorkspaces(values: WorkspaceStorage[]): MapItem[] {
-  return compact(values.map((item) => ({ id: item.workspace_id, label: item.name, value: item.allocated_bytes, workspaceId: item.workspace_id })));
+function legacyRoot(storage: WorkspaceStorage): StorageNode {
+  const children = storage.breakdown.map((item) => ({ id: `legacy:${storage.workspace_id}:${item.relative_path || "root"}`, name: item.kind === "root-files" ? tr("storage.rootFiles") : item.name, relative_path: item.relative_path, kind: item.kind === "root-files" ? "root-files" as const : "directory" as const, allocated_bytes: item.allocated_bytes, logical_bytes: item.logical_bytes, regenerable_bytes: item.regenerable_bytes, agent_asset_bytes: item.agent_asset_bytes, file_count: 0, directory_count: 0, child_count: 0, children: [], expandable: item.kind !== "root-files", partial: true }));
+  return { id: `workspace:${storage.workspace_id}`, name: storage.name, relative_path: "", kind: "workspace", allocated_bytes: storage.allocated_bytes, logical_bytes: storage.logical_bytes, regenerable_bytes: storage.regenerable_bytes, agent_asset_bytes: storage.agent_asset_bytes, file_count: storage.file_count, directory_count: storage.directory_count, child_count: children.length, children, expandable: true, partial: true };
 }
 
-function compactBreakdown(values: StorageBreakdown[]): MapItem[] {
-  return compact(values.map((item) => ({ id: item.relative_path || "__root_files__", label: item.kind === "root-files" ? tr("storage.rootFiles") : item.name, value: item.allocated_bytes })));
+function nodeLabel(node: StorageNode) {
+  if (node.kind === "root-files") return tr("storage.rootFiles");
+  if (node.kind === "aggregate") return tr("storage.otherCount", { count: node.child_count });
+  return node.name;
 }
 
-function compact(values: MapItem[]): MapItem[] {
-  const sorted = values.filter((item) => item.value > 0).sort((left, right) => right.value - left.value);
-  if (sorted.length <= 24) return sorted;
-  const visible = sorted.slice(0, 23);
-  const other = sorted.slice(23).reduce((sum, item) => sum + item.value, 0);
-  return [...visible, { id: "__other__", label: tr("storage.other"), value: other }];
+function metricBytes(node: StorageNode, metric: StorageMetric) {
+  if (metric === "regenerable") return node.regenerable_bytes;
+  if (metric === "agent-assets") return node.agent_asset_bytes;
+  return node.allocated_bytes;
+}
+
+function metricStorageBytes(storage: WorkspaceStorage, metric: StorageMetric) {
+  if (metric === "regenerable") return storage.regenerable_bytes;
+  if (metric === "agent-assets") return storage.agent_asset_bytes;
+  return storage.allocated_bytes;
+}
+
+function semanticKind(node: StorageNode) {
+  if (node.kind === "aggregate") return "aggregate";
+  if (node.relative_path.split(/[\\/]/).includes(".git")) return "git";
+  if (node.allocated_bytes > 0 && node.agent_asset_bytes / node.allocated_bytes >= .5) return "agent";
+  if (node.allocated_bytes > 0 && node.regenerable_bytes / node.allocated_bytes >= .8) return "regenerable";
+  return "normal";
+}
+
+function matchesNode(node: StorageNode, query: string) {
+  const value = query.trim().toLowerCase();
+  return !value || `${node.name} ${node.relative_path}`.toLowerCase().includes(value);
+}
+
+function containsMatch(node: StorageNode, query: string): boolean {
+  return matchesNode(node, query) || node.children.some((child) => containsMatch(child, query));
+}
+
+function formatPercent(value: number) {
+  return new Intl.NumberFormat(currentLocale(), { style: "percent", maximumFractionDigits: value < .01 ? 1 : 0 }).format(Math.max(0, value));
+}
+
+function displayPath(root: string, relativePath: string) {
+  if (!relativePath) return root;
+  const separator = root.includes("\\") ? "\\" : "/";
+  return `${root.replace(/[\\/]$/, "")}${separator}${relativePath.replaceAll(/[\\/]/g, separator)}`;
 }
 
 function formatBytes(value: number) {

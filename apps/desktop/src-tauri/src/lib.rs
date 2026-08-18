@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::io::Read;
@@ -54,7 +54,8 @@ use agentkib_quota::{
 #[cfg(not(target_os = "windows"))]
 use agentkib_quota::{resolve_codexbar_config, write_managed_config};
 use agentkib_storage::{
-    HardLinkSet, StorageOverview, StorageWorkspace, scan_workspace as scan_workspace_storage,
+    HardLinkSet, StorageNode, StorageOverview, StorageWorkspace,
+    scan_workspace as scan_workspace_storage, scan_workspace_children,
 };
 use agentkib_store::{Store, default_backup_dir, default_data_dir};
 use anyhow::Context;
@@ -262,6 +263,15 @@ struct QuotaRuntime {
 struct StorageRuntime {
     running: AtomicBool,
     cancel_requested: AtomicBool,
+    explorer_cache: Mutex<VecDeque<((String, String), StorageNode)>>,
+}
+
+struct RunningFlagGuard<'a>(&'a AtomicBool);
+
+impl Drop for RunningFlagGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -431,6 +441,142 @@ fn get_storage_overview() -> CommandResult<StorageOverview> {
     Store::open_default()
         .and_then(|store| store.storage_overview())
         .map_err(format_error)
+}
+
+#[tauri::command]
+async fn get_workspace_storage_children(
+    workspace_id: String,
+    relative_path: String,
+    storage: tauri::State<'_, Arc<StorageRuntime>>,
+) -> CommandResult<StorageNode> {
+    let storage = Arc::clone(storage.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        load_workspace_storage_children(&workspace_id, &relative_path, &storage)
+            .map_err(format_error)
+    })
+    .await
+    .map_err(format_error)?
+}
+
+fn load_workspace_storage_children(
+    workspace_id: &str,
+    relative_path: &str,
+    storage: &StorageRuntime,
+) -> anyhow::Result<StorageNode> {
+    (|| -> anyhow::Result<StorageNode> {
+        let relative = PathBuf::from(&relative_path);
+        if relative.is_absolute()
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Prefix(_)
+                        | std::path::Component::RootDir
+                        | std::path::Component::ParentDir
+                )
+            })
+        {
+            anyhow::bail!("storage path must be relative to its workspace");
+        }
+        let store = Store::open_default()?;
+        let workspace = store
+            .get_workspace(workspace_id)?
+            .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
+        let root = platform_path::canonicalize(&workspace.path)?;
+        let target = platform_path::canonicalize(&root.join(&relative))?;
+        if !platform_path::starts_with(&target, &root) || !target.is_dir() {
+            anyhow::bail!("storage path is outside the workspace or is not a directory");
+        }
+        let normalized_relative = target.strip_prefix(&root)?.to_path_buf();
+        let cache_key = (
+            workspace_id.to_string(),
+            platform_path::identity(&normalized_relative),
+        );
+        {
+            let mut cache = storage
+                .explorer_cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("storage explorer cache is poisoned"))?;
+            if let Some(position) = cache.iter().position(|(key, _)| key == &cache_key)
+                && let Some(entry) = cache.remove(position)
+            {
+                let node = entry.1.clone();
+                cache.push_back(entry);
+                return Ok(node);
+            }
+        }
+        if storage.running.swap(true, Ordering::SeqCst) {
+            return Err(anyhow::anyhow!("storage scan is already running"));
+        }
+        let _running = RunningFlagGuard(&storage.running);
+        let scan_result = (|| -> anyhow::Result<StorageNode> {
+            let workspaces = store.list_workspaces()?;
+            let excluded_roots = workspaces
+                .iter()
+                .filter(|candidate| {
+                    candidate.id != workspace_id
+                        && platform_path::starts_with(&candidate.path, &target)
+                })
+                .map(|candidate| candidate.path.clone())
+                .collect::<Vec<_>>();
+            let source = StorageWorkspace {
+                id: workspace.id,
+                name: workspace.name,
+                path: root,
+            };
+            let scan = scan_workspace_children(
+                &source,
+                &normalized_relative,
+                &excluded_roots,
+                &mut HardLinkSet::default(),
+                || false,
+            );
+            Ok(scan.node)
+        })();
+        let node = scan_result?;
+        let mut cache = storage
+            .explorer_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage explorer cache is poisoned"))?;
+        cache.push_back((cache_key, node.clone()));
+        while cache.len() > 64 {
+            cache.pop_front();
+        }
+        Ok(node)
+    })()
+}
+
+#[tauri::command]
+fn open_workspace_storage_path(workspace_id: String, relative_path: String) -> CommandResult<()> {
+    let result = (|| -> anyhow::Result<()> {
+        let relative = PathBuf::from(relative_path);
+        if relative.is_absolute()
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Prefix(_)
+                        | std::path::Component::RootDir
+                        | std::path::Component::ParentDir
+                )
+            })
+        {
+            anyhow::bail!("storage path must be relative to its workspace");
+        }
+        let workspace = Store::open_default()?
+            .get_workspace(&workspace_id)?
+            .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
+        let root = platform_path::canonicalize(&workspace.path)?;
+        let target = platform_path::canonicalize(&root.join(relative))?;
+        if !platform_path::starts_with(&target, &root) || !target.is_dir() {
+            anyhow::bail!("storage path is outside the workspace or is not a directory");
+        }
+        let file_manager = detect_workspace_applications()
+            .into_iter()
+            .find(|application| application.category == WorkspaceApplicationCategory::FileManager)
+            .ok_or_else(|| anyhow::anyhow!("file manager is unavailable"))?;
+        open_workspace_application(&file_manager.id, &target)?;
+        Ok(())
+    })();
+    result.map_err(format_error)
 }
 
 #[tauri::command]
@@ -3302,6 +3448,10 @@ fn perform_storage(
     if state.running.swap(true, Ordering::SeqCst) {
         return Err(LocalizedMessage::new("errors.storageRunning"));
     }
+    let _running = RunningFlagGuard(&state.running);
+    if let Ok(mut cache) = state.explorer_cache.lock() {
+        cache.clear();
+    }
     let result = (|| -> anyhow::Result<StorageOverview> {
         let store = Store::open_default()?;
         let mut workspaces = store.list_workspaces()?;
@@ -3397,7 +3547,6 @@ fn perform_storage(
         let _ = app.emit("agentkib:storage-updated", &overview);
         Ok(overview)
     })();
-    state.running.store(false, Ordering::SeqCst);
     result.map_err(format_error)
 }
 
@@ -3714,6 +3863,8 @@ pub fn run() {
             request_refresh,
             get_refresh_status,
             get_storage_overview,
+            get_workspace_storage_children,
+            open_workspace_storage_path,
             cancel_storage_scan,
             discover_workspaces,
             list_workspaces,
