@@ -89,6 +89,8 @@ AgentKib 会区分“已安装”和“只发现了卸载后的本地数据”�
 | Fedora x64 | CI 构建并验证 `.rpm` |
 | Windows ARM64 / Linux ARM64 | Preview；保证核心编译或原生打包，部分额度能力可能不可用 |
 
+Windows 11 x64 的完整环境安装、开发启动、NSIS 打包和使用步骤见 [Windows 构建、安装与使用指南](docs/WINDOWS.md)。
+
 ### 从源码运行
 
 需要 Rust stable、Node.js 和 pnpm 10。桌面端还需要对应平台的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)：macOS 使用 Xcode Command Line Tools，Windows 使用 Visual Studio Build Tools 2022 与 Windows SDK，Linux 使用 GTK 3、WebKitGTK 4.1、AppIndicator、librsvg 和 libxdo。
