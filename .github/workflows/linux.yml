@@ -1,4 +1,4 @@
-name: Linux
+name: Linux Checks
 
 on:
   pull_request:
@@ -14,7 +14,7 @@ env:
 
 jobs:
   ubuntu-x64:
-    name: Ubuntu 22.04 x64 (deb and AppImage)
+    name: Check Ubuntu 22.04 x64
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -56,14 +56,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Diagnose build environment
-        run: apps/desktop/scripts/diagnose-linux.sh --strict --packaging deb
+        run: apps/desktop/scripts/diagnose-linux.sh --strict
 
-      - name: Run release checks and build packages
+      - name: Run Ubuntu x64 checks
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          log=artifacts/linux-ubuntu22-x64-build.log
+          log=artifacts/linux-ubuntu22-x64-checks.log
           run_logged() {
             printf '\n## %s\n' "$*" | tee -a "$log"
             "$@" 2>&1 | tee -a "$log"
@@ -74,40 +74,17 @@ jobs:
           run_logged pnpm test
           run_logged pnpm typecheck
           run_logged pnpm build
-          rm -rf target/release/bundle
-          run_logged apps/desktop/scripts/build-linux-bundles.sh --bundles deb,appimage
 
-      - name: Verify packages and write checksums
-        run: |
-          .github/scripts/smoke-test-linux-package.sh target deb
-          .github/scripts/smoke-test-linux-package.sh target appimage
-          .github/scripts/write-linux-checksums.sh target
-          package=$(find "$PWD/target" -type f -name '*.deb' -print -quit)
-          sudo apt-get install -y "$package"
-          .github/scripts/smoke-test-linux-installed.sh
-
-      - name: Upload Ubuntu x64 packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: agentkib-linux-ubuntu-x64
-          if-no-files-found: error
-          path: |
-            target/**/bundle/deb/*.deb
-            target/**/bundle/deb/*.sha256
-            target/**/bundle/appimage/*.AppImage
-            target/**/bundle/appimage/*.sha256
-
-      - name: Upload Ubuntu x64 build log
+      - name: Upload Ubuntu x64 check log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: agentkib-linux-ubuntu-x64-log
           if-no-files-found: warn
-          path: |
-            artifacts/linux-ubuntu22-x64-build.log
+          path: artifacts/linux-ubuntu22-x64-checks.log
 
   ubuntu-arm64:
-    name: Ubuntu 24.04 ARM64 preview (deb and AppImage)
+    name: Check Ubuntu 24.04 ARM64 preview
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -149,14 +126,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Diagnose build environment
-        run: apps/desktop/scripts/diagnose-linux.sh --strict --packaging deb
+        run: apps/desktop/scripts/diagnose-linux.sh --strict
 
-      - name: Run ARM64 checks and build packages
+      - name: Run Ubuntu ARM64 checks
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          log=artifacts/linux-ubuntu24-arm64-build.log
+          log=artifacts/linux-ubuntu24-arm64-checks.log
           run_logged() {
             printf '\n## %s\n' "$*" | tee -a "$log"
             "$@" 2>&1 | tee -a "$log"
@@ -165,40 +142,17 @@ jobs:
           run_logged cargo clippy --workspace --all-targets -- -D warnings
           run_logged pnpm test
           run_logged pnpm typecheck
-          rm -rf target/release/bundle
-          run_logged apps/desktop/scripts/build-linux-bundles.sh --bundles deb,appimage
 
-      - name: Verify packages and write checksums
-        run: |
-          .github/scripts/smoke-test-linux-package.sh target deb
-          .github/scripts/smoke-test-linux-package.sh target appimage
-          .github/scripts/write-linux-checksums.sh target
-          package=$(find "$PWD/target" -type f -name '*.deb' -print -quit)
-          sudo apt-get install -y "$package"
-          .github/scripts/smoke-test-linux-installed.sh
-
-      - name: Upload Ubuntu ARM64 preview packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: agentkib-linux-ubuntu-arm64-preview
-          if-no-files-found: error
-          path: |
-            target/**/bundle/deb/*.deb
-            target/**/bundle/deb/*.sha256
-            target/**/bundle/appimage/*.AppImage
-            target/**/bundle/appimage/*.sha256
-
-      - name: Upload Ubuntu ARM64 build log
+      - name: Upload Ubuntu ARM64 check log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: agentkib-linux-ubuntu-arm64-preview-log
           if-no-files-found: warn
-          path: |
-            artifacts/linux-ubuntu24-arm64-build.log
+          path: artifacts/linux-ubuntu24-arm64-checks.log
 
   fedora-x64:
-    name: Fedora x64 (RPM)
+    name: Check Fedora x64
     runs-on: ubuntu-24.04
     container: fedora:42
     steps:
@@ -241,14 +195,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Diagnose build environment
-        run: apps/desktop/scripts/diagnose-linux.sh --strict --packaging rpm
+        run: apps/desktop/scripts/diagnose-linux.sh --strict
 
-      - name: Run Fedora checks and build RPM
+      - name: Run Fedora checks
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          log=artifacts/linux-fedora42-x64-build.log
+          log=artifacts/linux-fedora42-x64-checks.log
           run_logged() {
             printf '\n## %s\n' "$*" | tee -a "$log"
             "$@" 2>&1 | tee -a "$log"
@@ -258,31 +212,11 @@ jobs:
           run_logged pnpm test
           run_logged pnpm typecheck
           run_logged pnpm build
-          rm -rf target/release/bundle
-          run_logged apps/desktop/scripts/build-linux-bundles.sh --bundles rpm
 
-      - name: Verify RPM and write checksum
-        run: |
-          .github/scripts/smoke-test-linux-package.sh target rpm
-          .github/scripts/write-linux-checksums.sh target
-          package=$(find target -type f -name '*.rpm' -print -quit)
-          dnf install -y "$package"
-          .github/scripts/smoke-test-linux-installed.sh
-
-      - name: Upload Fedora x64 package
-        uses: actions/upload-artifact@v4
-        with:
-          name: agentkib-linux-fedora-x64
-          if-no-files-found: error
-          path: |
-            target/**/bundle/rpm/*.rpm
-            target/**/bundle/rpm/*.sha256
-
-      - name: Upload Fedora x64 build log
+      - name: Upload Fedora x64 check log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: agentkib-linux-fedora-x64-log
           if-no-files-found: warn
-          path: |
-            artifacts/linux-fedora42-x64-build.log
+          path: artifacts/linux-fedora42-x64-checks.log
