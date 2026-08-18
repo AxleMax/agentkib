@@ -568,6 +568,83 @@ pub struct ContextPreview {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DoctorSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DoctorStatus {
+    Healthy,
+    Attention,
+    Unavailable,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorAssetStatus {
+    pub status: DoctorStatus,
+    pub expected: usize,
+    pub actual: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorAgentRow {
+    pub agent: AgentKind,
+    pub detected: bool,
+    pub installed: bool,
+    pub enabled: bool,
+    pub writable: bool,
+    pub instructions: DoctorAssetStatus,
+    pub skills: DoctorAssetStatus,
+    pub mcp: DoctorAssetStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorIssue {
+    pub id: String,
+    pub code: String,
+    pub severity: DoctorSeverity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_kind: Option<AssetKind>,
+    pub repairable: bool,
+    pub evidence: Vec<DoctorEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextDoctorSummary {
+    pub workspace_id: String,
+    pub error_count: usize,
+    pub warning_count: usize,
+    pub info_count: usize,
+    pub repairable_count: usize,
+    pub checked_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextDoctorReport {
+    pub summary: ContextDoctorSummary,
+    pub matrix: Vec<DoctorAgentRow>,
+    pub issues: Vec<DoctorIssue>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChangeScope {

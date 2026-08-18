@@ -582,6 +582,60 @@ pub fn plan_changeset(
     plan_workspace_changes(project, manifest, home)
 }
 
+pub fn plan_handoff_export(project: &Path, filename: &str, content: &str) -> Result<ChangeSet> {
+    if filename.is_empty()
+        || filename.contains(['/', '\\'])
+        || filename.contains("..")
+        || !(filename.ends_with(".md") || filename.ends_with(".json"))
+    {
+        anyhow::bail!("Handoff filename must be a Markdown or JSON basename");
+    }
+    if content.len() > 512 * 1024 {
+        anyhow::bail!("Handoff content exceeds 512 KiB");
+    }
+    let root = agentkib_core::canonical_project(project)?;
+    let mut changes = Vec::new();
+    let validator = if filename.ends_with(".json") {
+        "json"
+    } else {
+        "markdown"
+    };
+    push_change(
+        &mut changes,
+        root.join(".agentkib/handoffs").join(filename),
+        content.to_string(),
+        ChangeScope::Project,
+        RiskLevel::Low,
+        validator,
+    )?;
+    let ignore_path = root.join(".gitignore");
+    let before = fs::read_to_string(&ignore_path).unwrap_or_default();
+    let ignore_rule = ".agentkib/handoffs/";
+    if !before.lines().any(|line| line.trim() == ignore_rule) {
+        let mut after = before.clone();
+        if !after.is_empty() && !after.ends_with('\n') {
+            after.push('\n');
+        }
+        after.push_str(ignore_rule);
+        after.push('\n');
+        push_change(
+            &mut changes,
+            ignore_path,
+            after,
+            ChangeScope::Project,
+            RiskLevel::Low,
+            "text",
+        )?;
+    }
+    Ok(ChangeSet {
+        id: Uuid::new_v4().to_string(),
+        project_root: root,
+        created_at: Utc::now(),
+        changes,
+        requires_home_approval: false,
+    })
+}
+
 fn adapter_enabled(manifest: &Manifest, agent: AgentKind) -> bool {
     manifest
         .adapters
@@ -1418,5 +1472,27 @@ mod tests {
                 .ends_with(".claude/skills/reviewer/references/checklist.md")
                 && change.after == "- Run tests"
         }));
+    }
+
+    #[test]
+    fn handoff_export_is_project_scoped_and_ignored_by_git() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "target/\n").unwrap();
+        let plan = plan_handoff_export(dir.path(), "handoff.md", "# Handoff\n").unwrap();
+        assert!(!plan.requires_home_approval);
+        assert!(plan.changes.iter().any(|change| {
+            change.target.ends_with(".agentkib/handoffs/handoff.md")
+                && matches!(change.scope, ChangeScope::Project)
+        }));
+        assert!(plan.changes.iter().any(|change| {
+            change.target.ends_with(".gitignore") && change.after.contains(".agentkib/handoffs/")
+        }));
+    }
+
+    #[test]
+    fn handoff_export_rejects_path_traversal_and_wrong_extensions() {
+        let dir = tempdir().unwrap();
+        assert!(plan_handoff_export(dir.path(), "../private.md", "text").is_err());
+        assert!(plan_handoff_export(dir.path(), "handoff.txt", "text").is_err());
     }
 }

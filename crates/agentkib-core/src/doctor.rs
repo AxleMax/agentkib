@@ -1,0 +1,729 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use chrono::Utc;
+
+use crate::{
+    AgentKind, AssetKind, ContextDoctorReport, ContextDoctorSummary, DoctorAgentRow,
+    DoctorAssetStatus, DoctorEvidence, DoctorIssue, DoctorSeverity, DoctorStatus, Manifest,
+    hash_content, load_manifest, manifest_path, resolve_context, scan_workspace,
+};
+
+pub fn diagnose_workspace(
+    project: &Path,
+    workspace_id: &str,
+    installed_agents: &BTreeSet<AgentKind>,
+    visible_connections: &BTreeMap<AgentKind, Vec<String>>,
+) -> Result<ContextDoctorReport> {
+    let scan = scan_workspace(project)?;
+    let manifest_result = if manifest_path(project).is_file() {
+        Some(load_manifest(project))
+    } else {
+        None
+    };
+    let manifest = manifest_result
+        .as_ref()
+        .and_then(|value| value.as_ref().ok());
+    let manifest_invalid = manifest_result.as_ref().is_some_and(Result::is_err);
+    let mut issues = Vec::new();
+
+    if let Some(Err(error)) = manifest_result.as_ref() {
+        push_issue(
+            &mut issues,
+            "manifest.invalid",
+            DoctorSeverity::Error,
+            None,
+            Some(AssetKind::Configuration),
+            false,
+            Some(manifest_path(project)),
+            error.to_string(),
+            None,
+            None,
+        );
+    }
+
+    for warning in &scan.warnings {
+        push_issue(
+            &mut issues,
+            "native.invalid",
+            DoctorSeverity::Error,
+            scan.agents
+                .iter()
+                .find(|item| item.warnings.contains(warning))
+                .map(|item| item.agent),
+            Some(AssetKind::Configuration),
+            false,
+            None,
+            warning.clone(),
+            None,
+            None,
+        );
+    }
+
+    if let Some(manifest) = manifest {
+        diagnose_skill_sources(project, manifest, &mut issues);
+        diagnose_managed_files(project, manifest, &mut issues);
+    }
+
+    let mut matrix = Vec::new();
+    for agent in AgentKind::ALL {
+        let detected = scan
+            .agents
+            .iter()
+            .find(|item| item.agent == agent)
+            .is_some_and(|item| item.detected);
+        let installed = installed_agents.contains(&agent);
+        let applicable = detected || installed;
+        let writable = AgentKind::WRITABLE.contains(&agent);
+        let enabled = writable
+            && manifest
+                .is_some_and(|value| value.adapters.get(&agent).is_none_or(|state| state.enabled));
+        let diagnostically_active = applicable && (enabled || agent == AgentKind::DeepSeekHarness);
+        let mut instruction_expected = 0;
+        let mut instruction_actual = 0;
+        let mut skill_expected = 0;
+        let mut skill_actual = 0;
+
+        if let Some(manifest) = manifest {
+            instruction_expected = usize::from(!manifest.instructions.shared.trim().is_empty())
+                + usize::from(
+                    manifest
+                        .instructions
+                        .platform_overrides
+                        .get(&agent)
+                        .is_some_and(|value| !value.trim().is_empty()),
+                );
+            skill_expected = manifest
+                .skills
+                .iter()
+                .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
+                .count();
+            skill_actual = manifest
+                .skills
+                .iter()
+                .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
+                .filter(|skill| generated_skill_exists(project, agent, &skill.name))
+                .count();
+        }
+
+        if diagnostically_active {
+            match resolve_context(project, project, agent, manifest, Vec::new()) {
+                Ok(preview) => {
+                    let native_sections: Vec<_> = preview
+                        .sections
+                        .iter()
+                        .filter(|section| section.source != manifest_path(project))
+                        .collect();
+                    instruction_actual = native_sections.len();
+                    for warning in preview.warnings {
+                        // The resolver exposes this advisory for the preview UI, but Doctor only
+                        // reports conditions that can be proven from files and parsed context.
+                        if warning.contains("semantic conflicts")
+                            || warning.contains("No project instruction")
+                                && instruction_expected == 0
+                        {
+                            continue;
+                        }
+                        let repairable = warning.contains("No project instruction")
+                            && instruction_expected > 0
+                            && enabled
+                            && writable;
+                        push_issue(
+                            &mut issues,
+                            if warning.contains("No project instruction") {
+                                "instruction.missing"
+                            } else {
+                                "context.warning"
+                            },
+                            DoctorSeverity::Warning,
+                            Some(agent),
+                            Some(AssetKind::Instruction),
+                            repairable,
+                            None,
+                            warning,
+                            None,
+                            None,
+                        );
+                    }
+                    diagnose_exact_duplicates(agent, &native_sections, &mut issues);
+                    if instruction_expected > 0
+                        && !native_sections.is_empty()
+                        && !native_sections.iter().any(|section| {
+                            manifest.is_some_and(|value| {
+                                contains_normalized(&section.content, &value.instructions.shared)
+                                    || value
+                                        .instructions
+                                        .platform_overrides
+                                        .get(&agent)
+                                        .is_some_and(|expected| {
+                                            contains_normalized(&section.content, expected)
+                                        })
+                            })
+                        })
+                    {
+                        push_issue(
+                            &mut issues,
+                            "instruction.expected-content-missing",
+                            DoctorSeverity::Warning,
+                            Some(agent),
+                            Some(AssetKind::Instruction),
+                            enabled && writable,
+                            None,
+                            "Configured instructions are not present in native context sources"
+                                .into(),
+                            Some(instruction_expected.to_string()),
+                            Some(instruction_actual.to_string()),
+                        );
+                    }
+                }
+                Err(error) => push_issue(
+                    &mut issues,
+                    "context.unavailable",
+                    DoctorSeverity::Error,
+                    Some(agent),
+                    Some(AssetKind::Instruction),
+                    false,
+                    None,
+                    error.to_string(),
+                    None,
+                    None,
+                ),
+            }
+        }
+
+        if diagnostically_active && skill_actual < skill_expected {
+            push_issue(
+                &mut issues,
+                "skill.target-missing",
+                DoctorSeverity::Warning,
+                Some(agent),
+                Some(AssetKind::Skill),
+                enabled
+                    && matches!(
+                        agent,
+                        AgentKind::Codex
+                            | AgentKind::ClaudeCode
+                            | AgentKind::OpenClaw
+                            | AgentKind::Hermes
+                    ),
+                None,
+                "Manifest Skills are not all visible in the target Agent's project paths".into(),
+                Some(skill_expected.to_string()),
+                Some(skill_actual.to_string()),
+            );
+        }
+
+        if agent == AgentKind::DeepSeekHarness && detected {
+            push_issue(
+                &mut issues,
+                "agent.read-only",
+                DoctorSeverity::Info,
+                Some(agent),
+                None,
+                false,
+                None,
+                "DeepSeek Harness is available for diagnostics only".into(),
+                None,
+                None,
+            );
+        }
+
+        let mcp_actual = visible_connections.get(&agent).map_or(0, Vec::len);
+        let agent_issues: Vec<_> = issues
+            .iter()
+            .filter(|issue| issue.agent == Some(agent))
+            .collect();
+        let instruction_attention = agent_issues.iter().any(|issue| {
+            issue.asset_kind == Some(AssetKind::Instruction)
+                && issue.severity != DoctorSeverity::Info
+        });
+        let skill_attention = agent_issues.iter().any(|issue| {
+            issue.asset_kind == Some(AssetKind::Skill) && issue.severity != DoctorSeverity::Info
+        }) || skill_actual < skill_expected;
+        let mcp_attention = agent_issues.iter().any(|issue| {
+            issue.asset_kind == Some(AssetKind::Connection)
+                && issue.severity != DoctorSeverity::Info
+        });
+        let base_status = if applicable && manifest_invalid {
+            DoctorStatus::Unavailable
+        } else if diagnostically_active {
+            DoctorStatus::Healthy
+        } else {
+            DoctorStatus::NotApplicable
+        };
+        matrix.push(DoctorAgentRow {
+            agent,
+            detected,
+            installed,
+            enabled,
+            writable,
+            instructions: DoctorAssetStatus {
+                status: attention_status(base_status, instruction_attention),
+                expected: instruction_expected,
+                actual: instruction_actual,
+            },
+            skills: DoctorAssetStatus {
+                status: attention_status(base_status, skill_attention),
+                expected: skill_expected,
+                actual: skill_actual,
+            },
+            mcp: DoctorAssetStatus {
+                status: attention_status(base_status, mcp_attention),
+                expected: mcp_actual,
+                actual: mcp_actual,
+            },
+        });
+    }
+
+    for issue in &mut issues {
+        for evidence in &mut issue.evidence {
+            if evidence.path.is_none() {
+                evidence.path = Some(project.to_path_buf());
+            }
+        }
+    }
+    issues.sort_by_key(|issue| {
+        (
+            severity_rank(issue.severity),
+            issue.code.clone(),
+            issue.id.clone(),
+        )
+    });
+    let summary = ContextDoctorSummary {
+        workspace_id: workspace_id.to_string(),
+        error_count: issues
+            .iter()
+            .filter(|issue| issue.severity == DoctorSeverity::Error)
+            .count(),
+        warning_count: issues
+            .iter()
+            .filter(|issue| issue.severity == DoctorSeverity::Warning)
+            .count(),
+        info_count: issues
+            .iter()
+            .filter(|issue| issue.severity == DoctorSeverity::Info)
+            .count(),
+        repairable_count: issues.iter().filter(|issue| issue.repairable).count(),
+        checked_at: Utc::now(),
+    };
+    Ok(ContextDoctorReport {
+        summary,
+        matrix,
+        issues,
+    })
+}
+
+fn diagnose_skill_sources(project: &Path, manifest: &Manifest, issues: &mut Vec<DoctorIssue>) {
+    for skill in &manifest.skills {
+        let source = project.join(&skill.path);
+        let readable = if source.is_file() {
+            fs::read_to_string(&source).is_ok()
+        } else {
+            source.join("SKILL.md").is_file() && fs::read_to_string(source.join("SKILL.md")).is_ok()
+        };
+        if !readable {
+            push_issue(
+                issues,
+                "skill.source-unavailable",
+                DoctorSeverity::Error,
+                None,
+                Some(AssetKind::Skill),
+                false,
+                Some(source),
+                format!(
+                    "Skill source is missing, unreadable, or has no SKILL.md: {}",
+                    skill.name
+                ),
+                None,
+                None,
+            );
+        }
+    }
+}
+
+fn diagnose_managed_files(project: &Path, manifest: &Manifest, issues: &mut Vec<DoctorIssue>) {
+    for (agent, state) in &manifest.adapters {
+        for (target, expected) in &state.generated_hashes {
+            let path = PathBuf::from(target);
+            let path = if path.is_absolute() {
+                path
+            } else {
+                project.join(path)
+            };
+            let actual = fs::read(&path).ok().map(|content| hash_content(&content));
+            if actual.as_deref() == Some(expected) {
+                continue;
+            }
+            let missing = actual.is_none();
+            let project_scoped = path.starts_with(project);
+            push_issue(
+                issues,
+                if missing {
+                    "managed.missing"
+                } else {
+                    "managed.drift"
+                },
+                DoctorSeverity::Warning,
+                Some(*agent),
+                Some(asset_kind_for_path(&path)),
+                project_scoped && state.enabled && AgentKind::WRITABLE.contains(agent),
+                Some(path),
+                if missing {
+                    "AgentKib-managed file is missing".into()
+                } else {
+                    "AgentKib-managed file differs from its recorded hash".into()
+                },
+                Some(expected.clone()),
+                actual,
+            );
+        }
+    }
+}
+
+fn diagnose_exact_duplicates(
+    agent: AgentKind,
+    sections: &[&crate::ContextSection],
+    issues: &mut Vec<DoctorIssue>,
+) {
+    let mut seen: HashMap<String, &Path> = HashMap::new();
+    for section in sections {
+        let normalized = normalize(&section.content);
+        if normalized.is_empty() {
+            continue;
+        }
+        if let Some(first) = seen.insert(normalized, &section.source) {
+            push_issue(
+                issues,
+                "instruction.exact-duplicate",
+                DoctorSeverity::Warning,
+                Some(agent),
+                Some(AssetKind::Instruction),
+                false,
+                Some(section.source.clone()),
+                format!("Exact duplicate of {}", first.display()),
+                None,
+                None,
+            );
+        }
+    }
+}
+
+fn generated_skill_exists(project: &Path, agent: AgentKind, name: &str) -> bool {
+    let roots: &[&str] = match agent {
+        AgentKind::ClaudeCode => &[".claude/skills"],
+        AgentKind::Cursor => &[".cursor/skills"],
+        AgentKind::DeepSeekHarness => &[".dsh/skills", ".agents/skills"],
+        AgentKind::OpenClaw => &["skills", ".agents/skills"],
+        AgentKind::Codex | AgentKind::Hermes => &[".agents/skills"],
+    };
+    roots
+        .iter()
+        .any(|root| project.join(root).join(name).exists())
+}
+
+fn asset_kind_for_path(path: &Path) -> AssetKind {
+    let value = path.to_string_lossy();
+    if value.contains("skills") {
+        AssetKind::Skill
+    } else if value.ends_with("AGENTS.md")
+        || value.ends_with("CLAUDE.md")
+        || value.ends_with(".hermes.md")
+        || value.contains("/rules/")
+    {
+        AssetKind::Instruction
+    } else if value.contains("mcp") || value.ends_with("config.toml") {
+        AssetKind::Connection
+    } else {
+        AssetKind::Configuration
+    }
+}
+
+fn attention_status(base: DoctorStatus, attention: bool) -> DoctorStatus {
+    if base == DoctorStatus::NotApplicable {
+        base
+    } else if attention {
+        DoctorStatus::Attention
+    } else {
+        base
+    }
+}
+
+fn contains_normalized(content: &str, expected: &str) -> bool {
+    let expected = normalize(expected);
+    expected.is_empty() || normalize(content).contains(&expected)
+}
+
+fn normalize(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_issue(
+    issues: &mut Vec<DoctorIssue>,
+    code: &str,
+    severity: DoctorSeverity,
+    agent: Option<AgentKind>,
+    asset_kind: Option<AssetKind>,
+    repairable: bool,
+    path: Option<PathBuf>,
+    detail: String,
+    expected: Option<String>,
+    actual: Option<String>,
+) {
+    let id_source = format!("{code}:{agent:?}:{path:?}:{detail}");
+    let id = hash_content(id_source.as_bytes())[..16].to_string();
+    issues.push(DoctorIssue {
+        id,
+        code: code.into(),
+        severity,
+        agent,
+        asset_kind,
+        repairable,
+        evidence: vec![DoctorEvidence {
+            path,
+            detail,
+            expected,
+            actual,
+        }],
+    });
+}
+
+fn severity_rank(severity: DoctorSeverity) -> usize {
+    match severity {
+        DoctorSeverity::Error => 0,
+        DoctorSeverity::Warning => 1,
+        DoctorSeverity::Info => 2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AdapterState, InstructionSet, MemoryPolicy, SkillDefinition, WorkspaceIdentity};
+    use tempfile::tempdir;
+
+    fn manifest(_project: &Path) -> Manifest {
+        Manifest {
+            schema_version: 2,
+            workspace: WorkspaceIdentity {
+                id: "workspace".into(),
+                name: "demo".into(),
+            },
+            instructions: InstructionSet {
+                shared: "Shared rule".into(),
+                ..Default::default()
+            },
+            skills: Vec::new(),
+            mcp: Default::default(),
+            connections: Vec::new(),
+            memories: MemoryPolicy::default(),
+            adapters: AgentKind::WRITABLE
+                .into_iter()
+                .map(|agent| {
+                    (
+                        agent,
+                        AdapterState {
+                            enabled: true,
+                            generated_hashes: Default::default(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn reports_missing_managed_file_as_repairable() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value
+            .adapters
+            .get_mut(&AgentKind::Codex)
+            .unwrap()
+            .generated_hashes
+            .insert("AGENTS.md".into(), hash_content(b"Shared rule"));
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "managed.missing" && issue.repairable)
+        );
+        fs::write(dir.path().join("AGENTS.md"), "Shared rule").unwrap();
+        let repaired = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(
+            repaired
+                .issues
+                .iter()
+                .all(|issue| issue.code != "managed.missing" && issue.code != "managed.drift")
+        );
+    }
+
+    #[test]
+    fn reports_unreadable_skill_source_without_offering_repair() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "missing".into(),
+            path: ".agents/skills/missing".into(),
+            targets: Vec::new(),
+        });
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        let report =
+            diagnose_workspace(dir.path(), "workspace", &BTreeSet::new(), &BTreeMap::new())
+                .unwrap();
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "skill.source-unavailable" && !issue.repairable)
+        );
+    }
+
+    #[test]
+    fn healthy_managed_context_has_no_error_or_warning() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.adapters.remove(&AgentKind::Codex);
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "Shared rule").unwrap();
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(report.summary.error_count, 0);
+        assert_eq!(report.summary.warning_count, 0);
+        assert!(
+            report
+                .matrix
+                .iter()
+                .find(|row| row.agent == AgentKind::Codex)
+                .unwrap()
+                .enabled
+        );
+        assert_eq!(
+            report
+                .matrix
+                .iter()
+                .find(|row| row.agent == AgentKind::Codex)
+                .unwrap()
+                .instructions
+                .status,
+            DoctorStatus::Healthy
+        );
+    }
+
+    #[test]
+    fn disabled_agent_is_neutral_and_not_offered_repairs() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.adapters.get_mut(&AgentKind::Codex).unwrap().enabled = false;
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| issue.agent != Some(AgentKind::Codex))
+        );
+        assert_eq!(
+            report
+                .matrix
+                .iter()
+                .find(|row| row.agent == AgentKind::Codex)
+                .unwrap()
+                .instructions
+                .status,
+            DoctorStatus::NotApplicable
+        );
+    }
+
+    #[test]
+    fn reports_invalid_manifest_and_exact_duplicate_context() {
+        let invalid = tempdir().unwrap();
+        fs::create_dir(invalid.path().join(".agentkib")).unwrap();
+        fs::write(manifest_path(invalid.path()), "schema_version: nope").unwrap();
+        let report = diagnose_workspace(
+            invalid.path(),
+            "invalid",
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "manifest.invalid")
+        );
+
+        let duplicate = tempdir().unwrap();
+        let value = manifest(duplicate.path());
+        fs::create_dir_all(duplicate.path().join(".agentkib")).unwrap();
+        fs::create_dir_all(duplicate.path().join(".claude")).unwrap();
+        fs::write(
+            manifest_path(duplicate.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        fs::write(duplicate.path().join("CLAUDE.md"), "Shared rule").unwrap();
+        fs::write(duplicate.path().join(".claude/CLAUDE.md"), "Shared rule").unwrap();
+        let report = diagnose_workspace(
+            duplicate.path(),
+            "duplicate",
+            &BTreeSet::from([AgentKind::ClaudeCode]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "instruction.exact-duplicate")
+        );
+    }
+}

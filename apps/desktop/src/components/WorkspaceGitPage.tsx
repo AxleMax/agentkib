@@ -171,7 +171,12 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
   useEffect(() => { void load(); }, [workspace.id, appliedFilters]);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => setAppliedFilters({ reference, author, since, until, path, mergesOnly }), 300);
+    const timeout = window.setTimeout(() => setAppliedFilters((current) => {
+      const next = { reference, author, since, until, path, mergesOnly };
+      return Object.entries(next).every(([key, value]) => current[key as keyof typeof current] === value)
+        ? current
+        : next;
+    }), 300);
     return () => window.clearTimeout(timeout);
   }, [reference, author, since, until, path, mergesOnly]);
 

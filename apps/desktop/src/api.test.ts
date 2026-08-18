@@ -105,6 +105,43 @@ describe("AgentKib API boundary", () => {
     });
   });
 
+  it("keeps Doctor diagnostics scoped to stored workspace ids", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+
+    await api.workspaceDoctorSummaries(["workspace-1"]);
+    expect(invoke).toHaveBeenCalledWith("get_workspace_doctor_summaries", { workspaceIds: ["workspace-1"] });
+
+    await api.workspaceDoctorReport("workspace-1");
+    expect(invoke).toHaveBeenCalledWith("get_workspace_doctor_report", { workspaceId: "workspace-1" });
+  });
+
+  it("previews handoffs before planning a ChangeSet save", async () => {
+    vi.mocked(invoke).mockResolvedValue({ status: "ready", draft: { filename: "handoff.md", content: "# handoff" } });
+    const request = { session_id: "hashed-session", target_agent: "claude-code" as const, format: "markdown" as const };
+
+    await api.prepareSessionHandoff(request);
+    expect(invoke).toHaveBeenCalledWith("prepare_session_handoff", { request });
+
+    await api.summarizeSessionHandoff(request);
+    expect(invoke).toHaveBeenCalledWith("summarize_session_handoff", { request });
+
+    await api.planSessionHandoff("workspace-1", "handoff.md", "markdown", "# handoff", "claude-code");
+    expect(invoke).toHaveBeenCalledWith("plan_session_handoff", {
+      workspaceId: "workspace-1",
+      filename: "handoff.md",
+      format: "markdown",
+      editedContent: "# handoff",
+      targetAgent: "claude-code",
+    });
+
+    const launchRequest = { workspace_id: "workspace-1", filename: "handoff.md", target_agent: "claude-code" as const };
+    const changeSet = { id: "changes", project_root: "/tmp/project", created_at: "2026-08-18T00:00:00Z", changes: [], requires_home_approval: false };
+    await api.continueSessionHandoff(changeSet, launchRequest);
+    expect(invoke).toHaveBeenCalledWith("continue_session_handoff", { changeSet, launchRequest });
+    await api.launchSessionHandoff(launchRequest);
+    expect(invoke).toHaveBeenCalledWith("launch_session_handoff", { launchRequest });
+  });
+
   it("refreshes only the selected workspace conversation index", async () => {
     vi.mocked(invoke).mockResolvedValue([]);
 

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, AppIconPreference, CatalogAsset, ChangeSet, CloseBehavior, ContextPreview, ConversationEventPage, ConversationIndexStatus, ConversationSessionSummary, ExcludedWorkspace, GitCommitPage, GitDiff, GitDiffRequest, GitFileChange, GitHistoryQuery, GitIdentitySummary, GitWorkspaceSummary, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, StorageNode, StorageOverview, ThemePreference, WorkspaceOpener, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
+import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, AppIconPreference, CatalogAsset, ChangeSet, CloseBehavior, ContextDoctorReport, ContextDoctorSummary, ContextPreview, ConversationEventPage, ConversationIndexStatus, ConversationSessionSummary, ExcludedWorkspace, GitCommitPage, GitDiff, GitDiffRequest, GitFileChange, GitHistoryQuery, GitIdentitySummary, GitWorkspaceSummary, HandoffContinuationResult, HandoffFormat, HandoffLaunchReceipt, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, PlannedSessionHandoff, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, SessionHandoffDraft, SessionHandoffLaunchRequest, SessionHandoffPreparation, SessionHandoffRequest, StorageNode, StorageOverview, ThemePreference, WorkspaceOpener, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
@@ -61,6 +61,11 @@ export const api = {
   workspaceSessions: (workspaceId: string) => invoke<ConversationSessionSummary[]>("list_workspace_sessions", { workspaceId }),
   refreshWorkspaceSessions: (workspaceId: string, force = false) => invoke<ConversationSessionSummary[]>("refresh_workspace_sessions", { workspaceId, force }),
   sessionEvents: (sessionId: string, cursor?: string, limit = 100) => invoke<ConversationEventPage>("read_session_events", { sessionId, cursor, limit }),
+  prepareSessionHandoff: (request: SessionHandoffRequest) => invoke<SessionHandoffPreparation>("prepare_session_handoff", { request }),
+  summarizeSessionHandoff: (request: SessionHandoffRequest) => invoke<SessionHandoffDraft>("summarize_session_handoff", { request }),
+  planSessionHandoff: (workspaceId: string, filename: string, format: HandoffFormat, editedContent: string, targetAgent: AgentKind) => invoke<PlannedSessionHandoff>("plan_session_handoff", { workspaceId, filename, format, editedContent, targetAgent }),
+  continueSessionHandoff: (changeSet: ChangeSet, launchRequest: SessionHandoffLaunchRequest) => invoke<HandoffContinuationResult>("continue_session_handoff", { changeSet, launchRequest }),
+  launchSessionHandoff: (launchRequest: SessionHandoffLaunchRequest) => invoke<HandoffLaunchReceipt>("launch_session_handoff", { launchRequest }),
   workspaceSessionStatus: (workspaceId: string) => invoke<ConversationIndexStatus[]>("get_workspace_session_status", { workspaceId }),
   clearSessionIndex: (workspaceId?: string) => invoke<void>("clear_session_index", { workspaceId }),
   setSessionIndexEnabled: (enabled: boolean) => invoke<RuntimeInfo>("set_session_index_enabled", { enabled }),
@@ -83,6 +88,8 @@ export const api = {
   addScanRoot: (path: string, maxDepth = 5) => invoke<ScanRoot>("add_scan_root", { path, maxDepth }),
   removeScanRoot: (id: string) => invoke<void>("remove_scan_root", { id }),
   agentInstallations: () => invoke<AgentInstallation[]>("list_agent_installations"),
+  workspaceDoctorReport: (workspaceId: string) => invoke<ContextDoctorReport>("get_workspace_doctor_report", { workspaceId }),
+  workspaceDoctorSummaries: (workspaceIds: string[]) => invoke<ContextDoctorSummary[]>("get_workspace_doctor_summaries", { workspaceIds }),
   catalogAssets: (query = "", agent?: AgentKind, workspaceId?: string, limit = 500) => invoke<CatalogAsset[]>("search_catalog_assets", { query, agent, workspaceId, limit }),
   globalMemories: (status?: MemoryStatus) => invoke<MemoryRecord[]>("list_global_memories", { status }),
   activity: (limit = 200) => invoke<ActivityRecord[]>("list_activity", { limit }),

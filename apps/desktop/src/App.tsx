@@ -14,6 +14,7 @@ import { RemoteGatewaysSettings } from "./components/RemoteGateways";
 import { QuotaDiagnostics } from "./components/QuotaDiagnostics";
 import { WorkspaceStoragePage } from "./components/WorkspaceStoragePage";
 import { WorkspaceSessionsPage } from "./components/WorkspaceSessionsPage";
+import { WorkspaceDoctorPage } from "./components/WorkspaceDoctorPage";
 import { WorkspaceGitPage, type GitSubview } from "./components/WorkspaceGitPage";
 import { WorkspaceOpenWith } from "./components/WorkspaceOpenWith";
 import type { InsightsSection } from "./components/InsightsPage";
@@ -22,14 +23,15 @@ import { diffLines } from "./diff";
 import { changeLocale, formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "./i18n";
 import { applyTheme } from "./theme";
 import { normalizePlatform, primaryShortcutModifier, usesSystemTrayWording } from "./platform";
-import type { ActivityRecord, AgentInstallation, AgentKind, AppIconPreference, AppMenuCommandRequest, AppNavigationRequest, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, QuotaCollectorStatus, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RemoteGatewaySummary, RuntimeInfo, ScanRoot, ThemePreference, WorkspaceScan, WorkspaceSummary } from "./types";
+import type { ActivityRecord, AgentInstallation, AgentKind, AppIconPreference, AppMenuCommandRequest, AppNavigationRequest, CatalogAsset, ChangeSet, CloseBehavior, ConnectionDefinition, ContextDoctorSummary, ContextPreview, DiscoveryReport, EffectiveTheme, ExcludedWorkspace, GitIdentitySummary, InsightsStatus, InsightsSummary, LocalePreference, Manifest, McpInstallation, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, MemoryRecord, MemoryType, QuotaCollectorStatus, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RemoteGatewaySummary, RuntimeInfo, ScanRoot, SessionHandoffLaunchRequest, ThemePreference, WorkspaceScan, WorkspaceSummary } from "./types";
 
-type Page = "overview" | "sessions" | "git" | "assets" | "context" | "changes";
+type Page = "overview" | "sessions" | "git" | "assets" | "context" | "doctor" | "changes";
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
 type AppMode = "main" | "settings";
 type AssetSection = "instructions" | "skills" | "mcp" | "memory" | "other";
 type WorkspaceAssetSection = "instructions" | "skills" | "mcp" | "native";
 type WorkspaceView = "list" | "storage";
+type ChangeSetOrigin = "standard" | "doctor" | "handoff";
 
 const AgentsPageLazy = lazy(() => import("./components/AgentsPage").then(({ AgentsPage }) => ({ default: AgentsPage })));
 const InsightsPageLazy = lazy(() => import("./components/InsightsPage").then(({ InsightsPage }) => ({ default: InsightsPage })));
@@ -42,7 +44,7 @@ const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": 
 const writableAgentKinds: AgentKind[] = ["codex", "claude-code", "cursor", "open-claw", "hermes"];
 const workspaceTabs = [
   ["overview", "nav.overview", LayoutDashboard], ["sessions", "nav.sessions", MessageSquareText], ["git", "nav.git", GitCommitHorizontal], ["assets", "nav.assets", Boxes],
-  ["context", "nav.context", Code2], ["changes", "nav.changes", GitCompareArrows],
+  ["context", "nav.context", Code2], ["doctor", "nav.doctor", ShieldCheck], ["changes", "nav.changes", GitCompareArrows],
 ] as const;
 const globalNav: SidebarEntry<GlobalPage>[] = [
   { id: "home", label: "nav.home", icon: Home },
@@ -64,12 +66,15 @@ export function App() {
   const [scan, setScan] = useState<WorkspaceScan>();
   const [manifest, setManifest] = useState<Manifest>();
   const [changeSet, setChangeSet] = useState<ChangeSet>();
+  const [changeSetOrigin, setChangeSetOrigin] = useState<ChangeSetOrigin>("standard");
+  const [handoffLaunchRequest, setHandoffLaunchRequest] = useState<SessionHandoffLaunchRequest>();
   const [baselineManifest, setBaselineManifest] = useState("");
   const [workspaceDrafts, setWorkspaceDrafts] = useState<Record<string, Manifest>>({});
   const [runtime, setRuntime] = useState<RuntimeInfo>();
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]); const [installations, setInstallations] = useState<AgentInstallation[]>([]);
+  const [doctorSummaries, setDoctorSummaries] = useState<Record<string, ContextDoctorSummary>>({});
   const [catalog, setCatalog] = useState<CatalogAsset[]>([]); const [globalMemories, setGlobalMemories] = useState<MemoryRecord[]>([]); const [activity, setActivity] = useState<ActivityRecord[]>([]);
   const [scanRoots, setScanRoots] = useState<ScanRoot[]>([]); const [excluded, setExcluded] = useState<ExcludedWorkspace[]>([]); const [discovery, setDiscovery] = useState<DiscoveryReport>();
   const [remoteGateways, setRemoteGateways] = useState<RemoteGatewaySummary[]>([]);
@@ -107,6 +112,10 @@ export function App() {
     ]);
     setWorkspaces(nextWorkspaces); setInstallations(nextInstallations); setCatalog(nextCatalog); setGlobalMemories(nextMemories); setActivity(nextActivity); setScanRoots(nextRoots); setExcluded(nextExcluded); setRuntime(nextRuntime); setRemoteGateways(nextRemoteGateways);
     try {
+      const summaries = await api.workspaceDoctorSummaries(nextWorkspaces.map((workspace) => workspace.id));
+      setDoctorSummaries(Object.fromEntries(summaries.map((summary) => [summary.workspace_id, summary])));
+    } catch { setDoctorSummaries({}); }
+    try {
       const [summary, status] = await Promise.all([api.insightsSummary(), api.insightsStatus()]);
       setInsightsSummary(summary); setInsightsStatus(status);
     } catch { /* 首次迁移或后台采集尚未完成时显示空状态。 */ }
@@ -120,6 +129,10 @@ export function App() {
     setWorkspaces(nextWorkspaces);
     setInstallations(nextInstallations);
     setCatalog(nextCatalog);
+    try {
+      const summaries = await api.workspaceDoctorSummaries(nextWorkspaces.map((workspace) => workspace.id));
+      setDoctorSummaries(Object.fromEntries(summaries.map((summary) => [summary.workspace_id, summary])));
+    } catch { setDoctorSummaries({}); }
   };
 
   useEffect(() => {
@@ -226,14 +239,17 @@ export function App() {
   const leaveWorkspace = (next: () => void) => {
     if (hasUnsavedDraft && !window.confirm(tr("workspace.leaveDraftConfirm"))) return;
     if (selectedWorkspace) setWorkspaceDrafts((drafts) => { const nextDrafts = { ...drafts }; delete nextDrafts[selectedWorkspace.id]; return nextDrafts; });
-    setGitSubview(undefined); setSelectedWorkspace(undefined); setProject(""); setScan(undefined); setManifest(undefined); setChangeSet(undefined); setBaselineManifest(""); next();
+    setGitSubview(undefined); setSelectedWorkspace(undefined); setProject(""); setScan(undefined); setManifest(undefined); setChangeSet(undefined); setChangeSetOrigin("standard"); setHandoffLaunchRequest(undefined); setBaselineManifest(""); next();
   };
-  const openWorkspace = async (workspace: WorkspaceSummary) => {
+  const openWorkspace = async (workspace: WorkspaceSummary, initialPage: Page = "overview") => {
     persistWorkspaceDraft(); setBusy(true); setMessage("");
     try {
-      const [nextScan, nextManifest, nextRuntime] = await Promise.all([api.scan(workspace.path), api.manifest(workspace.path), api.runtime()]);
-      setPage("overview"); setGitSubview(undefined); setChangeSet(undefined); setProject(workspace.path); setScan(nextScan);
-      setManifest(workspaceDrafts[workspace.id] ?? nextManifest); setBaselineManifest(JSON.stringify(nextManifest)); setRuntime(nextRuntime);
+      const [nextScan, nextRuntime] = await Promise.all([api.scan(workspace.path), api.runtime()]);
+      let nextManifest: Manifest | undefined;
+      try { nextManifest = await api.manifest(workspace.path); }
+      catch (error) { setMessage(localizeMessage(error)); }
+      setPage(nextManifest ? initialPage : "doctor"); setGitSubview(undefined); setChangeSet(undefined); setChangeSetOrigin("standard"); setHandoffLaunchRequest(undefined); setProject(workspace.path); setScan(nextScan);
+      setManifest(nextManifest ? (workspaceDrafts[workspace.id] ?? nextManifest) : undefined); setBaselineManifest(nextManifest ? JSON.stringify(nextManifest) : ""); setRuntime(nextRuntime);
       // Commit the route last so the workspace list remains visible while native scanning runs.
       setSelectedWorkspace(workspace);
     } catch (error) { setMessage(localizeMessage(error)); }
@@ -249,9 +265,18 @@ export function App() {
   const plan = async (includeHome = false) => {
     if (!project || !manifest) return;
     setBusy(true); setMessage("");
-    try { const changes = await api.plan(project, manifest, includeHome); setChangeSet(changes); setPage("changes"); }
+    try { const changes = await api.plan(project, manifest, includeHome); setChangeSet(changes); setChangeSetOrigin("standard"); setHandoffLaunchRequest(undefined); setPage("changes"); }
     catch (error) { setMessage(localizeMessage(error)); }
     finally { setBusy(false); }
+  };
+  const planDoctorRepairs = async () => {
+    if (!project) return;
+    const currentManifest = await api.manifest(project);
+    const changes = await api.plan(project, currentManifest, false);
+    setChangeSet(changes);
+    setChangeSetOrigin("doctor");
+    setHandoffLaunchRequest(undefined);
+    setPage("changes");
   };
   const refreshDiscovery = async () => { setMessage(""); try { await api.requestRefresh("discovery", true); } catch (error) { setMessage(localizeMessage(error)); } };
   const requestRefreshKinds = async (kinds: RefreshKind[]) => {
@@ -306,7 +331,7 @@ export function App() {
       </main>
     </div>
   );
-  if (selectedWorkspace && project && scan && manifest) return (
+  if (selectedWorkspace && project && scan) return (
     <div className={shellClass}>
       <WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <AppSidebar active="workspaces" entries={navigation} collapsed={sidebarCollapsed} onNavigate={navigateGlobal} onSettings={openSettings} />
@@ -316,12 +341,13 @@ export function App() {
         {message && <div className="alert"><CircleAlert size={17} />{message}</div>}
         <div className="workspace-tabs" role="tablist" aria-label={selectedWorkspace.name} onKeyDown={handleTabKey}>{workspaceTabs.map(([id, label, Icon]) => <button key={id} role="tab" aria-selected={page === id} className={page === id ? "active" : ""} onClick={() => { if (id !== "git") setGitSubview(undefined); setPage(id); }}><Icon size={15} />{tr(label)}{id === "changes" && changeSet?.changes.length ? <em>{changeSet.changes.length}</em> : null}</button>)}</div>
         <section className={`content workspace-content${page === "git" ? " workspace-git-content" : ""}`}>
-          {page === "overview" && <Overview workspace={selectedWorkspace} scan={scan} manifest={manifest} />}
-          {page === "sessions" && <WorkspaceSessionsPage workspace={selectedWorkspace} enabled={runtime?.session_index_enabled !== false} onRuntimeChanged={async (enabled) => { setRuntime(await api.setSessionIndexEnabled(enabled)); }} />}
+          {page === "overview" && manifest && <Overview workspace={selectedWorkspace} scan={scan} manifest={manifest} />}
+          {page === "sessions" && <WorkspaceSessionsPage workspace={selectedWorkspace} enabled={runtime?.session_index_enabled !== false} targetAgents={Array.from(new Set([...scan.agents.filter((agent) => agent.detected).map((agent) => agent.agent), ...installations.filter((agent) => agent.installed).map((agent) => agent.agent)]))} onRuntimeChanged={async (enabled) => { setRuntime(await api.setSessionIndexEnabled(enabled)); }} onHandoffPlanned={(planned) => { setChangeSet(planned.change_set); setHandoffLaunchRequest(planned.launch_request); setChangeSetOrigin("handoff"); setPage("changes"); }} />}
           {page === "git" && <WorkspaceGitPage workspace={selectedWorkspace} subview={gitSubview} onSubviewChange={setGitSubview} />}
-          {page === "assets" && <Assets section={workspaceAssetSection} onSection={setWorkspaceAssetSection} scan={scan} manifest={manifest} onChange={setManifest} />}
+          {page === "assets" && manifest && <Assets section={workspaceAssetSection} onSection={setWorkspaceAssetSection} scan={scan} manifest={manifest} onChange={setManifest} />}
           {page === "context" && <ContextPage project={project} onOpenInstructions={() => { setWorkspaceAssetSection("instructions"); setPage("assets"); }} />}
-          {page === "changes" && <Changes changeSet={changeSet} onPlanHome={() => plan(true)} onApplied={async () => { await load(); await loadGlobal(); }} onRejected={() => setChangeSet(undefined)} onApplyingChange={setApplyingChanges} />}
+          {page === "doctor" && <WorkspaceDoctorPage workspace={selectedWorkspace} onRepair={planDoctorRepairs} />}
+          {page === "changes" && <Changes changeSet={changeSet} origin={changeSetOrigin} launchRequest={handoffLaunchRequest} onPlanHome={() => plan(true)} onApplied={async (keepLaunchRequest) => { setChangeSet(undefined); if (!keepLaunchRequest) setHandoffLaunchRequest(undefined); await load(); await loadGlobal(); }} onLaunchCompleted={() => setHandoffLaunchRequest(undefined)} onRejected={() => { setChangeSet(undefined); setHandoffLaunchRequest(undefined); }} onApplyingChange={setApplyingChanges} />}
         </section>
       </main>
     </div>
@@ -330,10 +356,10 @@ export function App() {
   const discoveryFailure = refreshJobs.find((job) => job.kind === "discovery" && job.state === "failed");
   const headerAction = globalPage === "workspaces" ? <><div className="theme-segments workspace-view-switch" role="tablist" aria-label={tr("workspace.viewLabel")}><button role="tab" aria-selected={workspaceView === "list"} className={workspaceView === "list" ? "active" : ""} onClick={() => setWorkspaceView("list")}>{tr("workspace.view.list")}</button><button role="tab" aria-selected={workspaceView === "storage"} className={workspaceView === "storage" ? "active" : ""} onClick={() => setWorkspaceView("storage")}>{tr("workspace.view.storage")}</button></div>{workspaceView === "list" && <button className="primary" onClick={() => void selectProject()}><FolderGit2 size={15} />{tr("workspace.addManually")}</button>}</> : null;
   return <div className={`${shellClass} global-shell`}><WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} /><AppSidebar active={globalPage} entries={navigation} collapsed={sidebarCollapsed} onNavigate={navigateGlobal} onSettings={openSettings} />{!sidebarCollapsed && <button className="sidebar-backdrop" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}<main><header className="page-header" data-tauri-drag-region><div className="page-title-row"><h1 data-tauri-drag-region>{tr(globalNav.find(({ id }) => id === globalPage)?.label ?? "nav.home")}</h1></div><div className="header-actions">{headerAction}</div></header>{message && <div className="alert"><CircleAlert size={17} />{message}</div>}{globalPage === "workspaces" && discoveryFailure?.error && <div className="alert"><CircleAlert size={17} />{discoveryFailure.error}</div>}<section className="content global-content">
-    {globalPage === "home" && <GlobalHome workspaces={workspaces} installations={installations} memories={globalMemories} discovery={discovery} activity={activity} insights={insightsSummary} uniqueAssetCount={groupedCatalog.filter((asset) => asset.scope === "workspace").length} assetCounts={assetCounts} onShowInsights={() => setGlobalPage("insights")} onShowWorkspaces={() => setGlobalPage("workspaces")} onShowAgents={() => setGlobalPage("agents")} onOpen={openWorkspace} onOpenAssets={(section) => { setAssetSection(section); setGlobalPage("catalog"); }} onAddRoot={async () => { await addScanRootFromDialog(); }} />}
+    {globalPage === "home" && <GlobalHome workspaces={workspaces} doctorSummaries={doctorSummaries} installations={installations} memories={globalMemories} discovery={discovery} activity={activity} insights={insightsSummary} uniqueAssetCount={groupedCatalog.filter((asset) => asset.scope === "workspace").length} assetCounts={assetCounts} onShowInsights={() => setGlobalPage("insights")} onShowWorkspaces={() => setGlobalPage("workspaces")} onShowAgents={() => setGlobalPage("agents")} onOpen={openWorkspace} onOpenDoctor={(workspace) => openWorkspace(workspace, "doctor")} onOpenAssets={(section) => { setAssetSection(section); setGlobalPage("catalog"); }} onAddRoot={async () => { await addScanRootFromDialog(); }} />}
     {globalPage === "workspaces" && <WorkspacesPage view={workspaceView} storageJob={refreshJobs.find((job) => job.kind === "storage")} workspaces={workspaces} assetCounts={assetCounts} discoveryRefreshing={discoveryRefreshing} onOpen={openWorkspace} onRefreshDiscovery={refreshDiscovery} onRefreshWorkspace={async (id) => { await api.refreshWorkspace(id); await loadGlobal(); }} onExclude={async (id) => { if (!window.confirm(tr("workspace.ignoreConfirm"))) return; await api.excludeWorkspace(id); await loadGlobal(); }} />}
     {globalPage === "agents" && <DeferredPage><AgentsPageLazy installations={installations} assets={catalog.filter((asset) => asset.scope === "agent-home")} workspaces={workspaces} remoteGateways={remoteGateways} insightsStatus={insightsStatus} onOpen={openWorkspace} /></DeferredPage>}
-    {globalPage === "catalog" && <GlobalAssetsPage section={assetSection} onSection={setAssetSection} assets={catalog} workspaces={workspaces} memories={globalMemories} runtime={runtime} onReload={loadGlobal} onRuntimeChanged={setRuntime} onOpen={(id) => { const workspace = workspaces.find((item) => item.id === id); if (workspace) void openWorkspace(workspace); }} onMigrationPlanned={async (workspacePath, planned) => { const workspace = workspaces.find((item) => item.path === workspacePath); if (!workspace) return; await openWorkspace(workspace); setChangeSet(planned); setPage("changes"); }} />}
+    {globalPage === "catalog" && <GlobalAssetsPage section={assetSection} onSection={setAssetSection} assets={catalog} workspaces={workspaces} memories={globalMemories} runtime={runtime} onReload={loadGlobal} onRuntimeChanged={setRuntime} onOpen={(id) => { const workspace = workspaces.find((item) => item.id === id); if (workspace) void openWorkspace(workspace); }} onMigrationPlanned={async (workspacePath, planned) => { const workspace = workspaces.find((item) => item.path === workspacePath); if (!workspace) return; await openWorkspace(workspace); setChangeSet(planned); setChangeSetOrigin("standard"); setHandoffLaunchRequest(undefined); setPage("changes"); }} />}
     {globalPage === "quota" && <DeferredPage><QuotaPageLazy initialProvider={quotaProvider} initialWindow={quotaWindow} configurePopoverRequest={quotaConfigureRequest} /></DeferredPage>}
     {globalPage === "insights" && <div className="insights-host" data-view={insightsSection}><div className="section-tabs insights-section-tabs" role="tablist" aria-label={tr("nav.insights")} onKeyDown={handleTabKey}>{(["overview", "tokens", "commits", "milestones", "sources"] as InsightsSection[]).map((section) => <button key={section} role="tab" aria-selected={insightsSection === section} className={insightsSection === section ? "active" : ""} onClick={() => setInsightsSection(section)}>{tr(`insights.section.${section}`)}</button>)}</div><DeferredPage><InsightsPageLazy section={insightsSection} workspaces={workspaces} onSummary={setInsightsSummary} /></DeferredPage></div>}
   </section></main></div>;
@@ -345,15 +371,17 @@ function DeferredPage({ children }: { children: ReactNode }) {
   return <Suspense fallback={<div className="panel"><p>{tr("common.loading")}</p></div>}>{children}</Suspense>;
 }
 
-function GlobalHome({ workspaces, installations, memories, discovery, activity, insights, uniqueAssetCount, assetCounts, onShowInsights, onShowWorkspaces, onShowAgents, onOpen, onOpenAssets, onAddRoot }: { workspaces: WorkspaceSummary[]; installations: AgentInstallation[]; memories: MemoryRecord[]; discovery?: DiscoveryReport; activity: ActivityRecord[]; insights?: InsightsSummary; uniqueAssetCount: number; assetCounts: Map<string, number>; onShowInsights: () => void; onShowWorkspaces: () => void; onShowAgents: () => void; onOpen: (workspace: WorkspaceSummary) => Promise<void>; onOpenAssets: (section: AssetSection) => void; onAddRoot: () => Promise<void> }) {
-  const attention = workspaces.filter((item) => item.status === "attention");
+function GlobalHome({ workspaces, doctorSummaries, installations, memories, discovery, activity, insights, uniqueAssetCount, assetCounts, onShowInsights, onShowWorkspaces, onShowAgents, onOpen, onOpenDoctor, onOpenAssets, onAddRoot }: { workspaces: WorkspaceSummary[]; doctorSummaries: Record<string, ContextDoctorSummary>; installations: AgentInstallation[]; memories: MemoryRecord[]; discovery?: DiscoveryReport; activity: ActivityRecord[]; insights?: InsightsSummary; uniqueAssetCount: number; assetCounts: Map<string, number>; onShowInsights: () => void; onShowWorkspaces: () => void; onShowAgents: () => void; onOpen: (workspace: WorkspaceSummary) => Promise<void>; onOpenDoctor: (workspace: WorkspaceSummary) => Promise<void>; onOpenAssets: (section: AssetSection) => void; onAddRoot: () => Promise<void> }) {
+  const attention = workspaces.filter((item) => item.status === "attention" || (doctorSummaries[item.id]?.error_count ?? 0) + (doctorSummaries[item.id]?.warning_count ?? 0) > 0);
   const pending = memories.filter((item) => item.status === "pending").length;
-  const issueCount = attention.length + pending;
+  const doctorIssueCount = Object.values(doctorSummaries).reduce((total, summary) => total + summary.error_count + summary.warning_count, 0);
+  const legacyAttentionCount = attention.filter((workspace) => !doctorSummaries[workspace.id]).length;
+  const issueCount = doctorIssueCount + legacyAttentionCount + pending;
   const importantActions = new Set(["changeset.apply", "changeset.apply_failed", "memory.propose", "memory.review", "workspace.exclude"]);
   const importantActivity = activity.filter((item) => importantActions.has(item.action)).slice(0, 5);
   const insightCard = insights && <button className="panel home-achievement" onClick={onShowInsights}><div className="achievement-orb"><Award size={21} /></div><div><span>{tr("home.journey")}</span>{insights.total_tokens || insights.my_commits ? <div className="home-achievement-values"><strong>{formatCompact(insights.total_tokens)} Token</strong><strong>{insights.my_commits} {tr("insights.myCommits")}</strong></div> : <h2>{tr("home.insightsEmpty")}</h2>}<p>{tr("home.streak", { active: insights.active_days, current: insights.current_streak, longest: insights.longest_streak })}</p></div><ChevronRight size={16} /></button>;
   return <div className="stack home-dashboard">
-    {issueCount > 0 ? <section className="attention-panel has-issues"><div className="attention-heading"><span><CircleAlert size={18} /><strong>{tr("home.needsAttention")}</strong></span><em>{issueCount}</em></div><div className="attention-items">{attention.slice(0, 4).map((workspace) => <button key={workspace.id} onClick={() => void onOpen(workspace)}><FolderGit2 size={15} /><span><strong>{workspace.name}</strong><small>{tr("home.workspaceWarnings", { count: workspace.warning_count })}</small></span><ChevronRight size={14} /></button>)}{pending > 0 && <button onClick={() => onOpenAssets("memory")}><Brain size={15} /><span><strong>{tr("home.pendingMemory")}</strong><small>{tr("home.pendingMemoryDetail", { count: pending })}</small></span><ChevronRight size={14} /></button>}</div></section> : <div className="attention-clear compact"><Check size={18} /><strong>{tr("home.allClear")}</strong></div>}
+    {issueCount > 0 ? <section className="attention-panel has-issues"><div className="attention-heading"><span><CircleAlert size={18} /><strong>{tr("home.needsAttention")}</strong></span><em>{issueCount}</em></div><div className="attention-items">{attention.slice(0, 4).map((workspace) => { const doctorCount = (doctorSummaries[workspace.id]?.error_count ?? 0) + (doctorSummaries[workspace.id]?.warning_count ?? 0); return <button key={workspace.id} onClick={() => void onOpenDoctor(workspace)}><ShieldCheck size={15} /><span><strong>{workspace.name}</strong><small>{tr("home.workspaceWarnings", { count: doctorCount || workspace.warning_count })}</small></span><ChevronRight size={14} /></button>; })}{pending > 0 && <button onClick={() => onOpenAssets("memory")}><Brain size={15} /><span><strong>{tr("home.pendingMemory")}</strong><small>{tr("home.pendingMemoryDetail", { count: pending })}</small></span><ChevronRight size={14} /></button>}</div></section> : <div className="attention-clear compact"><Check size={18} /><strong>{tr("home.allClear")}</strong></div>}
     <div className="summary-strip three"><button onClick={onShowWorkspaces}><span>{tr("home.workspaceMetric")}</span><strong>{workspaces.length}</strong></button><button onClick={() => onOpenAssets("instructions")}><span>{tr("home.assetMetric")}</span><strong>{uniqueAssetCount}</strong></button><button onClick={onShowAgents}><span>{tr("home.installedAgents")}</span><strong>{installations.filter((item) => item.installed).length} / {Object.keys(agentLabels).length}</strong></button></div>
     {!workspaces.length ? <>{insightCard}<div className="panel empty-global"><FolderGit2 size={30} /><h2>{tr("home.emptyTitle")}</h2><p>{tr("home.emptyText")}</p><button className="primary" onClick={() => void onAddRoot()}>{tr("home.addScanRoot")}</button></div></> : <div className={`home-main-grid${!insightCard && !importantActivity.length ? " single-column" : ""}`}><div className="panel"><div className="panel-head"><h2>{tr("home.recentWorkspaces")}</h2><span className="badge">{discovery ? tr("home.updated", { time: relativeTime(discovery.finished_at) }) : tr("home.discovering")}</span></div><div className="workspace-list">{workspaces.slice(0, 5).map((workspace) => <WorkspaceRow key={workspace.id} mode="compact" workspace={workspace} assetCount={assetCounts.get(workspace.id)} onOpen={onOpen} />)}</div></div>{(insightCard || importantActivity.length > 0) && <div className="home-side-stack">{insightCard}{importantActivity.length > 0 && <div className="panel"><div className="panel-head"><h2>{tr("home.recentActivity")}</h2></div><div className="activity-list compact">{importantActivity.map((item) => <ActivityRow key={item.id} record={item} />)}</div></div>}</div>}</div>}
   </div>;
@@ -588,12 +616,40 @@ function ContextPage({ project, onOpenInstructions }: { project: string; onOpenI
   return <div className={`context-layout${empty ? " is-empty" : ""}`}><div className="panel config-panel"><h2>{tr("context.environment")}</h2><label>Agent<select value={agent} onChange={(event) => setAgent(event.target.value as AgentKind)}>{Object.entries(agentLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>{tr("context.workingDirectory")}<input value={cwd} onChange={(event) => setCwd(event.target.value)} /></label><button className="ghost" onClick={() => void run()} disabled={resolving}><RefreshCw size={14} className={resolving ? "spin" : ""} />{tr("context.resolve")}</button><div className="separator" /><h3>{tr("context.capabilities")}</h3><Pills values={preview?.visible_skills ?? []} empty={tr("context.noSkill")} /><Pills values={preview?.visible_connections ?? []} empty={tr("context.noConnection")} /></div><div className="panel context-preview"><div className="panel-head"><h2>{tr("context.effective")}</h2>{preview && <span className="badge">{preview.sections.length} {tr("common.sections")}</span>}</div>{error && <div className="alert">{error}</div>}{preview?.warnings.map((warning) => <div className="warning" key={warning}><CircleAlert size={15} />{contextWarningLabel(warning)}</div>)}{empty && <div className="compact-state"><FileCode2 size={18} /><span>{tr("context.noInstructions")}</span><button className="ghost" onClick={onOpenInstructions}>{tr("context.openInstructions")}</button></div>}<div className="timeline">{preview?.sections.map((contextSection, index) => <article key={`${contextSection.source}-${index}`}><span className="step">{index + 1}</span><div><header><strong>{shortPath(contextSection.source)}</strong><span>{contextSection.scope || tr("status.scope.project")}</span></header><details><summary>{tr("context.showContent")}</summary><pre>{contextSection.content}</pre></details></div></article>)}</div>{preview?.approved_memories.length ? <div className="memory-context"><h3>{tr("context.approvedMemory")}</h3>{preview.approved_memories.map((item) => <p key={item}>{item}</p>)}</div> : null}</div></div>;
 }
 
-function Changes({ changeSet, onPlanHome, onApplied, onRejected, onApplyingChange }: { changeSet?: ChangeSet; onPlanHome: () => void; onApplied: () => void; onRejected: () => void; onApplyingChange: (applying: boolean) => void }) {
-  const [selected, setSelected] = useState(0); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [homeApproved, setHomeApproved] = useState(false);
+function Changes({ changeSet, origin, launchRequest, onPlanHome, onApplied, onLaunchCompleted, onRejected, onApplyingChange }: { changeSet?: ChangeSet; origin: ChangeSetOrigin; launchRequest?: SessionHandoffLaunchRequest; onPlanHome: () => void; onApplied: (keepLaunchRequest?: boolean) => void | Promise<void>; onLaunchCompleted: () => void; onRejected: () => void; onApplyingChange: (applying: boolean) => void }) {
+  const [selected, setSelected] = useState(0); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [homeApproved, setHomeApproved] = useState(false); const [appliedLaunchFailure, setAppliedLaunchFailure] = useState("");
+  const applying = useRef(false);
   const change = changeSet?.changes[selected];
+  const launchSupported = launchRequest?.target_agent === "codex" || launchRequest?.target_agent === "claude-code";
+  const targetAgentName = launchRequest ? agentLabels[launchRequest.target_agent] : "";
+  useEffect(() => { if (changeSet) setAppliedLaunchFailure(""); }, [changeSet?.id]);
+  const runLocked = async (operation: () => Promise<void>) => {
+    if (applying.current) return;
+    applying.current = true;
+    setBusy(true); setError(""); onApplyingChange(true);
+    try { await operation(); }
+    catch (value) { setError(localizeMessage(value)); }
+    finally { applying.current = false; onApplyingChange(false); setBusy(false); }
+  };
+  if (!changeSet && launchRequest && appliedLaunchFailure) return <div className="panel handoff-launch-result"><CircleAlert size={24} /><div><h2>{tr("handoff.savedLaunchFailed")}</h2><p>{error || appliedLaunchFailure}</p><code>.agentkib/handoffs/{launchRequest.filename}</code></div><button className="primary" disabled={busy} onClick={() => void runLocked(async () => { await api.launchSessionHandoff(launchRequest); setAppliedLaunchFailure(""); onLaunchCompleted(); })}><ExternalLink size={15} />{tr(busy ? "handoff.opening" : "handoff.retryOpen", { agent: targetAgentName })}</button></div>;
   if (!changeSet) return <Empty compact icon={GitCompareArrows} title={tr("changes.empty")} text={tr("changes.emptyText")} />;
-  const apply = async () => { setBusy(true); onApplyingChange(true); try { await api.apply(changeSet, homeApproved); await onApplied(); } catch (value) { setError(String(value)); } finally { onApplyingChange(false); setBusy(false); } };
-  return <div className="changes-layout"><div className="panel file-list"><div className="panel-head"><div><h2>ChangeSet</h2><p>{changeSet.id.slice(0, 8)} · {changeSet.changes.length} {tr("common.files")}</p></div></div>{changeSet.changes.map((file, index) => <button key={file.target} className={index === selected ? "active" : ""} onClick={() => setSelected(index)}><FileCode2 size={16} /><div><strong>{file.target.split("/").pop()}</strong><span>{shortPath(file.target)}</span></div><span className={`risk ${file.risk}`}>{tr(`status.risk.${file.risk}`)}</span></button>)}<div className="home-toggle"><p>{tr("changes.homeQuestion")}</p><button className="ghost" onClick={onPlanHome}>{tr("changes.includeHome")}</button>{changeSet.requires_home_approval && <label className="home-approval"><input type="checkbox" checked={homeApproved} onChange={(event) => setHomeApproved(event.target.checked)} />{tr("changes.homeApproval")}</label>}</div></div><div className="panel diff-panel">{change ? <><div className="panel-head"><div><h2>{change.target.split("/").pop()}</h2><p>{change.target} · {tr(`status.scope.${change.scope}`)}</p></div><span className={`risk ${change.risk}`}>{tr(`status.risk.${change.risk}`)}</span></div><Diff before={change.before} after={change.after} /></> : <Empty icon={Check} title={tr("changes.synced")} text={tr("changes.syncedText")} />}{error && <div className="alert">{error}</div>}<div className="apply-bar"><div><ShieldCheck size={17} /><span>{tr("changes.hashValidation")}</span></div><div className="apply-actions"><button className="ghost" onClick={onRejected} disabled={busy}>{tr("changes.reject")}</button><button className="primary" onClick={apply} disabled={busy || !changeSet.changes.length || (changeSet.requires_home_approval && !homeApproved)}>{tr(busy ? "changes.applying" : "changes.apply", { count: changeSet.changes.length })}</button></div></div></div></div>;
+  const apply = async () => {
+    await runLocked(async () => { await api.apply(changeSet, homeApproved); await onApplied(false); });
+  };
+  const applyAndContinue = async () => {
+    if (!launchRequest || !launchSupported) return;
+    await runLocked(async () => {
+      const result = await api.continueSessionHandoff(changeSet, launchRequest);
+      if (result.status === "launched") {
+        await onApplied(false);
+      } else {
+        setAppliedLaunchFailure(localizeMessage(result.error));
+        await onApplied(true);
+      }
+    });
+  };
+  const disabled = busy || !changeSet.changes.length || (changeSet.requires_home_approval && !homeApproved);
+  return <div className="changes-layout"><div className="panel file-list"><div className="panel-head"><div><h2>ChangeSet</h2><p>{changeSet.id.slice(0, 8)} · {changeSet.changes.length} {tr("common.files")}</p></div></div>{origin === "handoff" && <div className="warning"><CircleAlert size={14} />{tr("handoff.changeSetWarning")}</div>}{changeSet.changes.map((file, index) => <button key={file.target} className={index === selected ? "active" : ""} onClick={() => setSelected(index)}><FileCode2 size={16} /><div><strong>{file.target.split("/").pop()}</strong><span>{shortPath(file.target)}</span></div><span className={`risk ${file.risk}`}>{tr(`status.risk.${file.risk}`)}</span></button>)}{origin === "standard" && <div className="home-toggle"><p>{tr("changes.homeQuestion")}</p><button className="ghost" onClick={onPlanHome}>{tr("changes.includeHome")}</button>{changeSet.requires_home_approval && <label className="home-approval"><input type="checkbox" checked={homeApproved} onChange={(event) => setHomeApproved(event.target.checked)} />{tr("changes.homeApproval")}</label>}</div>}</div><div className="panel diff-panel">{change ? <><div className="panel-head"><div><h2>{change.target.split("/").pop()}</h2><p>{change.target} · {tr(`status.scope.${change.scope}`)}</p></div><span className={`risk ${change.risk}`}>{tr(`status.risk.${change.risk}`)}</span></div><Diff before={change.before} after={change.after} /></> : <Empty icon={Check} title={tr("changes.synced")} text={tr("changes.syncedText")} />}{error && <div className="alert">{error}</div>}<div className="apply-bar"><div><ShieldCheck size={17} /><span>{tr("changes.hashValidation")}</span></div><div className="apply-actions"><button className="ghost" onClick={onRejected} disabled={busy}>{tr("changes.reject")}</button>{origin === "handoff" && launchSupported && <button className="ghost" onClick={() => void apply()} disabled={disabled}>{tr("handoff.applyOnly")}</button>}<button className="primary" onClick={() => void (origin === "handoff" && launchSupported ? applyAndContinue() : apply())} disabled={disabled}>{origin === "handoff" && launchSupported ? <><ExternalLink size={15} />{tr(busy ? "changes.applying" : "handoff.applyAndContinue", { agent: targetAgentName })}</> : tr(busy ? "changes.applying" : "changes.apply", { count: changeSet.changes.length })}</button></div></div></div></div>;
 }
 
 function MemoryInbox({ project, manifest }: { project: string; manifest: Manifest }) {
