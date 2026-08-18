@@ -3116,6 +3116,7 @@ impl QuotaCommandRunner for WindowsQuotaRunner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        configure_process_group(&mut command);
         let mut child = command.spawn()?;
         let process_tree = ProcessTree::attach(&child).inspect_err(|_| {
             let _ = child.kill();

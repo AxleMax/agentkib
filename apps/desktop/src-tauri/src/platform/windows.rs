@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use agentkib_platform::process::configure_process_group;
 use tauri::AppHandle;
 
 use super::OpenSystemSettingsError;
@@ -7,14 +8,16 @@ use super::OpenSystemSettingsError;
 pub(crate) const SHOW_TRAY_MENU_ON_LEFT_CLICK: bool = true;
 
 pub(crate) fn open_files_and_folders_settings() -> Result<(), OpenSystemSettingsError> {
-    Command::new("cmd.exe")
-        .args([
-            "/D",
-            "/C",
-            "start",
-            "",
-            "ms-settings:privacy-broadfilesystemaccess",
-        ])
+    let mut command = Command::new("cmd.exe");
+    command.args([
+        "/D",
+        "/C",
+        "start",
+        "",
+        "ms-settings:privacy-broadfilesystemaccess",
+    ]);
+    configure_process_group(&mut command);
+    command
         .spawn()
         .map_err(|error| OpenSystemSettingsError::Launch(error.to_string()))?;
     Ok(())

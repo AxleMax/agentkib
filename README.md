@@ -84,10 +84,10 @@ AgentKib 会区分“已安装”和“只发现了卸载后的本地数据”�
 | 平台 | 状态 |
 | --- | --- |
 | macOS 13+（Apple Silicon / Intel） | 主要开发与验收平台 |
-| Windows 11 x64 | CI 构建 NSIS，并执行安装、覆盖安装和卸载烟测 |
-| Ubuntu 22.04 x64 | CI 构建并验证 `.deb` 与 AppImage |
-| Fedora x64 | CI 构建并验证 `.rpm` |
-| Windows ARM64 / Linux ARM64 | Preview；保证核心编译或原生打包，部分额度能力可能不可用 |
+| Windows 11 x64 | PR 验证 Rust 平台代码；手动工作流构建并烟测 NSIS |
+| Ubuntu 22.04 x64 | 核心 CI 平台；手动工作流构建并验证 `.deb` 与 AppImage |
+| Fedora x64 | PR 验证 Rust 平台代码；手动工作流构建并验证 `.rpm` |
+| Windows ARM64 / Linux ARM64 | Preview；PR 验证核心编译或测试，手动工作流生成预览包 |
 
 Windows 11 x64 的完整环境安装、开发启动、NSIS 打包和使用步骤见 [Windows 构建、安装与使用指南](docs/WINDOWS.md)。
 
@@ -189,6 +189,8 @@ apps/desktop/scripts/build-linux-bundles.sh
 ```
 
 Build output is written to `target/release/bundle/`. Third-party licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Maintainers can generate unsigned multi-platform preview packages with the manually triggered GitHub Actions workflow described in [docs/RELEASE.md](docs/RELEASE.md). Pull requests and pushes run platform checks without producing installers.
 
 ### Validate
 

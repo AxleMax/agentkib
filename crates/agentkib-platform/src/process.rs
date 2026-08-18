@@ -1,16 +1,24 @@
 use std::io;
 use std::process::{Child, Command};
 
-/// Configure a command so the spawned child becomes the leader of a new Unix
-/// process group. Call this before `spawn`, then attach a [`ProcessTree`] to
-/// ensure timeouts terminate descendants as well as the direct child.
+/// Configure a background command before spawning it.
+///
+/// Unix children become process-group leaders so timeouts can terminate their
+/// descendants. Windows children run without creating a visible console; their
+/// descendants are supervised through a [`ProcessTree`] job object.
 pub fn configure_process_group(command: &mut Command) {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = command;
     }
