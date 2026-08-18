@@ -171,9 +171,17 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
   useEffect(() => { void load(); }, [workspace.id, appliedFilters]);
 
   useEffect(() => {
+    if (
+      reference === appliedFilters.reference
+      && author === appliedFilters.author
+      && since === appliedFilters.since
+      && until === appliedFilters.until
+      && path === appliedFilters.path
+      && mergesOnly === appliedFilters.mergesOnly
+    ) return;
     const timeout = window.setTimeout(() => setAppliedFilters({ reference, author, since, until, path, mergesOnly }), 300);
     return () => window.clearTimeout(timeout);
-  }, [reference, author, since, until, path, mergesOnly]);
+  }, [reference, author, since, until, path, mergesOnly, appliedFilters]);
 
   const filteredCommits = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
