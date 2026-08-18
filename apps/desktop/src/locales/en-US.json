@@ -263,7 +263,7 @@
   "home.noActivityText": "Local audit records appear after the first discovery run.",
   "workspace.all": "All Workspaces",
   "workspace.refreshDiscovery": "Refresh Discovery",
-  "workspace.addManually": "Add Manually",
+  "workspace.addManually": "Add",
   "workspace.searchPlaceholder": "Search workspace name or path",
   "workspace.allAgents": "All Agents",
   "workspace.allStatuses": "All Statuses",

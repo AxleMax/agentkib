@@ -89,6 +89,8 @@ vi.mock("./api", () => ({
     setQuotaPopoverPreferences: vi.fn().mockImplementation((preferences) => Promise.resolve(preferences)),
     addWorkspace: vi.fn(),
     addScanRoot: vi.fn(),
+    refreshWorkspace: vi.fn().mockResolvedValue(undefined),
+    excludeWorkspace: vi.fn().mockResolvedValue(undefined),
     refreshQuota: vi.fn().mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-refresh" }),
     insightsView: vi.fn().mockResolvedValue({
       summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
@@ -191,7 +193,40 @@ describe("AgentKib desktop", () => {
     fireEvent.click(screen.getByRole("button", { name: /Refresh Discovery/i }));
 
     await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledWith("discovery", true));
-    expect(screen.getByRole("button", { name: /Project \/tmp\/project/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Project.*\/tmp\/project/ })).toBeInTheDocument();
+  });
+
+  it("filters the workspace table and keeps row actions separate from navigation", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([
+      {
+        id: "healthy-project", path: "/tmp/healthy", name: "Healthy Project", status: "healthy", asset_count: 0, warning_count: 0,
+        last_active_at: "2026-08-13T10:00:00Z", sources: [{ agent: "codex", evidence: "session-cwd", session_count: 2 }],
+      },
+      {
+        id: "attention-project", path: "/tmp/attention", name: "Attention Project", status: "attention", asset_count: 3, warning_count: 1,
+        last_active_at: "2026-08-13T11:00:00Z", sources: [{ agent: "claude-code", evidence: "session-cwd", session_count: 1 }],
+      },
+    ]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*2/ }));
+
+    expect(await screen.findByText("2 workspaces")).toBeInTheDocument();
+    expect(screen.getAllByText("Codex").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0);
+    expect(document.querySelectorAll(".workspace-status.attention")).toHaveLength(1);
+    expect(document.querySelector(".workspace-asset-count.is-zero")).toBeInTheDocument();
+    expect(document.querySelector(".workspace-asset-count.empty")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "All Agents" }), { target: { value: "claude-code" } });
+    expect(screen.getByText(/1 workspace/)).toBeInTheDocument();
+    expect(screen.queryByText("Healthy Project")).not.toBeInTheDocument();
+    expect(screen.getByText("Attention Project")).toBeInTheDocument();
+
+    vi.mocked(api.scan).mockClear();
+    fireEvent.click(screen.getByLabelText("Attention Project · More actions"));
+    fireEvent.click(screen.getByRole("button", { name: "Scan" }));
+    await waitFor(() => expect(api.refreshWorkspace).toHaveBeenCalledWith("attention-project"));
+    expect(api.scan).not.toHaveBeenCalled();
   });
 
   it("opens workspace storage from cache and only scans after confirmation", async () => {
