@@ -190,6 +190,8 @@ apps/desktop/scripts/build-linux-bundles.sh
 
 Build output is written to `target/release/bundle/`. Third-party licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+Maintainers can generate unsigned multi-platform preview packages with the manually triggered GitHub Actions workflow described in [docs/RELEASE.md](docs/RELEASE.md). Pull requests and pushes run platform checks without producing installers.
+
 ### Validate
 
 ```bash
