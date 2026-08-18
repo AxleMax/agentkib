@@ -81,20 +81,45 @@ pub fn diagnose_workspace(
             && manifest
                 .is_some_and(|value| value.adapters.get(&agent).is_none_or(|state| state.enabled));
         let diagnostically_active = applicable && (enabled || agent == AgentKind::DeepSeekHarness);
-        let mut instruction_expected = 0;
+        let expected_instruction_fragments = manifest
+            .map(|value| {
+                let mut fragments = Vec::new();
+                if !value.instructions.shared.trim().is_empty() {
+                    fragments.push(value.instructions.shared.as_str());
+                }
+                if let Some(platform_override) = value
+                    .instructions
+                    .platform_overrides
+                    .get(&agent)
+                    .filter(|content| !content.trim().is_empty())
+                {
+                    fragments.push(platform_override.as_str());
+                }
+                fragments
+            })
+            .unwrap_or_default();
+        let instruction_expected = expected_instruction_fragments.len();
         let mut instruction_actual = 0;
         let mut skill_expected = 0;
         let mut skill_actual = 0;
+        let expected_mcp_names = manifest
+            .filter(|_| writable)
+            .map(|value| {
+                value
+                    .connections
+                    .iter()
+                    // `agentkib` is the native gateway, not a downstream server exposed by
+                    // the effective MCP configuration that Doctor receives.
+                    .filter(|connection| connection.name != "agentkib")
+                    .filter(|connection| {
+                        connection.targets.is_empty() || connection.targets.contains(&agent)
+                    })
+                    .map(|connection| connection.name.clone())
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
 
         if let Some(manifest) = manifest {
-            instruction_expected = usize::from(!manifest.instructions.shared.trim().is_empty())
-                + usize::from(
-                    manifest
-                        .instructions
-                        .platform_overrides
-                        .get(&agent)
-                        .is_some_and(|value| !value.trim().is_empty()),
-                );
             skill_expected = manifest
                 .skills
                 .iter()
@@ -114,9 +139,20 @@ pub fn diagnose_workspace(
                     let native_sections: Vec<_> = preview
                         .sections
                         .iter()
-                        .filter(|section| section.source != manifest_path(project))
+                        .filter(|section| section.scope != "platform-override")
                         .collect();
-                    instruction_actual = native_sections.len();
+                    instruction_actual = if expected_instruction_fragments.is_empty() {
+                        native_sections.len()
+                    } else {
+                        expected_instruction_fragments
+                            .iter()
+                            .filter(|expected| {
+                                native_sections
+                                    .iter()
+                                    .any(|section| contains_normalized(&section.content, expected))
+                            })
+                            .count()
+                    };
                     for warning in preview.warnings {
                         // The resolver exposes this advisory for the preview UI, but Doctor only
                         // reports conditions that can be proven from files and parsed context.
@@ -150,18 +186,7 @@ pub fn diagnose_workspace(
                     diagnose_exact_duplicates(agent, &native_sections, &mut issues);
                     if instruction_expected > 0
                         && !native_sections.is_empty()
-                        && !native_sections.iter().any(|section| {
-                            manifest.is_some_and(|value| {
-                                contains_normalized(&section.content, &value.instructions.shared)
-                                    || value
-                                        .instructions
-                                        .platform_overrides
-                                        .get(&agent)
-                                        .is_some_and(|expected| {
-                                            contains_normalized(&section.content, expected)
-                                        })
-                            })
-                        })
+                        && instruction_actual < instruction_expected
                     {
                         push_issue(
                             &mut issues,
@@ -230,7 +255,41 @@ pub fn diagnose_workspace(
             );
         }
 
-        let mcp_actual = visible_connections.get(&agent).map_or(0, Vec::len);
+        let visible_mcp_names = visible_connections
+            .get(&agent)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mcp_expected = expected_mcp_names.len();
+        let mcp_actual = if expected_mcp_names.is_empty() {
+            visible_mcp_names.len()
+        } else {
+            expected_mcp_names.intersection(&visible_mcp_names).count()
+        };
+        let missing_mcp_names = expected_mcp_names
+            .difference(&visible_mcp_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        if diagnostically_active && !missing_mcp_names.is_empty() {
+            push_issue(
+                &mut issues,
+                "mcp.target-missing",
+                DoctorSeverity::Warning,
+                Some(agent),
+                Some(AssetKind::Connection),
+                enabled && writable,
+                None,
+                "Manifest MCP connections are not all visible to the target Agent".into(),
+                Some(
+                    expected_mcp_names
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+                Some(visible_mcp_names.into_iter().collect::<Vec<_>>().join(", ")),
+            );
+        }
         let agent_issues: Vec<_> = issues
             .iter()
             .filter(|issue| issue.agent == Some(agent))
@@ -271,7 +330,7 @@ pub fn diagnose_workspace(
             },
             mcp: DoctorAssetStatus {
                 status: attention_status(base_status, mcp_attention),
-                expected: mcp_actual,
+                expected: mcp_expected,
                 actual: mcp_actual,
             },
         });
@@ -501,7 +560,10 @@ fn severity_rank(severity: DoctorSeverity) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AdapterState, InstructionSet, MemoryPolicy, SkillDefinition, WorkspaceIdentity};
+    use crate::{
+        AdapterState, ConnectionDefinition, ConnectionTransport, InstructionSet, MemoryPolicy,
+        SkillDefinition, WorkspaceIdentity,
+    };
     use tempfile::tempdir;
 
     fn manifest(_project: &Path) -> Manifest {
@@ -644,6 +706,113 @@ mod tests {
                 .status,
             DoctorStatus::Healthy
         );
+    }
+
+    #[test]
+    fn reports_each_missing_instruction_fragment() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value
+            .instructions
+            .platform_overrides
+            .insert(AgentKind::Codex, "Codex-only rule".into());
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        fs::write(dir.path().join("AGENTS.override.md"), "Shared rule").unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.code == "instruction.expected-content-missing")
+            .unwrap_or_else(|| panic!("missing fragment issue was not reported: {report:#?}"));
+        assert_eq!(issue.evidence[0].expected.as_deref(), Some("2"));
+        assert_eq!(issue.evidence[0].actual.as_deref(), Some("1"));
+        let row = report
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.instructions.expected, 2);
+        assert_eq!(row.instructions.actual, 1);
+        assert_eq!(row.instructions.status, DoctorStatus::Attention);
+    }
+
+    #[test]
+    fn reports_manifest_mcp_connections_missing_from_target_visibility() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.connections.push(ConnectionDefinition {
+            name: "filesystem".into(),
+            transport: ConnectionTransport::Stdio {
+                command: "node".into(),
+                args: vec!["server.js".into()],
+            },
+            env: BTreeMap::new(),
+            allow_tools: Vec::new(),
+            targets: vec![AgentKind::Codex],
+        });
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "Shared rule").unwrap();
+
+        let missing = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(
+            missing
+                .issues
+                .iter()
+                .any(|issue| issue.code == "mcp.target-missing")
+        );
+        let row = missing
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.mcp.expected, 1);
+        assert_eq!(row.mcp.actual, 0);
+        assert_eq!(row.mcp.status, DoctorStatus::Attention);
+
+        let visible = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::from([(AgentKind::Codex, vec!["filesystem".into()])]),
+        )
+        .unwrap();
+        assert!(
+            visible
+                .issues
+                .iter()
+                .all(|issue| issue.code != "mcp.target-missing")
+        );
+        let row = visible
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.mcp.expected, 1);
+        assert_eq!(row.mcp.actual, 1);
+        assert_eq!(row.mcp.status, DoctorStatus::Healthy);
     }
 
     #[test]

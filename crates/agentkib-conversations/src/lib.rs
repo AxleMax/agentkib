@@ -616,7 +616,7 @@ fn handoff_filename(
     };
     format!(
         "{}-{}-to-{}.{}",
-        generated_at.format("%Y%m%d-%H%M"),
+        generated_at.format("%Y%m%d-%H%M%S%3f"),
         source_agent.as_str(),
         target_agent.as_str(),
         extension
@@ -636,11 +636,32 @@ pub fn sanitize_handoff_content(
             *redaction_count += count;
         }
     }
-    output
-        .lines()
-        .map(|line| redact_sensitive_line(line, redaction_count))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut lines = Vec::new();
+    let mut private_key_end: Option<String> = None;
+    for line in output.lines() {
+        if let Some(end_marker) = private_key_end.as_ref() {
+            if line.trim().eq_ignore_ascii_case(end_marker) {
+                private_key_end = None;
+            }
+            continue;
+        }
+        if let Some(end_marker) = pem_private_key_end_marker(line) {
+            lines.push("[REDACTED PRIVATE KEY]".into());
+            *redaction_count += 1;
+            private_key_end = Some(end_marker);
+            continue;
+        }
+        lines.push(redact_sensitive_line(line, redaction_count));
+    }
+    lines.join("\n")
+}
+
+fn pem_private_key_end_marker(line: &str) -> Option<String> {
+    let marker = line.trim().to_ascii_uppercase();
+    let label = marker.strip_prefix("-----BEGIN ")?.strip_suffix("-----")?;
+    label
+        .contains("PRIVATE KEY")
+        .then(|| format!("-----END {label}-----"))
 }
 
 pub fn sanitize_handoff_export(
@@ -2690,6 +2711,60 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["credentials"], "[REDACTED]");
         assert_eq!(json_count, 1);
+    }
+
+    #[test]
+    fn pem_private_key_blocks_are_fully_redacted_from_exports() {
+        let (markdown, markdown_count) = sanitize_handoff_export(
+            "# Handoff\n\n-----BEGIN RSA PRIVATE KEY-----\nbase64-secret-material\n-----END RSA PRIVATE KEY-----\nkeep this line\n",
+            HandoffFormat::Markdown,
+            None,
+        )
+        .unwrap();
+        assert!(markdown.contains("[REDACTED PRIVATE KEY]"));
+        assert!(markdown.contains("keep this line"));
+        assert!(!markdown.contains("BEGIN RSA PRIVATE KEY"));
+        assert!(!markdown.contains("base64-secret-material"));
+        assert!(!markdown.contains("END RSA PRIVATE KEY"));
+        assert_eq!(markdown_count, 1);
+
+        let json_input = serde_json::json!({
+            "schema_version": 1,
+            "context": {
+                "messages": [{
+                    "role": "user",
+                    "content": "-----BEGIN OPENSSH PRIVATE KEY-----\njson-secret-material\n-----END OPENSSH PRIVATE KEY-----"
+                }]
+            }
+        })
+        .to_string();
+        let (json, json_count) =
+            sanitize_handoff_export(&json_input, HandoffFormat::Json, None).unwrap();
+        assert!(json.contains("[REDACTED PRIVATE KEY]"));
+        assert!(!json.contains("json-secret-material"));
+        assert!(!json.contains("OPENSSH PRIVATE KEY"));
+        assert_eq!(json_count, 1);
+    }
+
+    #[test]
+    fn handoff_filenames_use_millisecond_precision() {
+        let first = "2026-08-18T08:31:58.123Z".parse::<DateTime<Utc>>().unwrap();
+        let second = "2026-08-18T08:31:58.124Z".parse::<DateTime<Utc>>().unwrap();
+
+        let first = handoff_filename(
+            first,
+            AgentKind::Codex,
+            AgentKind::ClaudeCode,
+            HandoffFormat::Markdown,
+        );
+        let second = handoff_filename(
+            second,
+            AgentKind::Codex,
+            AgentKind::ClaudeCode,
+            HandoffFormat::Markdown,
+        );
+        assert_eq!(first, "20260818-083158123-codex-to-claude-code.md");
+        assert_ne!(first, second);
     }
 
     #[test]
