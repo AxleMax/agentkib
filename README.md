@@ -25,7 +25,7 @@
 
 AgentKib 是一个本地优先的 Coding Agent 资产中心。它自动发现你已经使用过的工作区，把散落在 Codex、Claude Code、Cursor、OpenClaw、Hermes 等工具中的 Instructions、Skills、MCP、记忆和配置集中展示，并在不同 Agent 之间安全地复用公共资产。
 
-不需要账号、云端数据库或模型 API。**KIB** 代表 **Knowledge & Instruction Base（知识与指令底座）**。
+基础的发现、诊断和资产同步不需要账号、云端数据库或模型 API。**KIB** 代表 **Knowledge & Instruction Base（知识与指令底座）**。
 
 ### 为什么需要 AgentKib
 
@@ -36,6 +36,8 @@ AgentKib 提供一个统一入口来解决这些问题：
 - **自动发现工作区**：从 Agent 的本地配置和历史元数据中发现仍然存在的项目，也支持添加扫描目录；不会默认扫描整块磁盘。
 - **统一盘点资产**：按工作区、Agent 和类型查看 Instructions、Skills、MCP、Hooks、Profiles 与经审批的共享记忆。
 - **预览有效上下文**：查看指定 Agent 在当前目录中的加载顺序、作用域、覆盖关系、可见 Skills 和潜在冲突。
+- **诊断上下文健康**：通过 Context Doctor 检查 Instructions、Skills、MCP 的缺失、漂移、导入失败和精确重复，并为项目内问题生成可审查的修复方案。
+- **交接 Codex 与 Claude Code 会话**：自动复用来源 Agent 的原生压缩上下文，脱敏后生成可编辑交接包；应用变更后可在目标 Agent 的全新空会话中继续。
 - **安全同步公共资产**：先生成完整 Diff，再由用户确认写入；发现和浏览本身不会创建 manifest 或修改 Agent 配置。
 - **集中连接 MCP**：通过本地 MCP Hub 管理下游 Server，并向支持的 Agent 提供统一入口。
 - **只读浏览 Git**：查看复杂分支图、工作树、Commit 文件树和 Diff，并用已安装的 IDE、终端或文件管理器打开项目；不执行任何 Git 写操作。
@@ -48,12 +50,12 @@ AgentKib 提供一个统一入口来解决这些问题：
 
 | Agent | 当前支持 |
 | --- | --- |
-| Codex | 工作区发现、资产盘点、上下文预览和公共资产同步 |
-| Claude Code | 工作区发现、资产盘点、上下文预览和公共资产同步 |
-| Cursor | 工作区发现、资产盘点、上下文预览和公共资产同步 |
-| OpenClaw | 工作区发现、资产盘点、上下文预览和公共资产同步 |
-| Hermes | 工作区发现、资产盘点、上下文预览和公共资产同步 |
-| DeepSeek Harness | **Beta，只读**：工作区发现、资产盘点、上下文预览和累计 Token |
+| Codex | 工作区发现、资产盘点、上下文预览、上下文诊断、公共资产同步、会话浏览与交接 |
+| Claude Code | 工作区发现、资产盘点、上下文预览、上下文诊断、公共资产同步、会话浏览与交接 |
+| Cursor | 工作区发现、资产盘点、上下文预览、上下文诊断和公共资产同步 |
+| OpenClaw | 工作区发现、资产盘点、上下文预览、上下文诊断和公共资产同步 |
+| Hermes | 工作区发现、资产盘点、上下文预览、上下文诊断和公共资产同步 |
+| DeepSeek Harness | **Beta，只读**：工作区发现、资产盘点、上下文预览、上下文诊断和累计 Token |
 
 AgentKib 会区分“已安装”和“只发现了卸载后的本地数据”。涉及 Agent Home 的写入会单独请求授权；DeepSeek Harness 的存储协议仍处于 Beta，因此不会被写入或配置 MCP。
 
@@ -61,16 +63,21 @@ AgentKib 会区分“已安装”和“只发现了卸载后的本地数据”�
 
 1. 启动 AgentKib，等待它自动发现本机已有工作区。
 2. 在“工作区”“资产”和“Agent”中检查现有配置。
-3. 打开工作区，预览某个 Agent 在指定目录中实际可见的上下文。
-4. 需要统一规则时，编辑共享 Instructions、Skills 或 MCP。
-5. 审查 ChangeSet 的完整 Diff，确认后再写入项目或 Agent Home。
+3. 打开工作区的“诊断”，检查各 Agent 的 Instructions、Skills 与 MCP 状态。
+4. 在“指令上下文”中预览某个 Agent 在指定目录中实际可见的上下文。
+5. 在 Codex 或 Claude Code 会话详情中创建交接，预览脱敏内容后保存，或应用并打开目标 Agent。
+6. 需要统一规则时，编辑共享 Instructions、Skills 或 MCP。
+7. 审查 ChangeSet 的完整 Diff，确认后再写入项目或 Agent Home。
 
 工作区不需要预先存在 `.agentkib/manifest.yaml`。只有首次保存共享资产时，AgentKib 才会把 manifest 纳入待确认的 ChangeSet。
 
 ### 本地与隐私边界
 
-- 不需要登录，不提供云同步，也不会上传项目资产。
+- 不需要登录，不提供 AgentKib 云同步；发现、诊断和普通交接不会调用模型或上传项目资产。
 - 自动发现只保存路径、来源、数量和时间等聚合元数据，不保存 Prompt、消息正文、对话标题或原始 Session ID。
+- 创建交接时会按需读取本地会话记录，排除工具与推理内容并遮盖敏感值；正文不写入 SQLite、日志或审计详情。
+- 用户确认保存后，交接正文写入项目的 `.agentkib/handoffs/`，该目录默认加入 `.gitignore`，但仍应在 ChangeSet 中检查完整 Diff。
+- 只有交接内容超过安全上限且用户明确确认时，才会把脱敏内容交给本机来源 Agent CLI 总结；这可能调用模型并消耗额度。
 - 凭据、Cookie、Token、`.env`、私钥和消息数据库不会进入资产目录或日志。
 - Git 统计不保存提交说明、Diff、文件内容或明文邮箱。
 - 额度快照只保存在本机；外部 Collector 的原始输出不会落库。
@@ -132,7 +139,7 @@ pnpm build
 
 ## English
 
-AgentKib is a local-first asset center for people who use multiple coding agents. It discovers existing workspaces, inventories instructions, Skills, MCP connections, memory, and native configuration, and helps reuse shared assets safely across agents—without requiring an account, cloud database, or model API.
+AgentKib is a local-first asset center for people who use multiple coding agents. It discovers existing workspaces, inventories instructions, Skills, MCP connections, memory, and native configuration, and helps reuse shared assets safely across agents. Core discovery, diagnostics, and asset synchronization do not require an account, cloud database, or model API.
 
 **KIB** stands for **Knowledge & Instruction Base**.
 
@@ -141,6 +148,8 @@ AgentKib is a local-first asset center for people who use multiple coding agents
 - Discovers existing workspaces from supported agents and explicitly added scan folders without scanning the entire disk.
 - Catalogs instructions, Skills, MCP connections, hooks, profiles, configuration, and approved memory across workspaces.
 - Previews the effective context for an agent and working directory, including load order, scope, overrides, visible Skills, and conflicts.
+- Diagnoses missing, drifted, unreadable, or exactly duplicated Instructions, Skills, and MCP configuration, then prepares reviewable project-scoped repairs.
+- Hands Codex and Claude Code sessions across agents by reusing native compacted context, redacting sensitive values, and optionally opening a fresh target-agent session after the handoff is applied.
 - Generates a complete ChangeSet and diff before writing shared assets or native agent configuration.
 - Runs a local MCP Hub that provides a single entry point to downstream MCP servers.
 - Browses complex Git history, working-tree changes, commit file trees, and diffs without modifying the repository, and opens projects in verified installed apps.
@@ -151,14 +160,17 @@ AgentKib supports light, dark, and system appearance, with Simplified Chinese, T
 
 ### Supported agents
 
-Codex, Claude Code, Cursor, OpenClaw, and Hermes support discovery, asset inventory, context preview, and shared-asset synchronization. **DeepSeek Harness is currently Beta and read-only**, with workspace discovery, asset inventory, context preview, and cumulative Token coverage.
+Codex, Claude Code, Cursor, OpenClaw, and Hermes support discovery, asset inventory, context preview, context diagnostics, and shared-asset synchronization. Codex and Claude Code additionally support session browsing and handoff. **DeepSeek Harness is currently Beta and read-only**, with workspace discovery, asset inventory, context preview, context diagnostics, and cumulative Token coverage.
 
 AgentKib distinguishes an installed app or CLI from leftover local data. Agent Home writes require separate approval, and DeepSeek Harness is never selected as a write target while its storage contracts remain in Beta.
 
 ### Local and private by default
 
-- No login, cloud sync, remote database, or model API is required.
+- No login or AgentKib cloud sync is required. Discovery, diagnostics, and ordinary handoffs do not invoke a model or upload project assets.
 - Discovery stores aggregate metadata, not prompts, message bodies, conversation titles, or raw session IDs.
+- Creating a handoff reads the local transcript on demand, excludes tool and reasoning records, and redacts sensitive values without storing the body in SQLite, logs, or audit details.
+- Approved handoffs are written to `.agentkib/handoffs/` inside the project and ignored by Git by default; the complete ChangeSet should still be reviewed before applying it.
+- Only when a handoff exceeds the safety limit and the user explicitly confirms does AgentKib send redacted content to the local source-agent CLI for summarization, which may invoke a model and consume quota.
 - Credentials, cookies, tokens, environment files, private keys, and message databases are excluded from the catalog and logs.
 - Git analytics do not store commit subjects, diffs, file contents, or plaintext email addresses.
 - Agent-proposed memory is not shared until you approve it.
