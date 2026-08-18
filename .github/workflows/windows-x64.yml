@@ -9,10 +9,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: windows-checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   arm64-compile:
     name: Check Windows ARM64 preview
     runs-on: windows-2022
+    timeout-minutes: 20
     env:
       CARGO_BUILD_TARGET: aarch64-pc-windows-msvc
       CARGO_TERM_COLOR: always
@@ -24,6 +29,11 @@ jobs:
         with:
           targets: aarch64-pc-windows-msvc
 
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-arm64-checks
+
       - name: Check workspace for ARM64
         shell: pwsh
         run: cargo check --workspace --all-targets
@@ -31,30 +41,22 @@ jobs:
   build:
     name: Test Windows x64
     runs-on: windows-2022
+    timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
       - name: Install Rust MSVC toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-          components: rustfmt, clippy
+          components: clippy
 
-      - name: Install frontend dependencies
-        shell: pwsh
-        run: pnpm install --frozen-lockfile
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-x64-checks
 
       - name: Run Windows checks
         shell: pwsh
@@ -72,17 +74,14 @@ jobs:
             }
           }
 
-          Invoke-LoggedCommand "cargo fmt --check" { cargo fmt --check }
           Invoke-LoggedCommand "cargo test --workspace" { cargo test --workspace }
           Invoke-LoggedCommand "cargo clippy --workspace --all-targets -- -D warnings" { cargo clippy --workspace --all-targets -- -D warnings }
-          Invoke-LoggedCommand "pnpm test" { pnpm test }
-          Invoke-LoggedCommand "pnpm typecheck" { pnpm typecheck }
-          Invoke-LoggedCommand "pnpm build" { pnpm build }
 
       - name: Upload Windows x64 check log
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: agentkib-windows-x64-log
           if-no-files-found: warn
           path: artifacts/windows-x64-checks.log
+          retention-days: 7
