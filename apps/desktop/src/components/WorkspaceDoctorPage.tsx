@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Minus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { api } from "../api";
 import { localizeMessage, tr } from "../i18n";
@@ -16,20 +16,31 @@ export function WorkspaceDoctorPage({
   const [loading, setLoading] = useState(true);
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState("");
+  const requestIdRef = useRef(0);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     setError("");
+    setReport(undefined);
     try {
-      setReport(await api.workspaceDoctorReport(workspace.id));
+      const nextReport = await api.workspaceDoctorReport(workspace.id);
+      if (requestId === requestIdRef.current && nextReport.summary.workspace_id === workspace.id) {
+        setReport(nextReport);
+      }
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (requestId === requestIdRef.current) setError(localizeMessage(reason));
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  };
+  }, [workspace.id]);
 
-  useEffect(() => { void load(); }, [workspace.id]);
+  useEffect(() => {
+    void load();
+    return () => { requestIdRef.current += 1; };
+  }, [load]);
+
+  const activeReport = report?.summary.workspace_id === workspace.id ? report : undefined;
 
   const repair = async () => {
     setRepairing(true);
@@ -43,7 +54,7 @@ export function WorkspaceDoctorPage({
     }
   };
 
-  if (loading && !report) {
+  if (loading && !activeReport) {
     return <div className="compact-state doctor-loading"><RefreshCw className="spin" size={20} /><span>{tr("doctor.running")}</span></div>;
   }
 
@@ -55,21 +66,21 @@ export function WorkspaceDoctorPage({
         <p>{tr("doctor.description")}</p>
       </div>
       <div className="doctor-summary-counts">
-        <span className="error"><strong>{report?.summary.error_count ?? 0}</strong>{tr("doctor.errors")}</span>
-        <span className="warning"><strong>{report?.summary.warning_count ?? 0}</strong>{tr("doctor.warnings")}</span>
-        <span><strong>{report?.summary.repairable_count ?? 0}</strong>{tr("doctor.repairable")}</span>
+        <span className="error"><strong>{activeReport?.summary.error_count ?? 0}</strong>{tr("doctor.errors")}</span>
+        <span className="warning"><strong>{activeReport?.summary.warning_count ?? 0}</strong>{tr("doctor.warnings")}</span>
+        <span><strong>{activeReport?.summary.repairable_count ?? 0}</strong>{tr("doctor.repairable")}</span>
       </div>
       <div className="doctor-actions">
         <button className="ghost" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={14} />{tr("common.refresh")}</button>
-        <button className="primary" onClick={() => void repair()} disabled={repairing || !report?.summary.repairable_count}><Wrench size={14} />{tr(repairing ? "doctor.planning" : "doctor.reviewRepair")}</button>
+        <button className="primary" onClick={() => void repair()} disabled={loading || repairing || !activeReport?.summary.repairable_count}><Wrench size={14} />{tr(repairing ? "doctor.planning" : "doctor.reviewRepair")}</button>
       </div>
     </section>
     {error && <div className="alert"><CircleAlert size={16} />{error}</div>}
-    {report && <section className="panel doctor-matrix-panel">
+    {activeReport && <section className="panel doctor-matrix-panel">
       <div className="panel-head"><div><h2>{tr("doctor.matrix")}</h2><p>{tr("doctor.matrixDescription")}</p></div></div>
       <div className="doctor-matrix" role="table">
         <div className="doctor-matrix-row heading" role="row"><span>{tr("doctor.agent")}</span><span>Instructions</span><span>Skills</span><span>MCP</span></div>
-        {report.matrix.map((row) => <div className="doctor-matrix-row" role="row" key={row.agent}>
+        {activeReport.matrix.map((row) => <div className="doctor-matrix-row" role="row" key={row.agent}>
           <span className="doctor-agent"><AgentIcon agent={row.agent} /><strong>{agentLabel(row.agent)}</strong>{!row.writable && <em>{tr("doctor.readOnly")}</em>}</span>
           <DoctorCell value={row.instructions} />
           <DoctorCell value={row.skills} />
@@ -77,10 +88,10 @@ export function WorkspaceDoctorPage({
         </div>)}
       </div>
     </section>}
-    {report && <section className="panel doctor-issues">
+    {activeReport && <section className="panel doctor-issues">
       <div className="panel-head"><div><h2>{tr("doctor.issues")}</h2><p>{tr("doctor.deterministicOnly")}</p></div></div>
-      {!report.issues.length && <div className="compact-state"><ShieldCheck size={22} /><strong>{tr("doctor.allClear")}</strong></div>}
-      {report.issues.map((issue) => <article className={`doctor-issue ${issue.severity}`} key={issue.id}>
+      {!activeReport.issues.length && <div className="compact-state"><ShieldCheck size={22} /><strong>{tr("doctor.allClear")}</strong></div>}
+      {activeReport.issues.map((issue) => <article className={`doctor-issue ${issue.severity}`} key={issue.id}>
         <CircleAlert size={16} />
         <div><header><strong>{tr(`doctor.issue.${issue.code}`)}</strong><span className={`status ${issue.severity}`}>{tr(`doctor.severity.${issue.severity}`)}</span>{issue.repairable && <span className="tag"><Wrench size={11} />{tr("doctor.repairable")}</span>}</header>
           <p>{issue.agent ? `${agentLabel(issue.agent)} · ` : ""}{issue.asset_kind ? tr(`status.asset.${issue.asset_kind}`) : tr("doctor.workspace")}</p>
