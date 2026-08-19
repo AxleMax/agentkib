@@ -4,10 +4,11 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use agentkib_platform::path::equivalent;
+use agentkib_platform::path::{equivalent, is_safe_scan_entry};
 use anyhow::Result;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
+use walkdir::WalkDir;
 
 use crate::{
     AgentKind, AssetKind, ContextDoctorReport, ContextDoctorSummary, DoctorAgentRow,
@@ -16,6 +17,8 @@ use crate::{
 };
 
 const MAX_MANAGED_FILE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_MANAGED_SKILL_FILES: usize = 512;
+const MAX_MANAGED_SKILL_BYTES: u64 = 32 * 1024 * 1024;
 
 pub fn diagnose_workspace(
     project: &Path,
@@ -586,26 +589,58 @@ fn generated_skill_is_current(
         AgentKind::Codex | AgentKind::Hermes => &[".agents/skills"],
     };
     let source = project.join(&skill.path);
-    let entrypoint = source
-        .is_file()
-        .then(|| source.file_name())
-        .flatten()
-        .unwrap_or_else(|| OsStr::new("SKILL.md"));
-    let source_entrypoint = if source.is_file() {
-        source.clone()
-    } else {
-        source.join(entrypoint)
-    };
-    let ManagedFileHash::Hashed(expected_hash) = hash_managed_file(&source_entrypoint) else {
+    let Some(source_files) = managed_skill_files(&source) else {
         return false;
     };
     roots.iter().any(|root| {
-        let target = project.join(root).join(&skill.name).join(entrypoint);
-        matches!(
-            hash_managed_file(&target),
-            ManagedFileHash::Hashed(actual_hash) if actual_hash == expected_hash
-        )
+        let target = project.join(root).join(&skill.name);
+        source_files.iter().all(|(relative, expected_hash)| {
+            matches!(
+                hash_managed_file(&target.join(relative)),
+                ManagedFileHash::Hashed(actual_hash) if actual_hash == *expected_hash
+            )
+        })
     })
+}
+
+fn managed_skill_files(source: &Path) -> Option<BTreeMap<PathBuf, String>> {
+    if source.is_file() {
+        let name = source.file_name().unwrap_or_else(|| OsStr::new("SKILL.md"));
+        let ManagedFileHash::Hashed(hash) = hash_managed_file(source) else {
+            return None;
+        };
+        return Some(BTreeMap::from([(PathBuf::from(name), hash)]));
+    }
+    if !source.is_dir() {
+        return None;
+    }
+
+    let mut files = BTreeMap::new();
+    let mut total_bytes = 0_u64;
+    for entry in WalkDir::new(source)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| is_safe_scan_entry(entry.path()))
+    {
+        let entry = entry.ok()?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if files.len() >= MAX_MANAGED_SKILL_FILES {
+            return None;
+        }
+        let metadata = entry.metadata().ok()?;
+        total_bytes = total_bytes.checked_add(metadata.len())?;
+        if total_bytes > MAX_MANAGED_SKILL_BYTES {
+            return None;
+        }
+        let relative = entry.path().strip_prefix(source).ok()?.to_path_buf();
+        let ManagedFileHash::Hashed(hash) = hash_managed_file(entry.path()) else {
+            return None;
+        };
+        files.insert(relative, hash);
+    }
+    (!files.is_empty()).then_some(files)
 }
 
 fn asset_kind_for_path(path: &Path) -> AssetKind {
@@ -988,6 +1023,78 @@ mod tests {
         fs::write(
             dir.path().join(".agents/skills/reviewer/SKILL.md"),
             "# Current reviewer",
+        )
+        .unwrap();
+        let current = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = current
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.skills.actual, 1);
+    }
+
+    #[test]
+    fn generated_skill_requires_every_source_file_to_match() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::Codex],
+        });
+        fs::create_dir_all(dir.path().join("skill-sources/reviewer/scripts")).unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/scripts/review.sh"),
+            "echo current",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(".agents/skills/reviewer/scripts")).unwrap();
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/scripts/review.sh"),
+            "echo stale",
+        )
+        .unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let stale = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = stale
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.skills.actual, 0);
+
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/scripts/review.sh"),
+            "echo current",
         )
         .unwrap();
         let current = diagnose_workspace(
