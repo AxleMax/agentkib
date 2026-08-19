@@ -656,6 +656,9 @@ fn generated_skill_can_be_repaired(
         AgentKind::DeepSeekHarness => return false,
     };
     let target = project.join(relative_root).join(&skill.name);
+    if !generated_skill_target_has_safe_ancestors(project, &target) {
+        return false;
+    }
     let metadata = match fs::symlink_metadata(&target) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
@@ -682,6 +685,31 @@ fn generated_skill_can_be_repaired(
         };
         if !source_files.contains_key(relative) {
             return false;
+        }
+    }
+    true
+}
+
+fn generated_skill_target_has_safe_ancestors(project: &Path, target: &Path) -> bool {
+    let Ok(relative) = target.strip_prefix(project) else {
+        return false;
+    };
+    let mut current = project.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(component) = component else {
+            return false;
+        };
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink()
+                    || current != target && !metadata.file_type().is_dir()
+                {
+                    return false;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(_) => return false,
         }
     }
     true
@@ -1297,6 +1325,47 @@ mod tests {
             issue.agent == Some(AgentKind::Cursor)
                 && issue.code == "skill.target-missing"
                 && issue.repairable
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_skill_through_symlinked_parent_is_not_repairable() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::Cursor],
+        });
+        fs::create_dir_all(dir.path().join("skill-sources/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::create_dir(dir.path().join("linked-agents")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("linked-agents"), dir.path().join(".agents"))
+            .unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Cursor]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(report.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Cursor)
+                && issue.code == "skill.target-missing"
+                && !issue.repairable
         }));
     }
 
