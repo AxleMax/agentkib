@@ -183,11 +183,16 @@ pub fn diagnose_workspace(
             }
             let mut native_sections = Vec::new();
             let mut satisfied_fragments = BTreeSet::new();
+            let mut indeterminate_fragments = BTreeSet::new();
             let mut seen_warnings = BTreeSet::new();
             let mut missing_instruction_reported = false;
             for cwd in context_cwds {
                 match resolve_context(project, &cwd, agent, manifest, Vec::new()) {
                     Ok(preview) => {
+                        let content_was_truncated = preview.warnings.iter().any(|warning| {
+                            warning.contains("truncated for preview")
+                                || warning.contains("instruction budget")
+                        });
                         let current_sections = preview
                             .sections
                             .into_iter()
@@ -209,6 +214,10 @@ pub fn diagnose_workspace(
                             }) {
                                 satisfied_fragments.insert(*index);
                             }
+                        }
+                        if content_was_truncated {
+                            indeterminate_fragments
+                                .extend(expected_here.iter().map(|(index, _)| *index));
                         }
                         for warning in preview.warnings {
                             let missing_instruction = warning.contains("No project instruction");
@@ -283,7 +292,7 @@ pub fn diagnose_workspace(
             instruction_actual = if expected_instruction_fragments.is_empty() {
                 native_sections.len()
             } else {
-                satisfied_fragments.len()
+                satisfied_fragments.union(&indeterminate_fragments).count()
             };
             let native_section_refs = native_sections.iter().collect::<Vec<_>>();
             diagnose_exact_duplicates(agent, &native_section_refs, &mut issues);
@@ -291,32 +300,37 @@ pub fn diagnose_workspace(
                 let missing_fragments = expected_instruction_fragments
                     .iter()
                     .enumerate()
-                    .filter(|(index, _)| !satisfied_fragments.contains(index))
+                    .filter(|(index, _)| {
+                        !satisfied_fragments.contains(index)
+                            && !indeterminate_fragments.contains(index)
+                    })
                     .collect::<Vec<_>>();
-                let evidence_path = missing_fragments
-                    .first()
-                    .map(|(_, (cwd, _, _))| cwd.clone());
-                let repairable = enabled
-                    && writable
-                    && missing_fragments
-                        .iter()
-                        .all(|(_, (cwd, expected, scoped))| {
-                            instruction_fragment_can_be_repaired(
-                                project, cwd, agent, manifest, expected, *scoped,
-                            )
-                        });
-                push_issue(
-                    &mut issues,
-                    "instruction.expected-content-missing",
-                    DoctorSeverity::Warning,
-                    Some(agent),
-                    Some(AssetKind::Instruction),
-                    repairable,
-                    evidence_path,
-                    "Configured instructions are not present in native context sources".into(),
-                    Some(instruction_expected.to_string()),
-                    Some(instruction_actual.to_string()),
-                );
+                if !missing_fragments.is_empty() {
+                    let evidence_path = missing_fragments
+                        .first()
+                        .map(|(_, (cwd, _, _))| cwd.clone());
+                    let repairable = enabled
+                        && writable
+                        && missing_fragments
+                            .iter()
+                            .all(|(_, (cwd, expected, scoped))| {
+                                instruction_fragment_can_be_repaired(
+                                    project, cwd, agent, manifest, expected, *scoped,
+                                )
+                            });
+                    push_issue(
+                        &mut issues,
+                        "instruction.expected-content-missing",
+                        DoctorSeverity::Warning,
+                        Some(agent),
+                        Some(AssetKind::Instruction),
+                        repairable,
+                        evidence_path,
+                        "Configured instructions are not present in native context sources".into(),
+                        Some(instruction_expected.to_string()),
+                        Some(instruction_actual.to_string()),
+                    );
+                }
             }
         }
 
@@ -2240,6 +2254,37 @@ mod tests {
         assert!(report.issues.iter().any(|issue| {
             issue.agent == Some(AgentKind::OpenClaw) && issue.code == "instruction.exact-duplicate"
         }));
+    }
+
+    #[test]
+    fn truncated_context_does_not_infer_that_configured_content_is_missing() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.instructions.shared = "x".repeat(129 * 1024);
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        fs::write(dir.path().join("AGENTS.md"), &value.instructions.shared).unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(report.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Codex) && issue.code == "context.warning"
+        }));
+        assert!(report.issues.iter().all(|issue| {
+            issue.agent != Some(AgentKind::Codex)
+                || issue.code != "instruction.expected-content-missing"
+        }));
+        assert_eq!(report.summary.repairable_count, 0);
     }
 
     #[test]

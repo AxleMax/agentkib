@@ -726,22 +726,48 @@ fn redact_sensitive_line(line: &str, redaction_count: &mut usize) -> String {
     }
     let mut output = line.to_string();
     for prefix in ["sk-", "ghp_", "github_pat_", "xoxb-", "xoxp-"] {
-        loop {
-            let lower_output = output.to_ascii_lowercase();
-            let Some(start) = lower_output.find(prefix) else {
-                break;
-            };
-            let end = output[start..]
-                .find(|character: char| {
-                    character.is_whitespace()
-                        || matches!(character, ',' | ';' | ')' | ']' | '}' | '"' | '\'')
-                })
-                .map_or(output.len(), |offset| start + offset);
-            output.replace_range(start..end, "[REDACTED]");
-            *redaction_count += 1;
-        }
+        redact_prefixed_credentials(&mut output, prefix, redaction_count);
     }
     output
+}
+
+fn redact_prefixed_credentials(output: &mut String, prefix: &str, redaction_count: &mut usize) {
+    const MIN_CREDENTIAL_CHARS: usize = 12;
+
+    let mut search_from = 0;
+    while search_from < output.len() {
+        let lower = output[search_from..].to_ascii_lowercase();
+        let Some(relative_start) = lower.find(prefix) else {
+            break;
+        };
+        let start = search_from + relative_start;
+        let has_token_boundary = output[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !is_credential_character(character));
+        let value_start = start + prefix.len();
+        let credential_length = output[value_start..]
+            .chars()
+            .take_while(|character| is_credential_character(*character))
+            .count();
+        if !has_token_boundary || credential_length < MIN_CREDENTIAL_CHARS {
+            search_from = value_start;
+            continue;
+        }
+        let value_bytes = output[value_start..]
+            .char_indices()
+            .take(credential_length)
+            .map(|(index, character)| index + character.len_utf8())
+            .last()
+            .unwrap_or(0);
+        output.replace_range(start..value_start + value_bytes, "[REDACTED]");
+        *redaction_count += 1;
+        search_from = start + "[REDACTED]".len();
+    }
+}
+
+fn is_credential_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
 }
 
 fn sanitize_json_value(
@@ -2971,6 +2997,21 @@ mod tests {
         assert!(content.contains("secretary: Ada"));
         assert!(content.contains("GITHUB_TOKEN= [REDACTED]"));
         assert!(!content.contains("private"));
+        assert_eq!(redaction_count, 1);
+    }
+
+    #[test]
+    fn credential_prefix_redaction_requires_a_boundary_and_plausible_value() {
+        let mut redaction_count = 0;
+        let content = sanitize_handoff_content(
+            "task-runner risk-based disk-backed sk-short risk-sk-abcdefghijkl actual=sk-abcdefghijkl",
+            None,
+            &mut redaction_count,
+        );
+
+        assert!(content.contains("task-runner risk-based disk-backed sk-short"));
+        assert!(content.contains("risk-sk-abcdefghijkl"));
+        assert!(content.contains("actual=[REDACTED]"));
         assert_eq!(redaction_count, 1);
     }
 

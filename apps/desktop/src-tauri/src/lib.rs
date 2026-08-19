@@ -25,8 +25,8 @@ use agentkib_core::{
     McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor,
     MemoryProposal, MemoryRecord, MemoryStatus, ScanRoot, WorkspaceScan, WorkspaceSummary,
     apply_changeset as apply_core_changeset, diagnose_workspace as diagnose_core_workspace,
-    load_manifest, resolve_context as resolve_core_context, scan_workspace as scan_core_workspace,
-    validate_workspace as validate_core_workspace,
+    ensure_allowed_target, load_manifest, resolve_context as resolve_core_context,
+    scan_workspace as scan_core_workspace, validate_workspace as validate_core_workspace,
 };
 use agentkib_discovery::discover as discover_local_workspaces;
 use agentkib_gateways::{RemoteGatewayInput, RemoteGatewaySummary};
@@ -1490,7 +1490,10 @@ impl Drop for SummaryTemporaryDirectory {
     }
 }
 
-fn workspace_doctor_report(workspace_id: &str) -> anyhow::Result<ContextDoctorReport> {
+fn workspace_doctor_report(
+    workspace_id: &str,
+    gateway_port: u16,
+) -> anyhow::Result<ContextDoctorReport> {
     let store = Store::open_default()?;
     let project = store.workspace_path(workspace_id)?;
     let installed_agents = store
@@ -1510,34 +1513,79 @@ fn workspace_doctor_report(workspace_id: &str) -> anyhow::Result<ContextDoctorRe
             (agent, names)
         })
         .collect();
-    diagnose_core_workspace(
+    let report = diagnose_core_workspace(
         &project,
         workspace_id,
         &installed_agents,
         &visible_connections,
-    )
+    )?;
+    Ok(limit_doctor_repairs_to_feasible_plan(
+        &project,
+        report,
+        gateway_port,
+    ))
+}
+
+fn limit_doctor_repairs_to_feasible_plan(
+    project: &Path,
+    mut report: ContextDoctorReport,
+    gateway_port: u16,
+) -> ContextDoctorReport {
+    if report.summary.repairable_count == 0 {
+        return report;
+    }
+    let feasible = load_manifest(project)
+        .and_then(|mut manifest| {
+            ensure_agentkib_connection(&mut manifest, gateway_port);
+            plan_workspace_changes(project, &manifest, &HomeTargets::default())
+        })
+        .and_then(|change_set| {
+            for change in change_set.changes {
+                ensure_allowed_target(project, &change.target, &[])?;
+            }
+            Ok(())
+        })
+        .is_ok();
+    if !feasible {
+        for issue in &mut report.issues {
+            issue.repairable = false;
+        }
+        report.summary.repairable_count = 0;
+    }
+    report
 }
 
 #[tauri::command]
-async fn get_workspace_doctor_report(workspace_id: String) -> CommandResult<ContextDoctorReport> {
-    tauri::async_runtime::spawn_blocking(move || workspace_doctor_report(&workspace_id))
-        .await
-        .map_err(format_error)?
-        .map_err(format_error)
+async fn get_workspace_doctor_report(
+    workspace_id: String,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<ContextDoctorReport> {
+    let gateway_port = hub.settings().port;
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace_doctor_report(&workspace_id, gateway_port)
+    })
+    .await
+    .map_err(format_error)?
+    .map_err(format_error)
 }
 
 #[tauri::command]
 async fn get_workspace_doctor_summaries(
     workspace_ids: Vec<String>,
+    hub: tauri::State<'_, Arc<HubController>>,
 ) -> CommandResult<Vec<ContextDoctorSummary>> {
     if workspace_ids.len() > 100 {
         return Err(LocalizedMessage::new("errors.doctor.tooManyWorkspaces"));
     }
+    let gateway_port = hub.settings().port;
     tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Vec<ContextDoctorSummary>> {
         Ok(workspace_ids
             .iter()
             .map(|workspace_id| {
-                doctor_summary_or_unavailable(workspace_id, workspace_doctor_report(workspace_id))
+                doctor_summary_or_unavailable(
+                    workspace_id,
+                    workspace_doctor_report(workspace_id, gateway_port),
+                )
             })
             .collect())
     })
@@ -4614,6 +4662,37 @@ mod tests {
         assert_eq!(summary.error_count, 1);
         assert_eq!(summary.warning_count, 0);
         assert_eq!(summary.repairable_count, 0);
+    }
+
+    #[test]
+    fn doctor_disables_all_repairs_when_the_complete_plan_cannot_be_created() {
+        let dir = tempdir().unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.instructions.shared = "Shared rule".into();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "missing".into(),
+            path: "skill-sources/missing".into(),
+            targets: vec![AgentKind::Codex],
+        });
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            agentkib_core::manifest_path(dir.path()),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let report = diagnose_core_workspace(
+            dir.path(),
+            &manifest.workspace.id,
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(report.summary.repairable_count > 0);
+
+        let report = limit_doctor_repairs_to_feasible_plan(dir.path(), report, 43127);
+
+        assert_eq!(report.summary.repairable_count, 0);
+        assert!(report.issues.iter().all(|issue| !issue.repairable));
     }
 
     #[test]
