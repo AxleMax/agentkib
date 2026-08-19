@@ -513,7 +513,15 @@ fn asset_kind_for_path(path: &Path) -> AssetKind {
         .any(|pair| pair == [".cursor", "rules"])
     {
         AssetKind::Instruction
-    } else if normalized.contains("mcp") || file_name == "config.toml" {
+    } else if normalized.contains("mcp")
+        || file_name == "config.toml"
+        || components.windows(2).any(|pair| {
+            matches!(
+                pair,
+                [".openclaw", "openclaw.json"] | [".hermes", "config.yaml"]
+            )
+        })
+    {
         AssetKind::Connection
     } else {
         AssetKind::Configuration
@@ -748,7 +756,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_instruction_paths_are_classified_portably() {
+    fn managed_paths_are_classified_portably() {
         assert_eq!(
             asset_kind_for_path(Path::new("TOOLS.md")),
             AssetKind::Instruction
@@ -756,6 +764,14 @@ mod tests {
         assert_eq!(
             asset_kind_for_path(Path::new(r".cursor\rules\agentkib.mdc")),
             AssetKind::Instruction
+        );
+        assert_eq!(
+            asset_kind_for_path(Path::new(".openclaw/openclaw.json")),
+            AssetKind::Connection
+        );
+        assert_eq!(
+            asset_kind_for_path(Path::new(r".hermes\config.yaml")),
+            AssetKind::Connection
         );
     }
 

@@ -537,11 +537,11 @@ pub fn plan_workspace_changes(
             "yaml",
         )?;
     }
-    changes.retain(|change| change.before != change.after);
     let mut persisted_manifest = manifest.clone();
     persisted_manifest.schema_version = 2;
     persisted_manifest.connections.clear();
     update_generated_hashes(&root, &mut persisted_manifest, &changes);
+    changes.retain(|change| change.before != change.after);
     let manifest_target = manifest_path(&root);
     let manifest_after = serde_yaml::to_string(&persisted_manifest)?;
     let manifest_before = fs::read_to_string(&manifest_target).unwrap_or_default();
@@ -1175,6 +1175,40 @@ mod tests {
             plan.changes
                 .iter()
                 .any(|change| change.target.ends_with(".cursor/mcp.json"))
+        );
+    }
+
+    #[test]
+    fn plan_preserves_hashes_for_unchanged_managed_outputs() {
+        let dir = tempdir().unwrap();
+        let manifest = default_manifest(dir.path()).unwrap();
+        let first = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        let agents = first
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with("AGENTS.md"))
+            .unwrap();
+        fs::write(&agents.target, &agents.after).unwrap();
+
+        let second =
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        assert!(
+            second
+                .changes
+                .iter()
+                .all(|change| !change.target.ends_with("AGENTS.md"))
+        );
+        let manifest_change = second
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with(".agentkib/manifest.yaml"))
+            .unwrap();
+        let persisted: Manifest = serde_yaml::from_str(&manifest_change.after).unwrap();
+
+        assert!(
+            persisted.adapters[&AgentKind::Codex]
+                .generated_hashes
+                .contains_key("AGENTS.md")
         );
     }
 
