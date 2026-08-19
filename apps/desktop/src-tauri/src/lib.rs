@@ -24,8 +24,8 @@ use agentkib_core::{
     Manifest, McpHubStatus, McpInstallation, McpMigrationCandidate, McpNetworkSettings,
     McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor,
     MemoryProposal, MemoryRecord, MemoryStatus, ScanRoot, WorkspaceScan, WorkspaceSummary,
-    apply_changeset as apply_core_changeset, diagnose_workspace as diagnose_core_workspace,
-    load_manifest, resolve_context as resolve_core_context, scan_workspace as scan_core_workspace,
+    apply_changeset as apply_core_changeset, diagnose_workspace_with_mcp_error, load_manifest,
+    resolve_context as resolve_core_context, scan_workspace as scan_core_workspace,
     validate_workspace as validate_core_workspace,
 };
 use agentkib_discovery::discover as discover_local_workspaces;
@@ -1500,9 +1500,11 @@ fn workspace_doctor_report(workspace_id: &str) -> anyhow::Result<ContextDoctorRe
         .filter(|installation| installation.installed)
         .map(|installation| installation.agent)
         .collect::<BTreeSet<_>>();
-    let effective_servers = mcp_config::load_effective_config(Some(&project))
-        .unwrap_or_default()
-        .servers;
+    let (effective_servers, mcp_load_error) =
+        match mcp_config::load_effective_config(Some(&project)) {
+            Ok(config) => (config.servers, None),
+            Err(error) => (Vec::new(), Some(error.to_string())),
+        };
     let visible_connections = AgentKind::ALL
         .into_iter()
         .map(|agent| {
@@ -1516,11 +1518,12 @@ fn workspace_doctor_report(workspace_id: &str) -> anyhow::Result<ContextDoctorRe
             (agent, names)
         })
         .collect();
-    diagnose_core_workspace(
+    diagnose_workspace_with_mcp_error(
         &project,
         workspace_id,
         &installed_agents,
         &visible_connections,
+        mcp_load_error.as_deref(),
     )
 }
 
@@ -4638,7 +4641,7 @@ mod tests {
             serde_json::to_string_pretty(&manifest).unwrap(),
         )
         .unwrap();
-        let report = diagnose_core_workspace(
+        let report = agentkib_core::diagnose_workspace(
             dir.path(),
             &manifest.workspace.id,
             &BTreeSet::from([AgentKind::Codex]),

@@ -711,22 +711,165 @@ pub fn sanitize_handoff_export(
 }
 
 fn redact_sensitive_line(line: &str, redaction_count: &mut usize) -> String {
-    if let Some(end) = line
+    let mut output = redact_cli_credentials(line, redaction_count);
+    if let Some(end) = output
         .char_indices()
         .filter(|(_, character)| matches!(character, '=' | ':'))
         .find_map(|(position, character)| {
-            let candidate = assignment_key_before(line, position);
-            is_sensitive_key(candidate).then_some(position + character.len_utf8())
+            let end = position + character.len_utf8();
+            let candidate = assignment_key_before(&output, position);
+            let already_redacted = output[end..]
+                .trim_start()
+                .trim_start_matches(['\'', '"'])
+                .starts_with("[REDACTED]");
+            (is_sensitive_key(candidate) && !already_redacted).then_some(end)
         })
     {
         *redaction_count += 1;
-        return format!("{} [REDACTED]", line[..end].trim_end());
+        return format!("{} [REDACTED]", output[..end].trim_end());
     }
-    let mut output = line.to_string();
     for prefix in ["sk-", "ghp_", "github_pat_", "xoxb-", "xoxp-"] {
         redact_prefixed_credentials(&mut output, prefix, redaction_count);
     }
     output
+}
+
+fn redact_cli_credentials(line: &str, redaction_count: &mut usize) -> String {
+    let tokens = cli_tokens(line);
+    let curl_command = tokens.iter().any(|(_, _, value)| {
+        value.rsplit(['/', '\\']).next().is_some_and(|name| {
+            name.eq_ignore_ascii_case("curl") || name.eq_ignore_ascii_case("curl.exe")
+        })
+    });
+    let mut ranges = Vec::new();
+
+    for (index, (start, end, token)) in tokens.iter().enumerate() {
+        let Some(option) = token.strip_prefix("--") else {
+            if curl_command {
+                if token == "-u" {
+                    if let Some((value_start, value_end, value)) = tokens.get(index + 1)
+                        && !value.starts_with('-')
+                    {
+                        ranges.push((*value_start, *value_end));
+                    }
+                } else if let Some(value) = token.strip_prefix("-u=") {
+                    if !value.is_empty() {
+                        let raw = &line[*start..*end];
+                        if let Some(delimiter) = raw.find('=') {
+                            ranges.push(cli_inline_value_range(line, *start, *end, delimiter + 1));
+                        }
+                    }
+                } else if token.starts_with("-u") && token.len() > 2 {
+                    let raw = &line[*start..*end];
+                    if let Some(option_start) = raw.find("-u") {
+                        ranges.push(cli_inline_value_range(line, *start, *end, option_start + 2));
+                    }
+                }
+            }
+            continue;
+        };
+        let (name, inline_value) = option
+            .split_once('=')
+            .map_or((option, None), |(name, value)| (name, Some(value)));
+        if !(is_sensitive_key(name) || curl_command && name.eq_ignore_ascii_case("user")) {
+            continue;
+        }
+        if inline_value.is_some_and(|value| !value.is_empty()) {
+            let raw = &line[*start..*end];
+            if let Some(delimiter) = raw.find('=') {
+                let (value_start, value_end) =
+                    cli_inline_value_range(line, *start, *end, delimiter + 1);
+                if value_start < value_end {
+                    ranges.push((value_start, value_end));
+                }
+            }
+        } else if inline_value.is_none()
+            && let Some((value_start, value_end, value)) = tokens.get(index + 1)
+            && !value.starts_with('-')
+        {
+            ranges.push((*value_start, *value_end));
+        }
+    }
+
+    ranges.sort_unstable();
+    ranges.dedup();
+    let mut output = line.to_string();
+    for (start, end) in ranges.iter().rev() {
+        output.replace_range(*start..*end, "[REDACTED]");
+    }
+    *redaction_count += ranges.len();
+    output
+}
+
+fn cli_tokens(line: &str) -> Vec<(usize, usize, String)> {
+    let mut tokens = Vec::new();
+    let mut start = None;
+    let mut value = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, character) in line.char_indices() {
+        if escaped {
+            value.push(character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            start.get_or_insert(index);
+            escaped = true;
+            continue;
+        }
+        if matches!(character, '\'' | '"') {
+            if quote == Some(character) {
+                quote = None;
+                continue;
+            }
+            if quote.is_none() {
+                start.get_or_insert(index);
+                quote = Some(character);
+                continue;
+            }
+        }
+        if character.is_whitespace() && quote.is_none() {
+            if let Some(token_start) = start.take() {
+                tokens.push((token_start, index, std::mem::take(&mut value)));
+            }
+            continue;
+        }
+        start.get_or_insert(index);
+        value.push(character);
+    }
+    if escaped {
+        value.push('\\');
+    }
+    if let Some(token_start) = start {
+        tokens.push((token_start, line.len(), value));
+    }
+    tokens
+}
+
+fn cli_inline_value_range(
+    line: &str,
+    token_start: usize,
+    token_end: usize,
+    value_offset: usize,
+) -> (usize, usize) {
+    let raw = &line[token_start..token_end];
+    let mut value_start = token_start + value_offset;
+    let mut value_end = token_end;
+    let closing_quote = raw
+        .chars()
+        .next_back()
+        .filter(|value| matches!(value, '\'' | '"'));
+    if let Some(quote) = closing_quote {
+        if line[value_start..value_end].starts_with(quote) {
+            value_start += quote.len_utf8();
+            value_end -= quote.len_utf8();
+        } else if raw.starts_with(quote) {
+            value_end -= quote.len_utf8();
+        }
+    }
+    (value_start, value_end)
 }
 
 fn assignment_key_before(line: &str, delimiter: usize) -> &str {
@@ -3043,6 +3186,56 @@ mod tests {
             "callback=https://host/path?mode=plain&token= [REDACTED]\nurl=https://host/path?mode=plain"
         );
         assert_eq!(redaction_count, 1);
+    }
+
+    #[test]
+    fn line_redaction_covers_space_separated_cli_credentials() {
+        let mut redaction_count = 0;
+        let content = sanitize_handoff_content(
+            "mysql --password hunter2 --host localhost\n\
+             tool --token \"opaque value\" --verbose\n\
+             tool --api-key=inline-secret --verbose\n\
+             tool --secret='inline private' --verbose\n\
+             curl -u alice:hunter2 https://example.test\n\
+             curl --user 'bob:private value' https://example.test\n\
+             curl -ualice:attached https://example.test\n\
+             curl -u=carol:equals https://example.test",
+            None,
+            &mut redaction_count,
+        );
+
+        assert_eq!(
+            content,
+            "mysql --password [REDACTED] --host localhost\n\
+             tool --token [REDACTED] --verbose\n\
+             tool --api-key=[REDACTED] --verbose\n\
+             tool --secret='[REDACTED]' --verbose\n\
+             curl -u [REDACTED] https://example.test\n\
+             curl --user [REDACTED] https://example.test\n\
+             curl -u[REDACTED] https://example.test\n\
+             curl -u=[REDACTED] https://example.test"
+        );
+        assert_eq!(redaction_count, 8);
+    }
+
+    #[test]
+    fn cli_redaction_preserves_noncredential_options_and_missing_values() {
+        let mut redaction_count = 0;
+        let content = sanitize_handoff_content(
+            "tool --token-budget 4096 --password-policy strict\n\
+             tool --token --verbose\n\
+             other -u alice:hunter2",
+            None,
+            &mut redaction_count,
+        );
+
+        assert_eq!(
+            content,
+            "tool --token-budget 4096 --password-policy strict\n\
+             tool --token --verbose\n\
+             other -u alice:hunter2"
+        );
+        assert_eq!(redaction_count, 0);
     }
 
     #[test]

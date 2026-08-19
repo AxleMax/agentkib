@@ -8,7 +8,7 @@ mod scanner;
 
 pub use changeset::{ApplyOptions, apply_changeset, hash_content};
 pub use context::resolve_context;
-pub use doctor::diagnose_workspace;
+pub use doctor::{diagnose_workspace, diagnose_workspace_with_mcp_error};
 pub use manifest::{load_manifest, manifest_path, validate_manifest};
 pub use model::*;
 pub use path_policy::{canonical_project, ensure_allowed_target};

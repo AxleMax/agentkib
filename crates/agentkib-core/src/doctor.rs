@@ -28,6 +28,22 @@ pub fn diagnose_workspace(
     installed_agents: &BTreeSet<AgentKind>,
     visible_connections: &BTreeMap<AgentKind, Vec<String>>,
 ) -> Result<ContextDoctorReport> {
+    diagnose_workspace_with_mcp_error(
+        project,
+        workspace_id,
+        installed_agents,
+        visible_connections,
+        None,
+    )
+}
+
+pub fn diagnose_workspace_with_mcp_error(
+    project: &Path,
+    workspace_id: &str,
+    installed_agents: &BTreeSet<AgentKind>,
+    visible_connections: &BTreeMap<AgentKind, Vec<String>>,
+    mcp_load_error: Option<&str>,
+) -> Result<ContextDoctorReport> {
     let scan = scan_workspace(project)?;
     let project = scan.root.as_path();
     let manifest_result = if manifest_entry_exists(project) {
@@ -40,6 +56,21 @@ pub fn diagnose_workspace(
         .and_then(|value| value.as_ref().ok());
     let manifest_invalid = manifest_result.as_ref().is_some_and(Result::is_err);
     let mut issues = Vec::new();
+
+    if let Some(error) = mcp_load_error {
+        push_issue(
+            &mut issues,
+            "mcp.config-unavailable",
+            DoctorSeverity::Error,
+            None,
+            Some(AssetKind::Configuration),
+            false,
+            None,
+            error.to_string(),
+            Some("Readable, valid MCP configuration".into()),
+            Some("Unavailable".into()),
+        );
+    }
 
     if let Some(Err(error)) = manifest_result.as_ref() {
         push_issue(
@@ -380,7 +411,7 @@ pub fn diagnose_workspace(
             .difference(&visible_mcp_names)
             .cloned()
             .collect::<Vec<_>>();
-        if diagnostically_active && !missing_mcp_names.is_empty() {
+        if diagnostically_active && mcp_load_error.is_none() && !missing_mcp_names.is_empty() {
             push_issue(
                 &mut issues,
                 "mcp.target-missing",
@@ -413,10 +444,11 @@ pub fn diagnose_workspace(
         let skill_attention = agent_issues.iter().any(|issue| {
             issue.asset_kind == Some(AssetKind::Skill) && issue.severity != DoctorSeverity::Info
         }) || skill_actual < skill_expected;
-        let mcp_attention = agent_issues.iter().any(|issue| {
-            issue.asset_kind == Some(AssetKind::Connection)
-                && issue.severity != DoctorSeverity::Info
-        });
+        let mcp_attention = mcp_load_error.is_some() && diagnostically_active
+            || agent_issues.iter().any(|issue| {
+                issue.asset_kind == Some(AssetKind::Connection)
+                    && issue.severity != DoctorSeverity::Info
+            });
         let base_status = if applicable && manifest_invalid {
             DoctorStatus::Unavailable
         } else if diagnostically_active {
@@ -441,7 +473,11 @@ pub fn diagnose_workspace(
                 actual: skill_actual,
             },
             mcp: DoctorAssetStatus {
-                status: attention_status(base_status, mcp_attention),
+                status: if mcp_load_error.is_some() && diagnostically_active {
+                    DoctorStatus::Unavailable
+                } else {
+                    attention_status(base_status, mcp_attention)
+                },
                 expected: mcp_expected,
                 actual: mcp_actual,
             },
@@ -499,7 +535,10 @@ fn issue_blocks_workspace_repair(project: &Path, issue: &DoctorIssue) -> bool {
         return false;
     }
     match issue.code.as_str() {
-        "skill.source-unavailable" | "native.invalid" | "context.unavailable" => true,
+        "skill.source-unavailable"
+        | "native.invalid"
+        | "context.unavailable"
+        | "mcp.config-unavailable" => true,
         "managed.missing" | "managed.drift" => issue
             .evidence
             .iter()
@@ -2280,6 +2319,62 @@ mod tests {
                     && !issue.repairable
             }));
         }
+    }
+
+    #[test]
+    fn reports_mcp_configuration_failures_without_target_repairs() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.connections.push(ConnectionDefinition {
+            name: "filesystem".into(),
+            transport: ConnectionTransport::Stdio {
+                command: "node".into(),
+                args: vec!["server.js".into()],
+            },
+            env: BTreeMap::new(),
+            allow_tools: Vec::new(),
+            targets: vec![AgentKind::Codex],
+        });
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "Shared rule").unwrap();
+
+        let report = diagnose_workspace_with_mcp_error(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+            Some("Invalid MCP JSON config .agentkib/mcp.json"),
+        )
+        .unwrap();
+
+        assert_eq!(report.summary.error_count, 1);
+        assert_eq!(report.summary.repairable_count, 0);
+        assert!(report.issues.iter().any(|issue| {
+            issue.code == "mcp.config-unavailable"
+                && issue.severity == DoctorSeverity::Error
+                && !issue.repairable
+        }));
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| issue.code != "mcp.target-missing")
+        );
+        assert_eq!(
+            report
+                .matrix
+                .iter()
+                .find(|row| row.agent == AgentKind::Codex)
+                .unwrap()
+                .mcp
+                .status,
+            DoctorStatus::Unavailable
+        );
     }
 
     #[test]
