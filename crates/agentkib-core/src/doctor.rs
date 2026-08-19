@@ -91,7 +91,7 @@ pub fn diagnose_workspace(
             .map(|value| {
                 let mut fragments = Vec::new();
                 if !value.instructions.shared.trim().is_empty() {
-                    fragments.push(value.instructions.shared.as_str());
+                    fragments.push((project.to_path_buf(), value.instructions.shared.as_str()));
                 }
                 if let Some(platform_override) = value
                     .instructions
@@ -99,7 +99,12 @@ pub fn diagnose_workspace(
                     .get(&agent)
                     .filter(|content| !content.trim().is_empty())
                 {
-                    fragments.push(platform_override.as_str());
+                    fragments.push((project.to_path_buf(), platform_override.as_str()));
+                }
+                for scoped in &value.instructions.scoped {
+                    if !scoped.content.trim().is_empty() {
+                        fragments.push((project.join(&scoped.path), scoped.content.as_str()));
+                    }
                 }
                 fragments
             })
@@ -140,87 +145,117 @@ pub fn diagnose_workspace(
         }
 
         if diagnostically_active {
-            match resolve_context(project, project, agent, manifest, Vec::new()) {
-                Ok(preview) => {
-                    let native_sections: Vec<_> = preview
-                        .sections
-                        .iter()
-                        .filter(|section| section.scope != "platform-override")
-                        .collect();
-                    instruction_actual = if expected_instruction_fragments.is_empty() {
-                        native_sections.len()
-                    } else {
-                        expected_instruction_fragments
-                            .iter()
-                            .filter(|expected| {
-                                native_sections
-                                    .iter()
-                                    .any(|section| contains_normalized(&section.content, expected))
-                            })
-                            .count()
-                    };
-                    for warning in preview.warnings {
-                        // The resolver exposes this advisory for the preview UI, but Doctor only
-                        // reports conditions that can be proven from files and parsed context.
-                        if warning.contains("semantic conflicts")
-                            || warning.contains("No project instruction")
-                                && instruction_expected == 0
-                        {
-                            continue;
-                        }
-                        let repairable = warning.contains("No project instruction")
-                            && instruction_expected > 0
-                            && enabled
-                            && writable;
-                        push_issue(
-                            &mut issues,
-                            if warning.contains("No project instruction") {
-                                "instruction.missing"
-                            } else {
-                                "context.warning"
-                            },
-                            DoctorSeverity::Warning,
-                            Some(agent),
-                            Some(AssetKind::Instruction),
-                            repairable,
-                            None,
-                            warning,
-                            None,
-                            None,
-                        );
-                    }
-                    diagnose_exact_duplicates(agent, &native_sections, &mut issues);
-                    if instruction_expected > 0
-                        && !native_sections.is_empty()
-                        && instruction_actual < instruction_expected
-                    {
-                        push_issue(
-                            &mut issues,
-                            "instruction.expected-content-missing",
-                            DoctorSeverity::Warning,
-                            Some(agent),
-                            Some(AssetKind::Instruction),
-                            enabled && writable,
-                            None,
-                            "Configured instructions are not present in native context sources"
-                                .into(),
-                            Some(instruction_expected.to_string()),
-                            Some(instruction_actual.to_string()),
-                        );
-                    }
+            let mut context_cwds = vec![project.to_path_buf()];
+            for (cwd, _) in &expected_instruction_fragments {
+                if cwd.is_dir() && !context_cwds.contains(cwd) {
+                    context_cwds.push(cwd.clone());
                 }
-                Err(error) => push_issue(
+            }
+            let mut native_sections = Vec::new();
+            let mut satisfied_fragments = BTreeSet::new();
+            let mut seen_warnings = BTreeSet::new();
+            let mut missing_instruction_reported = false;
+            for cwd in context_cwds {
+                match resolve_context(project, &cwd, agent, manifest, Vec::new()) {
+                    Ok(preview) => {
+                        let current_sections = preview
+                            .sections
+                            .into_iter()
+                            .filter(|section| section.scope != "platform-override")
+                            .collect::<Vec<_>>();
+                        let expected_here = expected_instruction_fragments
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, (expected_cwd, _))| expected_cwd == &cwd)
+                            .collect::<Vec<_>>();
+                        for (index, (_, expected)) in &expected_here {
+                            if current_sections
+                                .iter()
+                                .any(|section| contains_normalized(&section.content, expected))
+                            {
+                                satisfied_fragments.insert(*index);
+                            }
+                        }
+                        for warning in preview.warnings {
+                            let missing_instruction = warning.contains("No project instruction");
+                            // The resolver exposes this advisory for the preview UI, but Doctor
+                            // only reports conditions that can be proven from files and parsed
+                            // context. A root without instructions is valid when only scoped
+                            // instructions are configured.
+                            if warning.contains("semantic conflicts")
+                                || missing_instruction && expected_here.is_empty()
+                                || !seen_warnings.insert(warning.clone())
+                            {
+                                continue;
+                            }
+                            missing_instruction_reported |= missing_instruction;
+                            push_issue(
+                                &mut issues,
+                                if missing_instruction {
+                                    "instruction.missing"
+                                } else {
+                                    "context.warning"
+                                },
+                                DoctorSeverity::Warning,
+                                Some(agent),
+                                Some(AssetKind::Instruction),
+                                missing_instruction && enabled && writable,
+                                Some(cwd.clone()),
+                                warning,
+                                None,
+                                None,
+                            );
+                        }
+                        for section in current_sections {
+                            if native_sections
+                                .iter()
+                                .all(|existing: &crate::ContextSection| {
+                                    existing.source != section.source
+                                })
+                            {
+                                native_sections.push(section);
+                            }
+                        }
+                    }
+                    Err(error) => push_issue(
+                        &mut issues,
+                        "context.unavailable",
+                        DoctorSeverity::Error,
+                        Some(agent),
+                        Some(AssetKind::Instruction),
+                        false,
+                        Some(cwd),
+                        error.to_string(),
+                        None,
+                        None,
+                    ),
+                }
+            }
+            instruction_actual = if expected_instruction_fragments.is_empty() {
+                native_sections.len()
+            } else {
+                satisfied_fragments.len()
+            };
+            let native_section_refs = native_sections.iter().collect::<Vec<_>>();
+            diagnose_exact_duplicates(agent, &native_section_refs, &mut issues);
+            if instruction_actual < instruction_expected && !missing_instruction_reported {
+                let evidence_path = expected_instruction_fragments
+                    .iter()
+                    .enumerate()
+                    .find(|(index, _)| !satisfied_fragments.contains(index))
+                    .map(|(_, (cwd, _))| cwd.clone());
+                push_issue(
                     &mut issues,
-                    "context.unavailable",
-                    DoctorSeverity::Error,
+                    "instruction.expected-content-missing",
+                    DoctorSeverity::Warning,
                     Some(agent),
                     Some(AssetKind::Instruction),
-                    false,
-                    None,
-                    error.to_string(),
-                    None,
-                    None,
-                ),
+                    enabled && writable,
+                    evidence_path,
+                    "Configured instructions are not present in native context sources".into(),
+                    Some(instruction_expected.to_string()),
+                    Some(instruction_actual.to_string()),
+                );
             }
         }
 
@@ -412,6 +447,9 @@ fn diagnose_skill_sources(project: &Path, manifest: &Manifest, issues: &mut Vec<
 
 fn diagnose_managed_files(project: &Path, manifest: &Manifest, issues: &mut Vec<DoctorIssue>) {
     for (agent, state) in &manifest.adapters {
+        if !state.enabled {
+            continue;
+        }
         for (target, expected) in &state.generated_hashes {
             let path = PathBuf::from(target);
             let path = if path.is_absolute() {
@@ -1034,6 +1072,64 @@ mod tests {
     }
 
     #[test]
+    fn diagnoses_scoped_instructions_from_their_configured_directory() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.instructions.shared.clear();
+        value.instructions.scoped.push(crate::ScopedInstruction {
+            path: "packages/api".into(),
+            content: "API-only rule".into(),
+        });
+        fs::create_dir_all(dir.path().join(".agentkib")).unwrap();
+        fs::create_dir_all(dir.path().join("packages/api")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let missing = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = missing
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.instructions.expected, 1);
+        assert_eq!(row.instructions.actual, 0);
+        assert_eq!(row.instructions.status, DoctorStatus::Attention);
+        assert!(missing.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Codex)
+                && matches!(
+                    issue.code.as_str(),
+                    "instruction.missing" | "instruction.expected-content-missing"
+                )
+        }));
+
+        fs::write(dir.path().join("packages/api/AGENTS.md"), "API-only rule").unwrap();
+        let healthy = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = healthy
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.instructions.expected, 1);
+        assert_eq!(row.instructions.actual, 1);
+        assert_eq!(row.instructions.status, DoctorStatus::Healthy);
+    }
+
+    #[test]
     fn reports_manifest_mcp_connections_missing_from_target_visibility() {
         let dir = tempdir().unwrap();
         let mut value = manifest(dir.path());
@@ -1104,7 +1200,11 @@ mod tests {
     fn disabled_agent_is_neutral_and_not_offered_repairs() {
         let dir = tempdir().unwrap();
         let mut value = manifest(dir.path());
-        value.adapters.get_mut(&AgentKind::Codex).unwrap().enabled = false;
+        let codex = value.adapters.get_mut(&AgentKind::Codex).unwrap();
+        codex.enabled = false;
+        codex
+            .generated_hashes
+            .insert("AGENTS.md".into(), hash_content(b"Shared rule"));
         fs::create_dir(dir.path().join(".agentkib")).unwrap();
         fs::write(
             manifest_path(dir.path()),
@@ -1142,6 +1242,7 @@ mod tests {
                 .unwrap()
                 .enabled
         );
+        assert_eq!(report.summary.warning_count, 0);
     }
 
     #[test]
