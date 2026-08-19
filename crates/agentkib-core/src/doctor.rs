@@ -10,6 +10,7 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
+use crate::manifest::manifest_entry_exists;
 use crate::{
     AgentKind, AssetKind, ContextDoctorReport, ContextDoctorSummary, DoctorAgentRow,
     DoctorAssetStatus, DoctorEvidence, DoctorIssue, DoctorSeverity, DoctorStatus, Manifest,
@@ -27,7 +28,8 @@ pub fn diagnose_workspace(
     visible_connections: &BTreeMap<AgentKind, Vec<String>>,
 ) -> Result<ContextDoctorReport> {
     let scan = scan_workspace(project)?;
-    let manifest_result = if manifest_path(project).is_file() {
+    let project = scan.root.as_path();
+    let manifest_result = if manifest_entry_exists(project) {
         Some(load_manifest(project))
     } else {
         None
@@ -53,7 +55,14 @@ pub fn diagnose_workspace(
         );
     }
 
+    let manifest_error = manifest_result
+        .as_ref()
+        .and_then(|result| result.as_ref().err())
+        .map(ToString::to_string);
     for warning in &scan.warnings {
+        if manifest_error.as_deref() == Some(warning) {
+            continue;
+        }
         push_issue(
             &mut issues,
             "native.invalid",
@@ -430,13 +439,7 @@ pub fn diagnose_workspace(
 fn diagnose_skill_sources(project: &Path, manifest: &Manifest, issues: &mut Vec<DoctorIssue>) {
     for skill in &manifest.skills {
         let source = project.join(&skill.path);
-        let entrypoint =
-            if fs::symlink_metadata(&source).is_ok_and(|metadata| metadata.file_type().is_dir()) {
-                source.join("SKILL.md")
-            } else {
-                source.clone()
-            };
-        let readable = matches!(hash_managed_file(&entrypoint), ManagedFileHash::Hashed(_));
+        let readable = managed_skill_files(project, &source).is_some();
         if !readable {
             push_issue(
                 issues,
@@ -590,19 +593,26 @@ fn generated_skill_is_current(
         AgentKind::Codex | AgentKind::Hermes => &[".agents/skills"],
     };
     let source = project.join(&skill.path);
-    let Some(source_files) = managed_skill_files(&source) else {
+    let Some(source_files) = managed_skill_files(project, &source) else {
         return false;
     };
     roots.iter().any(|root| {
         let target = project.join(root).join(&skill.name);
-        managed_skill_files(&target).is_some_and(|target_files| target_files == source_files)
+        managed_skill_files(project, &target)
+            .is_some_and(|target_files| target_files == source_files)
     })
 }
 
-fn managed_skill_files(source: &Path) -> Option<BTreeMap<PathBuf, String>> {
+fn managed_skill_files(project: &Path, source: &Path) -> Option<BTreeMap<PathBuf, String>> {
+    if !target_has_safe_ancestors(project, source) {
+        return None;
+    }
     if source.is_file() {
-        let name = source.file_name().unwrap_or_else(|| OsStr::new("SKILL.md"));
-        let ManagedFileHash::Hashed(hash) = hash_managed_file(source) else {
+        let name = source.file_name()?;
+        if name != OsStr::new("SKILL.md") {
+            return None;
+        }
+        let ManagedFileHash::Hashed(hash) = hash_managed_skill_file(source) else {
             return None;
         };
         return Some(BTreeMap::from([(PathBuf::from(name), hash)]));
@@ -633,12 +643,40 @@ fn managed_skill_files(source: &Path) -> Option<BTreeMap<PathBuf, String>> {
             return None;
         }
         let relative = entry.path().strip_prefix(source).ok()?.to_path_buf();
-        let ManagedFileHash::Hashed(hash) = hash_managed_file(entry.path()) else {
+        let ManagedFileHash::Hashed(hash) = hash_managed_skill_file(entry.path()) else {
             return None;
         };
         files.insert(relative, hash);
     }
-    (!files.is_empty()).then_some(files)
+    files.contains_key(Path::new("SKILL.md")).then_some(files)
+}
+
+fn hash_managed_skill_file(path: &Path) -> ManagedFileHash {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => metadata,
+        Ok(_) => return ManagedFileHash::Unavailable,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ManagedFileHash::Missing;
+        }
+        Err(_) => return ManagedFileHash::Unavailable,
+    };
+    if metadata.len() > MAX_MANAGED_FILE_BYTES {
+        return ManagedFileHash::Unavailable;
+    }
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return ManagedFileHash::Unavailable,
+    };
+    let mut content = String::new();
+    if file
+        .take(MAX_MANAGED_FILE_BYTES + 1)
+        .read_to_string(&mut content)
+        .is_err()
+        || content.len() as u64 > MAX_MANAGED_FILE_BYTES
+    {
+        return ManagedFileHash::Unavailable;
+    }
+    ManagedFileHash::Hashed(hash_content(content.as_bytes()))
 }
 
 fn generated_skill_can_be_repaired(
@@ -647,7 +685,7 @@ fn generated_skill_can_be_repaired(
     agent: AgentKind,
     skill: &crate::SkillDefinition,
 ) -> bool {
-    let Some(source_files) = managed_skill_files(&project.join(&skill.path)) else {
+    let Some(source_files) = managed_skill_files(project, &project.join(&skill.path)) else {
         return false;
     };
     let relative_root = match agent {
@@ -718,7 +756,7 @@ fn target_has_safe_ancestors(project: &Path, target: &Path) -> bool {
         current.push(component);
         match fs::symlink_metadata(&current) {
             Ok(metadata) => {
-                if metadata.file_type().is_symlink()
+                if !is_safe_scan_entry(&current)
                     || current != target && !metadata.file_type().is_dir()
                 {
                     return false;
@@ -1003,6 +1041,100 @@ mod tests {
                 .issues
                 .iter()
                 .any(|issue| issue.code == "skill.source-unavailable" && !issue.repairable)
+        );
+    }
+
+    #[test]
+    fn single_file_skill_requires_skill_md_entrypoint() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("skill-sources/reviewer.md");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "# Reviewer").unwrap();
+        fs::create_dir_all(dir.path().join(".agents/skills/reviewer")).unwrap();
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/reviewer.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer.md".into(),
+            targets: vec![AgentKind::Codex],
+        });
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = report
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+
+        assert_eq!(row.skills.actual, 0);
+        assert!(report.issues.iter().any(|issue| {
+            issue.code == "skill.source-unavailable"
+                && issue.evidence.iter().any(|evidence| {
+                    evidence
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.ends_with("skill-sources/reviewer.md"))
+                })
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_source_through_symlinked_ancestor_is_unavailable() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("real-sources/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("real-sources/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            dir.path().join("real-sources"),
+            dir.path().join("skill-sources"),
+        )
+        .unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::Codex],
+        });
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| { issue.code == "skill.source-unavailable" && !issue.repairable })
         );
     }
 
@@ -1762,6 +1894,30 @@ mod tests {
                 .issues
                 .iter()
                 .any(|issue| issue.code == "instruction.exact-duplicate")
+        );
+    }
+
+    #[test]
+    fn reports_non_regular_manifest_as_invalid() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(manifest_path(dir.path())).unwrap();
+
+        let report =
+            diagnose_workspace(dir.path(), "invalid", &BTreeSet::new(), &BTreeMap::new()).unwrap();
+
+        assert_eq!(
+            report
+                .issues
+                .iter()
+                .filter(|issue| issue.code == "manifest.invalid")
+                .count(),
+            1
+        );
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| issue.code != "native.invalid")
         );
     }
 }

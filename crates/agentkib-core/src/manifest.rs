@@ -13,6 +13,13 @@ pub fn manifest_path(project: &Path) -> PathBuf {
     project.join(".agentkib/manifest.yaml")
 }
 
+pub(crate) fn manifest_entry_exists(project: &Path) -> bool {
+    match fs::symlink_metadata(manifest_path(project)) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
 pub fn load_manifest(project: &Path) -> Result<Manifest> {
     let path = manifest_path(project);
     let metadata = fs::symlink_metadata(&path)
@@ -46,6 +53,7 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
         if skill.name.trim().is_empty() {
             bail!("Skill name cannot be empty");
         }
+        validate_path_segment(&skill.name, "Skill name")?;
         if !skill_names.insert(skill.name.as_str()) {
             bail!("Duplicate Skill name: {}", skill.name);
         }
@@ -122,6 +130,17 @@ fn validate_relative_path(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_path_segment(value: &str, label: &str) -> Result<()> {
+    let mut components = Path::new(value).components();
+    if value.contains(['/', '\\'])
+        || !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || components.next().is_some()
+    {
+        bail!("{label} must be a single path-safe name: {value}");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +172,24 @@ mod tests {
             targets: vec![],
         });
         assert!(validate_manifest(&value).is_err());
+    }
+
+    #[test]
+    fn rejects_skill_names_that_can_change_the_output_path() {
+        for name in ["../escape", "nested/name", r"nested\name", ".", ".."] {
+            let mut value = manifest();
+            value.skills.push(SkillDefinition {
+                name: name.into(),
+                path: ".agents/skills/reviewer".into(),
+                targets: vec![],
+            });
+            assert!(
+                validate_manifest(&value)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("single path-safe name")
+            );
+        }
     }
 
     #[test]

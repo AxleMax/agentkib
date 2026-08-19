@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,9 @@ const END: &str = "<!-- agentkib:managed:end -->";
 const TOML_START: &str = "# agentkib:managed:start";
 const TOML_END: &str = "# agentkib:managed:end";
 const MAX_HANDOFF_GITIGNORE_BYTES: u64 = 1024 * 1024;
+const MAX_SKILL_FILE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_SKILL_FILES: usize = 512;
+const MAX_SKILL_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct HomeTargets {
@@ -697,8 +701,15 @@ fn skill_source_files(
     skill: &agentkib_core::SkillDefinition,
 ) -> Result<Vec<(PathBuf, String)>> {
     let source = root.join(&skill.path);
-    let canonical = canonicalize(&source)
+    fs::symlink_metadata(&source)
         .with_context(|| format!("Skill path does not exist: {}", source.display()))?;
+    if !path_has_safe_ancestors(root, &source) {
+        anyhow::bail!(
+            "Skill path cannot contain symbolic links or non-directory ancestors: {}",
+            source.display()
+        );
+    }
+    let canonical = canonicalize(&source)?;
     if !path_starts_with(&canonical, root) {
         anyhow::bail!(
             "Skill path must be inside the project: {}",
@@ -710,18 +721,44 @@ fn skill_source_files(
             .file_name()
             .context("Skill file has no filename")?
             .into();
-        return Ok(vec![(file_name, read_skill_text(&canonical)?)]);
+        if canonical.file_name() != Some(OsStr::new("SKILL.md")) {
+            anyhow::bail!(
+                "A single-file Skill source must be named SKILL.md: {}",
+                source.display()
+            );
+        }
+        let (content, _) = read_skill_text(&canonical)?;
+        return Ok(vec![(file_name, content)]);
+    }
+    if !canonical.is_dir() {
+        anyhow::bail!(
+            "Skill path must be a regular file or directory: {}",
+            source.display()
+        );
     }
 
     let mut files = Vec::new();
-    for entry in WalkDir::new(&canonical)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| is_safe_scan_entry(entry.path()))
-    {
+    let mut total_bytes = 0_u64;
+    let mut has_entrypoint = false;
+    for entry in WalkDir::new(&canonical).follow_links(false) {
         let entry = entry?;
-        if !entry.file_type().is_file() {
+        if !is_safe_scan_entry(entry.path()) {
+            anyhow::bail!(
+                "Skill directories cannot contain symbolic links: {}",
+                entry.path().display()
+            );
+        }
+        if entry.file_type().is_dir() {
             continue;
+        }
+        if !entry.file_type().is_file() {
+            anyhow::bail!(
+                "Skill directories can contain only regular files: {}",
+                entry.path().display()
+            );
+        }
+        if files.len() >= MAX_SKILL_FILES {
+            anyhow::bail!("Skill source exceeds the {MAX_SKILL_FILES} file limit");
         }
         let path = canonicalize(entry.path())?;
         if !path_starts_with(&path, root) {
@@ -731,19 +768,77 @@ fn skill_source_files(
             );
         }
         let relative = path.strip_prefix(&canonical)?.to_path_buf();
-        files.push((relative, read_skill_text(&path)?));
+        let (content, bytes) = read_skill_text(&path)?;
+        total_bytes = total_bytes
+            .checked_add(bytes)
+            .context("Skill source size overflow")?;
+        if total_bytes > MAX_SKILL_TOTAL_BYTES {
+            anyhow::bail!("Skill source exceeds the 32 MiB total read limit");
+        }
+        has_entrypoint |= relative == Path::new("SKILL.md");
+        files.push((relative, content));
+    }
+    if !has_entrypoint {
+        anyhow::bail!(
+            "Skill directory has no SKILL.md entry point: {}",
+            source.display()
+        );
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(files)
 }
 
-fn read_skill_text(path: &Path) -> Result<String> {
-    fs::read_to_string(path).with_context(|| {
-        format!(
-            "The MVP supports only UTF-8 text Skill assets; could not read: {}",
+fn path_has_safe_ancestors(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(component) = component else {
+            return false;
+        };
+        current.push(component);
+        let Ok(metadata) = fs::symlink_metadata(&current) else {
+            return false;
+        };
+        if !is_safe_scan_entry(&current) || current != path && !metadata.file_type().is_dir() {
+            return false;
+        }
+    }
+    true
+}
+
+fn read_skill_text(path: &Path) -> Result<(String, u64)> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Could not inspect Skill file: {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("Skill asset must be a regular file: {}", path.display());
+    }
+    if metadata.len() > MAX_SKILL_FILE_BYTES {
+        anyhow::bail!(
+            "Skill asset exceeds the 8 MiB read limit: {}",
             path.display()
-        )
-    })
+        );
+    }
+    let mut content = String::new();
+    fs::File::open(path)
+        .with_context(|| format!("Could not read Skill file: {}", path.display()))?
+        .take(MAX_SKILL_FILE_BYTES + 1)
+        .read_to_string(&mut content)
+        .with_context(|| {
+            format!(
+                "The MVP supports only UTF-8 text Skill assets; could not read: {}",
+                path.display()
+            )
+        })?;
+    if content.len() as u64 > MAX_SKILL_FILE_BYTES {
+        anyhow::bail!(
+            "Skill asset exceeds the 8 MiB read limit: {}",
+            path.display()
+        );
+    }
+    let bytes = content.len() as u64;
+    Ok((content, bytes))
 }
 
 fn validator_for_skill_file(path: &Path) -> &'static str {
@@ -1660,6 +1755,113 @@ mod tests {
                 .ends_with(".claude/skills/reviewer/references/checklist.md")
                 && change.after == "- Run tests"
         }));
+    }
+
+    #[test]
+    fn rejects_skill_sources_without_skill_md_entrypoint() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("shared/directory-skill")).unwrap();
+        fs::write(
+            dir.path().join("shared/directory-skill/reviewer.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::write(dir.path().join("shared/reviewer.md"), "# Reviewer").unwrap();
+
+        for path in ["shared/directory-skill", "shared/reviewer.md"] {
+            let mut manifest = default_manifest(dir.path()).unwrap();
+            manifest.skills.push(agentkib_core::SkillDefinition {
+                name: "reviewer".into(),
+                path: path.into(),
+                targets: vec![AgentKind::ClaudeCode],
+            });
+
+            assert!(
+                plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("SKILL.md")
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_skill_assets_before_reading_them() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("shared/reviewer");
+        fs::create_dir_all(&source).unwrap();
+        fs::File::create(source.join("SKILL.md"))
+            .unwrap()
+            .set_len(MAX_SKILL_FILE_BYTES + 1)
+            .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "reviewer".into(),
+            path: "shared/reviewer".into(),
+            targets: vec![AgentKind::ClaudeCode],
+        });
+
+        assert!(
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default())
+                .unwrap_err()
+                .to_string()
+                .contains("8 MiB read limit")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symbolic_links_inside_skill_sources() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("shared/reviewer");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "# Reviewer").unwrap();
+        fs::write(dir.path().join("shared/reference.md"), "Reference").unwrap();
+        std::os::unix::fs::symlink(
+            dir.path().join("shared/reference.md"),
+            source.join("reference.md"),
+        )
+        .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "reviewer".into(),
+            path: "shared/reviewer".into(),
+            targets: vec![AgentKind::ClaudeCode],
+        });
+
+        assert!(
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default())
+                .unwrap_err()
+                .to_string()
+                .contains("symbolic links")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symbolic_link_ancestors_of_skill_sources() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("real-shared/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("real-shared/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(dir.path().join("real-shared"), dir.path().join("shared"))
+            .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "reviewer".into(),
+            path: "shared/reviewer".into(),
+            targets: vec![AgentKind::ClaudeCode],
+        });
+
+        assert!(
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default())
+                .unwrap_err()
+                .to_string()
+                .contains("symbolic links")
+        );
     }
 
     #[test]

@@ -4,10 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use walkdir::WalkDir;
 
-use crate::{
-    AgentDetection, AgentKind, AssetKind, AssetRecord, WorkspaceScan, canonical_project,
-    manifest_path,
-};
+use crate::manifest::manifest_entry_exists;
+use crate::{AgentDetection, AgentKind, AssetKind, AssetRecord, WorkspaceScan, canonical_project};
 
 pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
     let root = canonical_project(project)?;
@@ -75,14 +73,13 @@ pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
         .into_iter()
         .map(|(_, warning)| warning)
         .collect();
-    if manifest_path(&root).is_file()
-        && let Err(error) = crate::load_manifest(&root)
-    {
+    let manifest_exists = manifest_entry_exists(&root);
+    if manifest_exists && let Err(error) = crate::load_manifest(&root) {
         warnings.push(error.to_string());
     }
     Ok(WorkspaceScan {
         root: root.clone(),
-        manifest_exists: manifest_path(&root).is_file(),
+        manifest_exists,
         agents,
         assets,
         warnings,
@@ -303,6 +300,21 @@ mod tests {
                 .warnings
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn reports_non_regular_manifest_entries_as_present_and_invalid() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".agentkib/manifest.yaml")).unwrap();
+
+        let scan = scan_workspace(dir.path()).unwrap();
+
+        assert!(scan.manifest_exists);
+        assert!(
+            scan.warnings
+                .iter()
+                .any(|warning| warning.contains("must be a regular file"))
         );
     }
 
