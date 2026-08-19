@@ -42,7 +42,7 @@ pub fn resolve_context(
         AgentKind::Codex => codex_sources(&dirs),
         AgentKind::ClaudeCode => claude_sources(&dirs),
         AgentKind::Cursor => cursor_sources(&dirs),
-        AgentKind::OpenClaw => openclaw_sources(&root),
+        AgentKind::OpenClaw => openclaw_sources(&dirs),
         AgentKind::Hermes => hermes_sources(&dirs),
         AgentKind::DeepSeekHarness => Vec::new(),
     };
@@ -399,13 +399,11 @@ fn claude_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
 
 fn cursor_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    if let Some(root) = dirs.first() {
-        let agents = root.join("AGENTS.md");
+    for dir in dirs {
+        let agents = dir.join("AGENTS.md");
         if agents.is_file() {
             result.push(agents);
         }
-    }
-    for dir in dirs {
         let rules = dir.join(".cursor/rules");
         let Ok(entries) = fs::read_dir(rules) else {
             continue;
@@ -435,8 +433,11 @@ fn cursor_rule_is_always(path: &Path) -> bool {
     })
 }
 
-fn openclaw_sources(root: &Path) -> Vec<PathBuf> {
-    [
+fn openclaw_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let Some(root) = dirs.first() else {
+        return Vec::new();
+    };
+    let mut result = [
         "AGENTS.md",
         "SOUL.md",
         "IDENTITY.md",
@@ -447,7 +448,14 @@ fn openclaw_sources(root: &Path) -> Vec<PathBuf> {
     .into_iter()
     .map(|name| root.join(name))
     .filter(|path| path.is_file())
-    .collect()
+    .collect::<Vec<_>>();
+    result.extend(
+        dirs.iter()
+            .skip(1)
+            .map(|dir| dir.join("AGENTS.md"))
+            .filter(|path| path.is_file()),
+    );
+    result
 }
 
 fn hermes_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
@@ -579,8 +587,11 @@ mod tests {
     #[test]
     fn cursor_context_uses_agents_and_only_always_rules() {
         let dir = tempdir().unwrap();
+        let nested = dir.path().join("src");
+        fs::create_dir(&nested).unwrap();
         fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
         fs::write(dir.path().join("AGENTS.md"), "shared").unwrap();
+        fs::write(nested.join("AGENTS.md"), "nested").unwrap();
         fs::write(
             dir.path().join(".cursor/rules/always.mdc"),
             "---\nalwaysApply: true\n---\ncursor override",
@@ -593,10 +604,28 @@ mod tests {
         .unwrap();
 
         let preview =
-            resolve_context(dir.path(), dir.path(), AgentKind::Cursor, None, vec![]).unwrap();
-        assert_eq!(preview.sections.len(), 2);
+            resolve_context(dir.path(), &nested, AgentKind::Cursor, None, vec![]).unwrap();
+        assert_eq!(preview.sections.len(), 3);
         assert_eq!(preview.sections[0].content.trim(), "shared");
         assert!(preview.sections[1].content.contains("cursor override"));
+        assert_eq!(preview.sections[2].content.trim(), "nested");
+    }
+
+    #[test]
+    fn openclaw_context_inherits_nested_agents_rules() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("src");
+        fs::create_dir(&nested).unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "shared").unwrap();
+        fs::write(dir.path().join("TOOLS.md"), "tools").unwrap();
+        fs::write(nested.join("AGENTS.md"), "nested").unwrap();
+
+        let preview =
+            resolve_context(dir.path(), &nested, AgentKind::OpenClaw, None, vec![]).unwrap();
+        assert_eq!(preview.sections.len(), 3);
+        assert_eq!(preview.sections[0].content.trim(), "shared");
+        assert_eq!(preview.sections[1].content.trim(), "tools");
+        assert_eq!(preview.sections[2].content.trim(), "nested");
     }
 
     #[test]

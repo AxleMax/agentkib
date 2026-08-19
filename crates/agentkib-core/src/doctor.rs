@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use agentkib_platform::path::equivalent;
 use anyhow::Result;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -91,7 +92,11 @@ pub fn diagnose_workspace(
             .map(|value| {
                 let mut fragments = Vec::new();
                 if !value.instructions.shared.trim().is_empty() {
-                    fragments.push((project.to_path_buf(), value.instructions.shared.as_str()));
+                    fragments.push((
+                        project.to_path_buf(),
+                        value.instructions.shared.as_str(),
+                        false,
+                    ));
                 }
                 if let Some(platform_override) = value
                     .instructions
@@ -99,11 +104,11 @@ pub fn diagnose_workspace(
                     .get(&agent)
                     .filter(|content| !content.trim().is_empty())
                 {
-                    fragments.push((project.to_path_buf(), platform_override.as_str()));
+                    fragments.push((project.to_path_buf(), platform_override.as_str(), false));
                 }
                 for scoped in &value.instructions.scoped {
                     if !scoped.content.trim().is_empty() {
-                        fragments.push((project.join(&scoped.path), scoped.content.as_str()));
+                        fragments.push((project.join(&scoped.path), scoped.content.as_str(), true));
                     }
                 }
                 fragments
@@ -146,7 +151,7 @@ pub fn diagnose_workspace(
 
         if diagnostically_active {
             let mut context_cwds = vec![project.to_path_buf()];
-            for (cwd, _) in &expected_instruction_fragments {
+            for (cwd, _, _) in &expected_instruction_fragments {
                 if cwd.is_dir() && !context_cwds.contains(cwd) {
                     context_cwds.push(cwd.clone());
                 }
@@ -166,13 +171,17 @@ pub fn diagnose_workspace(
                         let expected_here = expected_instruction_fragments
                             .iter()
                             .enumerate()
-                            .filter(|(_, (expected_cwd, _))| expected_cwd == &cwd)
+                            .filter(|(_, (expected_cwd, _, _))| expected_cwd == &cwd)
                             .collect::<Vec<_>>();
-                        for (index, (_, expected)) in &expected_here {
-                            if current_sections
-                                .iter()
-                                .any(|section| contains_normalized(&section.content, expected))
-                            {
+                        for (index, (_, expected, scoped)) in &expected_here {
+                            if current_sections.iter().any(|section| {
+                                contains_normalized(&section.content, expected)
+                                    && (!scoped
+                                        || section
+                                            .source
+                                            .parent()
+                                            .is_some_and(|parent| equivalent(parent, &cwd)))
+                            }) {
                                 satisfied_fragments.insert(*index);
                             }
                         }
@@ -243,7 +252,7 @@ pub fn diagnose_workspace(
                     .iter()
                     .enumerate()
                     .find(|(index, _)| !satisfied_fragments.contains(index))
-                    .map(|(_, (cwd, _))| cwd.clone());
+                    .map(|(_, (cwd, _, _))| cwd.clone());
                 push_issue(
                     &mut issues,
                     "instruction.expected-content-missing",
@@ -1087,46 +1096,44 @@ mod tests {
             serde_yaml::to_string(&value).unwrap(),
         )
         .unwrap();
+        // Inherited text at the project root must not satisfy a scoped expectation.
+        fs::write(dir.path().join("AGENTS.md"), "API-only rule").unwrap();
+        let installed = BTreeSet::from([AgentKind::Codex, AgentKind::Cursor, AgentKind::OpenClaw]);
 
-        let missing = diagnose_workspace(
-            dir.path(),
-            "workspace",
-            &BTreeSet::from([AgentKind::Codex]),
-            &BTreeMap::new(),
-        )
-        .unwrap();
-        let row = missing
-            .matrix
-            .iter()
-            .find(|row| row.agent == AgentKind::Codex)
-            .unwrap();
-        assert_eq!(row.instructions.expected, 1);
-        assert_eq!(row.instructions.actual, 0);
-        assert_eq!(row.instructions.status, DoctorStatus::Attention);
-        assert!(missing.issues.iter().any(|issue| {
-            issue.agent == Some(AgentKind::Codex)
-                && matches!(
-                    issue.code.as_str(),
-                    "instruction.missing" | "instruction.expected-content-missing"
-                )
-        }));
+        let missing =
+            diagnose_workspace(dir.path(), "workspace", &installed, &BTreeMap::new()).unwrap();
+        for agent in [AgentKind::Codex, AgentKind::Cursor, AgentKind::OpenClaw] {
+            let row = missing
+                .matrix
+                .iter()
+                .find(|row| row.agent == agent)
+                .unwrap();
+            assert_eq!(row.instructions.expected, 1);
+            assert_eq!(row.instructions.actual, 0);
+            assert_eq!(row.instructions.status, DoctorStatus::Attention);
+            assert!(missing.issues.iter().any(|issue| {
+                issue.agent == Some(agent)
+                    && matches!(
+                        issue.code.as_str(),
+                        "instruction.missing" | "instruction.expected-content-missing"
+                    )
+            }));
+        }
 
+        fs::remove_file(dir.path().join("AGENTS.md")).unwrap();
         fs::write(dir.path().join("packages/api/AGENTS.md"), "API-only rule").unwrap();
-        let healthy = diagnose_workspace(
-            dir.path(),
-            "workspace",
-            &BTreeSet::from([AgentKind::Codex]),
-            &BTreeMap::new(),
-        )
-        .unwrap();
-        let row = healthy
-            .matrix
-            .iter()
-            .find(|row| row.agent == AgentKind::Codex)
-            .unwrap();
-        assert_eq!(row.instructions.expected, 1);
-        assert_eq!(row.instructions.actual, 1);
-        assert_eq!(row.instructions.status, DoctorStatus::Healthy);
+        let healthy =
+            diagnose_workspace(dir.path(), "workspace", &installed, &BTreeMap::new()).unwrap();
+        for agent in [AgentKind::Codex, AgentKind::Cursor, AgentKind::OpenClaw] {
+            let row = healthy
+                .matrix
+                .iter()
+                .find(|row| row.agent == agent)
+                .unwrap();
+            assert_eq!(row.instructions.expected, 1);
+            assert_eq!(row.instructions.actual, 1);
+            assert_eq!(row.instructions.status, DoctorStatus::Healthy);
+        }
     }
 
     #[test]
