@@ -1,20 +1,40 @@
 use std::collections::BTreeSet;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
 use crate::{AgentKind, ConnectionTransport, Manifest};
 
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+
 pub fn manifest_path(project: &Path) -> PathBuf {
     project.join(".agentkib/manifest.yaml")
 }
 
+pub(crate) fn manifest_entry_exists(project: &Path) -> bool {
+    match fs::symlink_metadata(manifest_path(project)) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
 pub fn load_manifest(project: &Path) -> Result<Manifest> {
     let path = manifest_path(project);
-    let content =
-        fs::read_to_string(&path).with_context(|| format!("Could not read {}", path.display()))?;
-    let manifest: Manifest = serde_yaml::from_str(&content).context("manifest.yaml is invalid")?;
+    let metadata = fs::symlink_metadata(&path)
+        .with_context(|| format!("Could not inspect {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!("manifest.yaml must be a regular file");
+    }
+    if metadata.len() > MAX_MANIFEST_BYTES {
+        bail!("manifest.yaml exceeds the 1 MiB read limit");
+    }
+    let file = File::open(&path).with_context(|| format!("Could not read {}", path.display()))?;
+    let manifest: Manifest = serde_yaml::from_reader(BufReader::new(
+        file.take(metadata.len().min(MAX_MANIFEST_BYTES)),
+    ))
+    .context("manifest.yaml is invalid")?;
     validate_manifest(&manifest)?;
     Ok(manifest)
 }
@@ -33,6 +53,7 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
         if skill.name.trim().is_empty() {
             bail!("Skill name cannot be empty");
         }
+        validate_path_segment(&skill.name, "Skill name")?;
         if !skill_names.insert(skill.name.as_str()) {
             bail!("Duplicate Skill name: {}", skill.name);
         }
@@ -109,6 +130,17 @@ fn validate_relative_path(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_path_segment(value: &str, label: &str) -> Result<()> {
+    let mut components = Path::new(value).components();
+    if value.contains(['/', '\\'])
+        || !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || components.next().is_some()
+    {
+        bail!("{label} must be a single path-safe name: {value}");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +175,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_skill_names_that_can_change_the_output_path() {
+        for name in ["../escape", "nested/name", r"nested\name", ".", ".."] {
+            let mut value = manifest();
+            value.skills.push(SkillDefinition {
+                name: name.into(),
+                path: ".agents/skills/reviewer".into(),
+                targets: vec![],
+            });
+            assert!(
+                validate_manifest(&value)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("single path-safe name")
+            );
+        }
+    }
+
+    #[test]
     fn rejects_deepseek_harness_write_targets() {
         let mut value = manifest();
         value.skills.push(SkillDefinition {
@@ -155,6 +205,40 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("read-only")
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_manifest_before_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        File::create(manifest_path(dir.path()))
+            .unwrap()
+            .set_len(MAX_MANIFEST_BYTES + 1)
+            .unwrap();
+
+        assert!(
+            load_manifest(dir.path())
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds the 1 MiB read limit")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.yaml");
+        fs::write(&source, serde_yaml::to_string(&manifest()).unwrap()).unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        std::os::unix::fs::symlink(source, manifest_path(dir.path())).unwrap();
+
+        assert!(
+            load_manifest(dir.path())
+                .unwrap_err()
+                .to_string()
+                .contains("must be a regular file")
         );
     }
 }

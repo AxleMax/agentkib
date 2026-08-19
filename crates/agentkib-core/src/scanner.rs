@@ -1,13 +1,14 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use walkdir::WalkDir;
 
-use crate::{
-    AgentDetection, AgentKind, AssetKind, AssetRecord, WorkspaceScan, canonical_project,
-    manifest_path,
-};
+use crate::manifest::manifest_entry_exists;
+use crate::{AgentDetection, AgentKind, AssetKind, AssetRecord, WorkspaceScan, canonical_project};
+
+const MAX_NATIVE_CONFIG_BYTES: u64 = 1024 * 1024;
 
 pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
     let root = canonical_project(project)?;
@@ -75,14 +76,13 @@ pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
         .into_iter()
         .map(|(_, warning)| warning)
         .collect();
-    if manifest_path(&root).is_file()
-        && let Err(error) = crate::load_manifest(&root)
-    {
+    let manifest_exists = manifest_entry_exists(&root);
+    if manifest_exists && let Err(error) = crate::load_manifest(&root) {
         warnings.push(error.to_string());
     }
     Ok(WorkspaceScan {
         root: root.clone(),
-        manifest_exists: manifest_path(&root).is_file(),
+        manifest_exists,
         agents,
         assets,
         warnings,
@@ -91,25 +91,51 @@ pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
 
 fn validate_native_config(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?;
-    let content = fs::read_to_string(path).ok()?;
-    let error = if name.ends_with(".json") {
+    let format = if name.ends_with(".json") {
+        "JSON"
+    } else if name.ends_with(".toml") {
+        "TOML"
+    } else {
+        return None;
+    };
+    let invalid = |detail: String| {
+        format!(
+            "Configuration file is invalid: {} ({detail})",
+            path.display()
+        )
+    };
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => metadata,
+        Ok(_) => return Some(invalid("must be a regular file".into())),
+        Err(error) => return Some(invalid(error.to_string())),
+    };
+    if metadata.len() > MAX_NATIVE_CONFIG_BYTES {
+        return Some(invalid(format!(
+            "{format} exceeds the 1 MiB validation limit"
+        )));
+    }
+    let mut content = String::new();
+    if let Err(error) = fs::File::open(path).and_then(|file| {
+        file.take(MAX_NATIVE_CONFIG_BYTES + 1)
+            .read_to_string(&mut content)
+    }) {
+        return Some(invalid(error.to_string()));
+    }
+    if content.len() as u64 > MAX_NATIVE_CONFIG_BYTES {
+        return Some(invalid(format!(
+            "{format} exceeds the 1 MiB validation limit"
+        )));
+    }
+    let error = if format == "JSON" {
         serde_json::from_str::<serde_json::Value>(&content)
             .err()
             .map(|error| error.to_string())
-    } else if name.ends_with(".toml") {
+    } else {
         toml::from_str::<toml::Value>(&content)
             .err()
             .map(|error| error.to_string())
-    } else {
-        None
     };
-    error.map(|error| {
-        format!(
-            "Configuration file is invalid: {} ({})",
-            path.display(),
-            error
-        )
-    })
+    error.map(invalid)
 }
 
 fn candidates(agent: AgentKind) -> Vec<(&'static str, AssetKind, &'static str)> {
@@ -171,6 +197,7 @@ fn candidates(agent: AgentKind) -> Vec<(&'static str, AssetKind, &'static str)> 
                 "Cursor commands",
             ),
             (".cursor/skills", AssetKind::Skill, "Cursor Skills"),
+            (".agents/skills", AssetKind::Skill, "Shared Agent Skill"),
             (".cursor/hooks.json", AssetKind::Hook, "Cursor Hooks"),
             (".cursor/mcp.json", AssetKind::Connection, "Cursor MCP"),
         ],
@@ -306,6 +333,39 @@ mod tests {
     }
 
     #[test]
+    fn rejects_oversized_native_configuration_before_reading_it() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".codex")).unwrap();
+        fs::File::create(dir.path().join(".codex/config.toml"))
+            .unwrap()
+            .set_len(MAX_NATIVE_CONFIG_BYTES + 1)
+            .unwrap();
+
+        let scan = scan_workspace(dir.path()).unwrap();
+
+        assert!(
+            scan.warnings
+                .iter()
+                .any(|warning| warning.contains("exceeds the 1 MiB validation limit"))
+        );
+    }
+
+    #[test]
+    fn reports_non_regular_manifest_entries_as_present_and_invalid() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".agentkib/manifest.yaml")).unwrap();
+
+        let scan = scan_workspace(dir.path()).unwrap();
+
+        assert!(scan.manifest_exists);
+        assert!(
+            scan.warnings
+                .iter()
+                .any(|warning| warning.contains("must be a regular file"))
+        );
+    }
+
+    #[test]
     fn scans_cursor_rules_commands_hooks_and_mcp() {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
@@ -318,6 +378,12 @@ mod tests {
         fs::write(dir.path().join(".cursor/commands/review.md"), "Review").unwrap();
         fs::write(dir.path().join(".cursor/hooks.json"), "{}").unwrap();
         fs::write(dir.path().join(".cursor/mcp.json"), "{}").unwrap();
+        fs::create_dir_all(dir.path().join(".agents/skills/reviewer")).unwrap();
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
 
         let scan = scan_workspace(dir.path()).unwrap();
         let cursor = scan
@@ -326,6 +392,11 @@ mod tests {
             .find(|agent| agent.agent == AgentKind::Cursor)
             .unwrap();
         assert!(cursor.detected);
-        assert_eq!(cursor.asset_count, 4);
+        assert_eq!(cursor.asset_count, 5);
+        assert!(scan.assets.iter().any(|asset| {
+            asset.agent == AgentKind::Cursor
+                && asset.kind == AssetKind::Skill
+                && asset.path.ends_with(".agents/skills/reviewer/SKILL.md")
+        }));
     }
 }

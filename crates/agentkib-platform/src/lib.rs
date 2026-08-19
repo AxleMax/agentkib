@@ -5,4 +5,5 @@ pub mod command;
 pub mod fs;
 pub mod path;
 pub mod process;
+pub mod terminal;
 pub mod xdg;

@@ -20,3 +20,4 @@ apps/desktop/src-tauri/resources/linux/
 apps/desktop/src-tauri/resources/linux/*
 !apps/desktop/src-tauri/resources/linux/.gitkeep
 apps/desktop/src-tauri/gen/
+.agentkib/handoffs/

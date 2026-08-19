@@ -11,6 +11,14 @@ export type ConnectionDefinition =
   | { name: string; transport: "http"; url: string; env: Record<string, string>; allow_tools: string[]; targets: AgentKind[] };
 export interface Manifest { schema_version: number; workspace: { id: string; name: string }; instructions: { shared: string; scoped: Array<{ path: string; content: string }>; platform_overrides: Partial<Record<AgentKind, string>> }; skills: SkillDefinition[]; mcp: { config: string }; connections: ConnectionDefinition[]; memories: { require_approval: boolean }; adapters: Partial<Record<AgentKind, { enabled: boolean; generated_hashes: Record<string, string> }>> }
 export interface ContextPreview { agent: AgentKind; project: string; cwd: string; sections: Array<{ source: string; scope: string; content: string; precedence: number }>; visible_skills: string[]; visible_connections: string[]; approved_memories: string[]; warnings: string[] }
+export type DoctorSeverity = "error" | "warning" | "info";
+export type DoctorStatus = "healthy" | "attention" | "unavailable" | "not-applicable";
+export interface DoctorAssetStatus { status: DoctorStatus; expected: number; actual: number }
+export interface DoctorAgentRow { agent: AgentKind; detected: boolean; installed: boolean; enabled: boolean; writable: boolean; instructions: DoctorAssetStatus; skills: DoctorAssetStatus; mcp: DoctorAssetStatus }
+export interface DoctorEvidence { path?: string; detail: string; expected?: string; actual?: string }
+export interface DoctorIssue { id: string; code: string; severity: DoctorSeverity; agent?: AgentKind; asset_kind?: string; repairable: boolean; evidence: DoctorEvidence[] }
+export interface ContextDoctorSummary { workspace_id: string; error_count: number; warning_count: number; info_count: number; repairable_count: number; checked_at: string }
+export interface ContextDoctorReport { summary: ContextDoctorSummary; matrix: DoctorAgentRow[]; issues: DoctorIssue[] }
 export interface FileChange { target: string; scope: "project" | "agent-home"; original_hash?: string; before: string; after: string; risk: "low" | "medium" | "high"; validator: string }
 export interface ChangeSet { id: string; project_root: string; created_at: string; changes: FileChange[]; requires_home_approval: boolean }
 export interface MemoryRecord { id: string; project_id: string; memory_type: MemoryType; content: string; status: MemoryStatus; source_agent?: string; source_thread?: string; source_reference?: string; created_at: string; approved_at?: string; invalidated_by?: string }
@@ -124,3 +132,17 @@ export interface ConversationSessionSummary { id: string; workspace_id: string; 
 export interface ConversationIndexStatus { workspace_id: string; agent: "codex" | "claude-code"; freshness: SessionIndexFreshness; session_count: number; last_attempt_at?: string; last_success_at?: string; error_key?: string; error_detail?: string }
 export interface ConversationEvent { id: string; kind: ConversationEventKind; timestamp?: string; content?: string; tool_name?: string; tool_status?: string; duration_ms?: number; attachment_count: number; truncated: boolean }
 export interface ConversationEventPage { events: ConversationEvent[]; next_cursor?: string; warnings: string[] }
+export type HandoffFormat = "markdown" | "json";
+export type HandoffContextSource = "native-compaction" | "full-transcript" | "model-summary";
+export type HandoffLimitReason = "message-limit" | "byte-limit";
+export interface SessionHandoffRequest { session_id: string; target_agent: AgentKind; format: HandoffFormat }
+export interface SessionHandoffDraft { filename: string; format: HandoffFormat; content: string; redaction_count: number; included_message_count: number; omitted_tool_count: number; context_source: HandoffContextSource; warnings: string[] }
+export type SessionHandoffPreparation =
+  | { status: "ready"; draft: SessionHandoffDraft }
+  | { status: "summary-required"; source_agent: AgentKind; message_count: number; estimated_bytes: number; reason: HandoffLimitReason };
+export interface SessionHandoffLaunchRequest { workspace_id: string; filename: string; target_agent: AgentKind }
+export interface PlannedSessionHandoff { change_set: ChangeSet; launch_request: SessionHandoffLaunchRequest }
+export interface HandoffLaunchReceipt { target_agent: AgentKind; terminal: string }
+export type HandoffContinuationResult =
+  | { status: "launched"; receipt: HandoffLaunchReceipt }
+  | { status: "applied-launch-failed"; error: LocalizedMessage };

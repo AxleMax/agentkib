@@ -37,6 +37,8 @@ vi.mock("./api", () => ({
   api: {
     workspaces: vi.fn().mockResolvedValue([]),
     agentInstallations: vi.fn().mockResolvedValue([]),
+    workspaceDoctorSummaries: vi.fn().mockResolvedValue([]),
+    workspaceDoctorReport: vi.fn(),
     catalogAssets: vi.fn().mockResolvedValue([]),
     globalMemories: vi.fn().mockResolvedValue([]),
     activity: vi.fn().mockResolvedValue([]),
@@ -61,6 +63,11 @@ vi.mock("./api", () => ({
     workspaceSessions: vi.fn().mockResolvedValue([]),
     refreshWorkspaceSessions: vi.fn().mockResolvedValue([]),
     sessionEvents: vi.fn().mockResolvedValue({ events: [], warnings: [] }),
+    prepareSessionHandoff: vi.fn(),
+    summarizeSessionHandoff: vi.fn(),
+    planSessionHandoff: vi.fn(),
+    continueSessionHandoff: vi.fn(),
+    launchSessionHandoff: vi.fn(),
     workspaceSessionStatus: vi.fn().mockResolvedValue([]),
     clearSessionIndex: vi.fn().mockResolvedValue(undefined),
     setSessionIndexEnabled: vi.fn().mockImplementation((enabled: boolean) => Promise.resolve({ ...testRuntime(true), session_index_enabled: enabled })),
@@ -89,6 +96,8 @@ vi.mock("./api", () => ({
     setQuotaPopoverPreferences: vi.fn().mockImplementation((preferences) => Promise.resolve(preferences)),
     addWorkspace: vi.fn(),
     addScanRoot: vi.fn(),
+    refreshWorkspace: vi.fn().mockResolvedValue(undefined),
+    excludeWorkspace: vi.fn().mockResolvedValue(undefined),
     refreshQuota: vi.fn().mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-refresh" }),
     insightsView: vi.fn().mockResolvedValue({
       summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
@@ -101,6 +110,8 @@ vi.mock("./api", () => ({
     gitIdentities: vi.fn().mockResolvedValue([]),
     scan: vi.fn().mockResolvedValue({ root: "/tmp/project", manifest_exists: false, agents: [], assets: [], warnings: [] }),
     manifest: vi.fn().mockResolvedValue({ schema_version: 1, workspace: { id: "project", name: "Project" }, instructions: { shared: "", scoped: [], platform_overrides: {} }, skills: [], mcp: { config: ".agentkib/mcp.json" }, connections: [], memories: { require_approval: true }, adapters: {} }),
+    plan: vi.fn(),
+    apply: vi.fn(),
   },
 }));
 
@@ -125,7 +136,12 @@ afterEach(() => {
   vi.mocked(api.quitApp).mockClear();
   vi.mocked(api.workspaces).mockResolvedValue([]);
   vi.mocked(api.agentInstallations).mockResolvedValue([]);
+  vi.mocked(api.workspaceDoctorSummaries).mockResolvedValue([]);
   vi.mocked(api.runtime).mockResolvedValue(testRuntime(true));
+  vi.mocked(api.plan).mockReset();
+  vi.mocked(api.apply).mockReset();
+  vi.mocked(api.continueSessionHandoff).mockReset();
+  vi.mocked(api.launchSessionHandoff).mockReset();
   vi.mocked(api.insightsView).mockResolvedValue({
     summary: { total_tokens: 120000, input_tokens: 80000, output_tokens: 40000, cache_tokens: 10000, reasoning_tokens: 5000, session_count: 12, my_commits: 8, all_commits: 20, attributed_commits: 3, active_days: 6, current_streak: 2, longest_streak: 4, quality: "incomplete", coverage_from: "2026-08-01", coverage_to: "2026-08-13" },
     heatmap: [{ date: "2026-08-13", tokens: 120000, my_commits: 8, all_commits: 20, attributed_commits: 3, sessions: 12, quality: "exact" }],
@@ -149,6 +165,156 @@ describe("AgentKib desktop", () => {
     expect(result).toContainEqual({ type: "added", content: "new" });
   });
 
+  it("applies a ChangeSet once and clears it after success", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy",
+      asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    vi.mocked(api.plan).mockResolvedValue({
+      id: "change-set", project_root: "/tmp/project", created_at: "2026-08-18T00:00:00Z",
+      requires_home_approval: false,
+      changes: [{ target: "/tmp/project/AGENTS.md", scope: "project", before: "", after: "updated", risk: "low", validator: "markdown" }],
+    });
+    let finishApply!: () => void;
+    vi.mocked(api.apply).mockImplementation(() => new Promise<void>((resolve) => { finishApply = resolve; }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
+    fireEvent.change(await screen.findByLabelText("Shared Project Instructions"), { target: { value: "updated" } });
+    const review = screen.getByRole("button", { name: "Review changes" });
+    await waitFor(() => expect(review).toBeEnabled());
+    fireEvent.click(review);
+
+    const apply = await screen.findByRole("button", { name: "Apply 1 Changes" });
+    fireEvent.click(apply);
+    fireEvent.click(apply);
+    expect(api.apply).toHaveBeenCalledTimes(1);
+
+    await act(async () => { finishApply(); });
+    expect(await screen.findByText("No changes to apply")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply 1 Changes" })).not.toBeInTheDocument();
+  });
+
+  it("ignores ChangeSet completion after leaving its workspace", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy",
+      asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    vi.mocked(api.plan).mockResolvedValue({
+      id: "change-set", project_root: "/tmp/project", created_at: "2026-08-18T00:00:00Z",
+      requires_home_approval: false,
+      changes: [{ target: "/tmp/project/AGENTS.md", scope: "project", before: "", after: "updated", risk: "low", validator: "markdown" }],
+    });
+    let finishApply!: () => void;
+    vi.mocked(api.apply).mockImplementation(() => new Promise<void>((resolve) => { finishApply = resolve; }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
+    fireEvent.change(await screen.findByLabelText("Shared Project Instructions"), { target: { value: "updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Apply 1 Changes" }));
+    const scanCount = vi.mocked(api.scan).mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(await screen.findByRole("heading", { name: "Home" })).toBeInTheDocument();
+    await act(async () => { finishApply(); });
+
+    expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument();
+    expect(api.scan).toHaveBeenCalledTimes(scanCount);
+    confirm.mockRestore();
+  });
+
+  it("renders structured ChangeSet errors instead of object coercion", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy",
+      asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    vi.mocked(api.plan).mockResolvedValue({
+      id: "change-set", project_root: "/tmp/project", created_at: "2026-08-18T00:00:00Z",
+      requires_home_approval: false,
+      changes: [{ target: "/tmp/project/AGENTS.md", scope: "project", before: "", after: "updated", risk: "low", validator: "markdown" }],
+    });
+    vi.mocked(api.apply).mockRejectedValue({ key: "errors.generic", detail: "file hash changed" });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
+    fireEvent.change(await screen.findByLabelText("Shared Project Instructions"), { target: { value: "updated" } });
+    const review = screen.getByRole("button", { name: "Review changes" });
+    await waitFor(() => expect(review).toBeEnabled());
+    fireEvent.click(review);
+    fireEvent.click(await screen.findByRole("button", { name: "Apply 1 Changes" }));
+
+    const error = await screen.findByText(/file hash changed/);
+    expect(error).not.toHaveTextContent("[object Object]");
+    expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
+  });
+
+  it("applies a handoff once and retries only the Agent launch after partial success", async () => {
+    const workspace = {
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy" as const,
+      asset_count: 0, warning_count: 0, sources: [],
+    };
+    const launchRequest = { workspace_id: "project", filename: "handoff.md", target_agent: "claude-code" as const };
+    const handoffChangeSet = {
+      id: "handoff-change", project_root: "/tmp/project", created_at: "2026-08-18T00:00:00Z",
+      requires_home_approval: false,
+      changes: [{ target: "/tmp/project/.agentkib/handoffs/handoff.md", scope: "project" as const, before: "", after: "# Handoff", risk: "low" as const, validator: "markdown" }],
+    };
+    vi.mocked(api.workspaces).mockResolvedValue([workspace]);
+    vi.mocked(api.agentInstallations).mockResolvedValue([{ agent: "claude-code", installed: true, configured: true, warnings: [] }]);
+    vi.mocked(api.workspaceSessions).mockResolvedValue([{
+      id: "session", workspace_id: "project", agent: "codex", title: "Current task",
+      archived: false, sidechain: false, availability: "readable",
+    }]);
+    vi.mocked(api.workspaceSessionStatus).mockResolvedValue([
+      { workspace_id: "project", agent: "codex", freshness: "fresh", session_count: 1 },
+      { workspace_id: "project", agent: "claude-code", freshness: "fresh", session_count: 0 },
+    ]);
+    vi.mocked(api.sessionEvents).mockResolvedValue({
+      events: [{ id: "message", kind: "user-message", content: "Continue this", attachment_count: 0, truncated: false }], warnings: [],
+    });
+    vi.mocked(api.prepareSessionHandoff).mockResolvedValue({
+      status: "ready",
+      draft: { filename: "handoff.md", format: "markdown", content: "# Handoff", redaction_count: 0, included_message_count: 1, omitted_tool_count: 0, context_source: "full-transcript", warnings: [] },
+    });
+    vi.mocked(api.planSessionHandoff).mockResolvedValue({ change_set: handoffChangeSet, launch_request: launchRequest });
+    let finishContinuation!: (result: { status: "applied-launch-failed"; error: { key: string; detail: string } }) => void;
+    vi.mocked(api.continueSessionHandoff).mockImplementation(() => new Promise((resolve) => { finishContinuation = resolve; }));
+    vi.mocked(api.launchSessionHandoff).mockResolvedValue({ target_agent: "claude-code", terminal: "Terminal.app" });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Sessions" }));
+    expect(await screen.findByText("Current task")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Create handoff" }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare handoff" }));
+    expect(await screen.findByDisplayValue("# Handoff")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review save changes" }));
+
+    const continueButton = await screen.findByRole("button", { name: "Apply and continue in Claude Code" });
+    expect(screen.getByRole("button", { name: "Apply only" })).toBeInTheDocument();
+    fireEvent.click(continueButton);
+    fireEvent.click(continueButton);
+    expect(api.continueSessionHandoff).toHaveBeenCalledTimes(1);
+    expect(api.apply).not.toHaveBeenCalled();
+
+    await act(async () => finishContinuation({
+      status: "applied-launch-failed",
+      error: { key: "errors.handoff.launchAfterApplyFailed", detail: "Terminal unavailable" },
+    }));
+    expect(await screen.findByText("The handoff was saved, but the Agent could not be opened")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply and continue in Claude Code" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry opening Claude Code" }));
+    await waitFor(() => expect(api.launchSessionHandoff).toHaveBeenCalledWith(launchRequest));
+    expect(api.continueSessionHandoff).toHaveBeenCalledTimes(1);
+    expect(api.apply).not.toHaveBeenCalled();
+  });
+
   it("opens the global asset center without forcing folder selection", async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
@@ -165,6 +331,60 @@ describe("AgentKib desktop", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     expect(screen.getByText("Everything is in order")).toBeInTheDocument();
     expect(screen.queryByText("gateway offline")).not.toBeInTheDocument();
+  });
+
+  it("counts only Doctor errors and warnings on Home", async () => {
+    vi.mocked(api.workspaces).mockResolvedValueOnce([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    vi.mocked(api.workspaceDoctorSummaries).mockResolvedValueOnce([{
+      workspace_id: "project", error_count: 1, warning_count: 2, info_count: 9, repairable_count: 1, checked_at: "2026-08-18T00:00:00Z",
+    }]);
+    render(<App />);
+    const attention = await screen.findByText("Needs attention");
+    expect(within(attention.closest("section")!).getByText("3")).toBeInTheDocument();
+    expect(within(attention.closest("section")!).getByText("3 configuration warnings")).toBeInTheDocument();
+  });
+
+  it("discards a Doctor repair plan after switching workspaces", async () => {
+    const firstWorkspace = {
+      id: "first", path: "/tmp/first", name: "First", status: "attention" as const,
+      asset_count: 0, warning_count: 1, sources: [],
+    };
+    const secondWorkspace = {
+      id: "second", path: "/tmp/second", name: "Second", status: "healthy" as const,
+      asset_count: 0, warning_count: 0, sources: [],
+    };
+    vi.mocked(api.workspaces).mockResolvedValue([firstWorkspace, secondWorkspace]);
+    vi.mocked(api.scan).mockImplementation(async (path) => ({
+      root: path, manifest_exists: true, agents: [], assets: [], warnings: [],
+    }));
+    vi.mocked(api.workspaceDoctorReport).mockResolvedValue({
+      summary: { workspace_id: "first", error_count: 0, warning_count: 1, info_count: 0, repairable_count: 1, checked_at: "2026-08-18T00:00:00Z" },
+      matrix: [],
+      issues: [{ id: "missing", code: "managed.missing", severity: "warning", agent: "codex", asset_kind: "instruction", repairable: true, evidence: [{ path: "/tmp/first/AGENTS.md", detail: "missing" }] }],
+    });
+    let finishPlan!: (value: Awaited<ReturnType<typeof api.plan>>) => void;
+    vi.mocked(api.plan).mockImplementation(() => new Promise((resolve) => { finishPlan = resolve; }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /First \/tmp\/first/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Doctor" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review repairs" }));
+    await waitFor(() => expect(api.plan).toHaveBeenCalledWith("/tmp/first", expect.anything(), false));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Workspaces" }).find((button) => button.classList.contains("breadcrumb"))!);
+    fireEvent.click(await screen.findByRole("button", { name: /Second.*\/tmp\/second/ }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Second" })).toBeInTheDocument());
+    await act(async () => finishPlan({
+      id: "stale-repair", project_root: "/tmp/first", created_at: "2026-08-18T00:00:00Z",
+      requires_home_approval: false,
+      changes: [{ target: "/tmp/first/AGENTS.md", scope: "project", before: "", after: "fixed", risk: "low", validator: "markdown" }],
+    }));
+
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Second" })).toBeInTheDocument();
+    expect(screen.queryByText("stale-repair")).not.toBeInTheDocument();
   });
 
   it("hides the empty recent activity panel and links every Home metric", async () => {
@@ -191,7 +411,40 @@ describe("AgentKib desktop", () => {
     fireEvent.click(screen.getByRole("button", { name: /Refresh Discovery/i }));
 
     await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledWith("discovery", true));
-    expect(screen.getByRole("button", { name: /Project \/tmp\/project/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Project.*\/tmp\/project/ })).toBeInTheDocument();
+  });
+
+  it("filters the workspace table and keeps row actions separate from navigation", async () => {
+    vi.mocked(api.workspaces).mockResolvedValue([
+      {
+        id: "healthy-project", path: "/tmp/healthy", name: "Healthy Project", status: "healthy", asset_count: 0, warning_count: 0,
+        last_active_at: "2026-08-13T10:00:00Z", sources: [{ agent: "codex", evidence: "session-cwd", session_count: 2 }],
+      },
+      {
+        id: "attention-project", path: "/tmp/attention", name: "Attention Project", status: "attention", asset_count: 3, warning_count: 1,
+        last_active_at: "2026-08-13T11:00:00Z", sources: [{ agent: "claude-code", evidence: "session-cwd", session_count: 1 }],
+      },
+    ]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*2/ }));
+
+    expect(await screen.findByText("2 workspaces")).toBeInTheDocument();
+    expect(screen.getAllByText("Codex").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0);
+    expect(document.querySelectorAll(".workspace-status.attention")).toHaveLength(1);
+    expect(document.querySelector(".workspace-asset-count.is-zero")).toBeInTheDocument();
+    expect(document.querySelector(".workspace-asset-count.empty")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "All Agents" }), { target: { value: "claude-code" } });
+    expect(screen.getByText(/1 workspace/)).toBeInTheDocument();
+    expect(screen.queryByText("Healthy Project")).not.toBeInTheDocument();
+    expect(screen.getByText("Attention Project")).toBeInTheDocument();
+
+    vi.mocked(api.scan).mockClear();
+    fireEvent.click(screen.getByLabelText("Attention Project · More actions"));
+    fireEvent.click(screen.getByRole("button", { name: "Scan" }));
+    await waitFor(() => expect(api.refreshWorkspace).toHaveBeenCalledWith("attention-project"));
+    expect(api.scan).not.toHaveBeenCalled();
   });
 
   it("opens workspace storage from cache and only scans after confirmation", async () => {

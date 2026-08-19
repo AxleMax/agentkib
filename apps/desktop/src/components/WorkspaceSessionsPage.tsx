@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Bot,
   CircleAlert,
+  FileOutput,
   GitBranch,
   MessageSquareText,
   RefreshCw,
@@ -16,11 +17,14 @@ import { api } from "../api";
 import { AgentIcon } from "./AgentIcon";
 import { formatDateTime, formatRelativeTime, localizeMessage, tr } from "../i18n";
 import type {
+  AgentKind,
   ConversationEvent,
   ConversationIndexStatus,
   ConversationSessionSummary,
+  PlannedSessionHandoff,
   WorkspaceSummary,
 } from "../types";
+import { SessionHandoffDialog } from "./SessionHandoffDialog";
 
 type SessionFilter = "current" | "archived" | "metadata" | "all";
 type AgentFilter = "all" | ConversationSessionSummary["agent"];
@@ -36,10 +40,14 @@ export function WorkspaceSessionsPage({
   workspace,
   enabled,
   onRuntimeChanged,
+  onHandoffPlanned,
+  targetAgents,
 }: {
   workspace: WorkspaceSummary;
   enabled: boolean;
   onRuntimeChanged: (enabled: boolean) => Promise<void>;
+  onHandoffPlanned: (handoff: PlannedSessionHandoff) => void;
+  targetAgents: AgentKind[];
 }) {
   const [sessions, setSessions] = useState<ConversationSessionSummary[]>([]);
   const [statuses, setStatuses] = useState<ConversationIndexStatus[]>([]);
@@ -55,6 +63,7 @@ export function WorkspaceSessionsPage({
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [error, setError] = useState("");
   const [showDetail, setShowDetail] = useState(false);
+  const [showHandoff, setShowHandoff] = useState(false);
   const readSequence = useRef(0);
 
   const reloadCache = async () => {
@@ -193,7 +202,7 @@ export function WorkspaceSessionsPage({
     buttons[next].click();
   };
 
-  return <div className={`conversation-layout${showDetail ? " show-detail" : ""}`}>
+  return <><div className={`conversation-layout${showDetail ? " show-detail" : ""}`}>
     <aside className="panel conversation-master">
       <div className="conversation-toolbar">
         <div className="search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("conversations.searchPlaceholder")} /></div>
@@ -228,7 +237,7 @@ export function WorkspaceSessionsPage({
     <section className="panel conversation-detail">
       <header>
         <button className="ghost conversation-back" onClick={() => setShowDetail(false)}><ArrowLeft size={15} />{tr("conversations.back")}</button>
-        {selected ? <div><span><AgentIcon agent={selected.agent} /><strong>{selected.title || tr("conversations.untitled")}</strong></span><small>{selected.updated_at ? formatDateTime(selected.updated_at) : tr("conversations.unknownTime")}{selected.git_branch ? ` · ${selected.git_branch}` : ""}</small></div> : <strong>{tr("conversations.selectSession")}</strong>}
+        {selected ? <><div><span><AgentIcon agent={selected.agent} /><strong>{selected.title || tr("conversations.untitled")}</strong></span><small>{selected.updated_at ? formatDateTime(selected.updated_at) : tr("conversations.unknownTime")}{selected.git_branch ? ` · ${selected.git_branch}` : ""}</small></div>{selected.availability === "readable" && events.length > 0 && <button className="ghost conversation-handoff" onClick={() => setShowHandoff(true)}><FileOutput size={14} />{tr("handoff.create")}</button>}</> : <strong>{tr("conversations.selectSession")}</strong>}
       </header>
       {error && <div className="alert"><CircleAlert size={15} />{error}</div>}
       {warnings.map((warning) => <div className="warning" key={warning}><CircleAlert size={14} />{tr("conversations.damagedLines")}</div>)}
@@ -241,7 +250,7 @@ export function WorkspaceSessionsPage({
         {events.map((event) => <ConversationEventRow key={event.id} event={event} />)}
       </div>}
     </section>
-  </div>;
+  </div>{showHandoff && selected && <SessionHandoffDialog workspace={workspace} session={selected} targetAgents={targetAgents} onClose={() => setShowHandoff(false)} onPlanned={(changeSet) => { setShowHandoff(false); onHandoffPlanned(changeSet); }} />}</>;
 }
 
 function ConversationEventRow({ event }: { event: ConversationEvent }) {

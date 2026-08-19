@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use agentkib_core::{
@@ -18,6 +20,10 @@ const START: &str = "<!-- agentkib:managed:start -->";
 const END: &str = "<!-- agentkib:managed:end -->";
 const TOML_START: &str = "# agentkib:managed:start";
 const TOML_END: &str = "# agentkib:managed:end";
+const MAX_HANDOFF_GITIGNORE_BYTES: u64 = 1024 * 1024;
+const MAX_SKILL_FILE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_SKILL_FILES: usize = 512;
+const MAX_SKILL_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct HomeTargets {
@@ -475,19 +481,32 @@ pub fn plan_workspace_changes(
     }
 
     for skill in &manifest.skills {
+        let shared_skill_enabled = [AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
+            .into_iter()
+            .any(|agent| {
+                adapter_enabled(manifest, agent)
+                    && (skill.targets.is_empty() || skill.targets.contains(&agent))
+            });
+        let cursor_private_enabled = adapter_enabled(manifest, AgentKind::Cursor)
+            && (skill.targets.is_empty() || skill.targets.contains(&AgentKind::Cursor))
+            && !shared_skill_enabled;
         for (relative_path, content) in skill_source_files(&root, skill)? {
-            if common_enabled
-                && (skill.targets.is_empty()
-                    || skill.targets.iter().any(|agent| {
-                        matches!(
-                            agent,
-                            AgentKind::Codex | AgentKind::OpenClaw | AgentKind::Hermes
-                        )
-                    }))
-            {
+            if shared_skill_enabled {
                 push_change(
                     &mut changes,
                     root.join(".agents/skills")
+                        .join(&skill.name)
+                        .join(&relative_path),
+                    content.clone(),
+                    ChangeScope::Project,
+                    RiskLevel::Low,
+                    validator_for_skill_file(&relative_path),
+                )?;
+            }
+            if cursor_private_enabled {
+                push_change(
+                    &mut changes,
+                    root.join(".cursor/skills")
                         .join(&skill.name)
                         .join(&relative_path),
                     content.clone(),
@@ -537,11 +556,11 @@ pub fn plan_workspace_changes(
             "yaml",
         )?;
     }
-    changes.retain(|change| change.before != change.after);
     let mut persisted_manifest = manifest.clone();
     persisted_manifest.schema_version = 2;
     persisted_manifest.connections.clear();
-    update_generated_hashes(&root, &mut persisted_manifest, &changes);
+    update_generated_hashes(&root, &mut persisted_manifest, &changes, home);
+    changes.retain(|change| change.before != change.after);
     let manifest_target = manifest_path(&root);
     let manifest_after = serde_yaml::to_string(&persisted_manifest)?;
     let manifest_before = fs::read_to_string(&manifest_target).unwrap_or_default();
@@ -582,6 +601,94 @@ pub fn plan_changeset(
     plan_workspace_changes(project, manifest, home)
 }
 
+pub fn plan_handoff_export(project: &Path, filename: &str, content: &str) -> Result<ChangeSet> {
+    if filename.is_empty()
+        || filename.contains(['/', '\\'])
+        || filename.contains("..")
+        || !(filename.ends_with(".md") || filename.ends_with(".json"))
+    {
+        anyhow::bail!("Handoff filename must be a Markdown or JSON basename");
+    }
+    if content.len() > 512 * 1024 {
+        anyhow::bail!("Handoff content exceeds 512 KiB");
+    }
+    let root = agentkib_core::canonical_project(project)?;
+    let mut changes = Vec::new();
+    let validator = if filename.ends_with(".json") {
+        "json"
+    } else {
+        "markdown"
+    };
+    push_change(
+        &mut changes,
+        root.join(".agentkib/handoffs").join(filename),
+        content.to_string(),
+        ChangeScope::Project,
+        RiskLevel::Low,
+        validator,
+    )?;
+    let ignore_path = root.join(".gitignore");
+    let before = read_handoff_gitignore(&ignore_path)?;
+    let before_content = before.as_deref().unwrap_or_default();
+    let ignore_rule = ".agentkib/handoffs/";
+    if !before_content
+        .lines()
+        .any(|line| line.trim() == ignore_rule)
+    {
+        let mut after = before_content.to_string();
+        if !after.is_empty() && !after.ends_with('\n') {
+            after.push('\n');
+        }
+        after.push_str(ignore_rule);
+        after.push('\n');
+        push_change_with_before(
+            &mut changes,
+            ignore_path,
+            before,
+            after,
+            ChangeScope::Project,
+            RiskLevel::Low,
+            "text",
+        )?;
+    }
+    Ok(ChangeSet {
+        id: Uuid::new_v4().to_string(),
+        project_root: root,
+        created_at: Utc::now(),
+        changes,
+        requires_home_approval: false,
+    })
+}
+
+fn read_handoff_gitignore(path: &Path) -> Result<Option<String>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("Could not inspect {}", path.display()));
+        }
+    };
+    if !metadata.file_type().is_file() {
+        anyhow::bail!(
+            "Handoff .gitignore must be a regular file: {}",
+            path.display()
+        );
+    }
+    if metadata.len() > MAX_HANDOFF_GITIGNORE_BYTES {
+        anyhow::bail!("Handoff .gitignore exceeds the 1 MiB read limit");
+    }
+    let file = fs::File::open(path)
+        .with_context(|| format!("Could not open handoff .gitignore: {}", path.display()))?;
+    let mut content = String::new();
+    file.take(MAX_HANDOFF_GITIGNORE_BYTES + 1)
+        .read_to_string(&mut content)
+        .with_context(|| format!("Handoff .gitignore must be UTF-8: {}", path.display()))?;
+    if content.len() as u64 > MAX_HANDOFF_GITIGNORE_BYTES {
+        anyhow::bail!("Handoff .gitignore exceeds the 1 MiB read limit");
+    }
+    Ok(Some(content))
+}
+
 fn adapter_enabled(manifest: &Manifest, agent: AgentKind) -> bool {
     manifest
         .adapters
@@ -594,8 +701,15 @@ fn skill_source_files(
     skill: &agentkib_core::SkillDefinition,
 ) -> Result<Vec<(PathBuf, String)>> {
     let source = root.join(&skill.path);
-    let canonical = canonicalize(&source)
+    fs::symlink_metadata(&source)
         .with_context(|| format!("Skill path does not exist: {}", source.display()))?;
+    if !path_has_safe_ancestors(root, &source) {
+        anyhow::bail!(
+            "Skill path cannot contain symbolic links or non-directory ancestors: {}",
+            source.display()
+        );
+    }
+    let canonical = canonicalize(&source)?;
     if !path_starts_with(&canonical, root) {
         anyhow::bail!(
             "Skill path must be inside the project: {}",
@@ -607,18 +721,44 @@ fn skill_source_files(
             .file_name()
             .context("Skill file has no filename")?
             .into();
-        return Ok(vec![(file_name, read_skill_text(&canonical)?)]);
+        if canonical.file_name() != Some(OsStr::new("SKILL.md")) {
+            anyhow::bail!(
+                "A single-file Skill source must be named SKILL.md: {}",
+                source.display()
+            );
+        }
+        let (content, _) = read_skill_text(&canonical)?;
+        return Ok(vec![(file_name, content)]);
+    }
+    if !canonical.is_dir() {
+        anyhow::bail!(
+            "Skill path must be a regular file or directory: {}",
+            source.display()
+        );
     }
 
     let mut files = Vec::new();
-    for entry in WalkDir::new(&canonical)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| is_safe_scan_entry(entry.path()))
-    {
+    let mut total_bytes = 0_u64;
+    let mut has_entrypoint = false;
+    for entry in WalkDir::new(&canonical).follow_links(false) {
         let entry = entry?;
-        if !entry.file_type().is_file() {
+        if !is_safe_scan_entry(entry.path()) {
+            anyhow::bail!(
+                "Skill directories cannot contain symbolic links: {}",
+                entry.path().display()
+            );
+        }
+        if entry.file_type().is_dir() {
             continue;
+        }
+        if !entry.file_type().is_file() {
+            anyhow::bail!(
+                "Skill directories can contain only regular files: {}",
+                entry.path().display()
+            );
+        }
+        if files.len() >= MAX_SKILL_FILES {
+            anyhow::bail!("Skill source exceeds the {MAX_SKILL_FILES} file limit");
         }
         let path = canonicalize(entry.path())?;
         if !path_starts_with(&path, root) {
@@ -628,19 +768,77 @@ fn skill_source_files(
             );
         }
         let relative = path.strip_prefix(&canonical)?.to_path_buf();
-        files.push((relative, read_skill_text(&path)?));
+        let (content, bytes) = read_skill_text(&path)?;
+        total_bytes = total_bytes
+            .checked_add(bytes)
+            .context("Skill source size overflow")?;
+        if total_bytes > MAX_SKILL_TOTAL_BYTES {
+            anyhow::bail!("Skill source exceeds the 32 MiB total read limit");
+        }
+        has_entrypoint |= relative == Path::new("SKILL.md");
+        files.push((relative, content));
+    }
+    if !has_entrypoint {
+        anyhow::bail!(
+            "Skill directory has no SKILL.md entry point: {}",
+            source.display()
+        );
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(files)
 }
 
-fn read_skill_text(path: &Path) -> Result<String> {
-    fs::read_to_string(path).with_context(|| {
-        format!(
-            "The MVP supports only UTF-8 text Skill assets; could not read: {}",
+fn path_has_safe_ancestors(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(component) = component else {
+            return false;
+        };
+        current.push(component);
+        let Ok(metadata) = fs::symlink_metadata(&current) else {
+            return false;
+        };
+        if !is_safe_scan_entry(&current) || current != path && !metadata.file_type().is_dir() {
+            return false;
+        }
+    }
+    true
+}
+
+fn read_skill_text(path: &Path) -> Result<(String, u64)> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Could not inspect Skill file: {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("Skill asset must be a regular file: {}", path.display());
+    }
+    if metadata.len() > MAX_SKILL_FILE_BYTES {
+        anyhow::bail!(
+            "Skill asset exceeds the 8 MiB read limit: {}",
             path.display()
-        )
-    })
+        );
+    }
+    let mut content = String::new();
+    fs::File::open(path)
+        .with_context(|| format!("Could not read Skill file: {}", path.display()))?
+        .take(MAX_SKILL_FILE_BYTES + 1)
+        .read_to_string(&mut content)
+        .with_context(|| {
+            format!(
+                "The MVP supports only UTF-8 text Skill assets; could not read: {}",
+                path.display()
+            )
+        })?;
+    if content.len() as u64 > MAX_SKILL_FILE_BYTES {
+        anyhow::bail!(
+            "Skill asset exceeds the 8 MiB read limit: {}",
+            path.display()
+        );
+    }
+    let bytes = content.len() as u64;
+    Ok((content, bytes))
 }
 
 fn validator_for_skill_file(path: &Path) -> &'static str {
@@ -653,9 +851,23 @@ fn validator_for_skill_file(path: &Path) -> &'static str {
     }
 }
 
-fn update_generated_hashes(root: &Path, manifest: &mut Manifest, changes: &[FileChange]) {
-    for state in manifest.adapters.values_mut() {
-        state.generated_hashes.clear();
+fn update_generated_hashes(
+    root: &Path,
+    manifest: &mut Manifest,
+    changes: &[FileChange],
+    home: &HomeTargets,
+) {
+    for (agent, state) in &mut manifest.adapters {
+        let refreshes_home = match agent {
+            AgentKind::OpenClaw => home.openclaw_config.is_some(),
+            AgentKind::Hermes => home.hermes_config.is_some(),
+            _ => false,
+        };
+        state.generated_hashes.retain(|target, _| {
+            let path = Path::new(target);
+            let project_scoped = !path.is_absolute() || path_starts_with(path, root);
+            !project_scoped && !refreshes_home
+        });
     }
     for change in changes {
         let key = change
@@ -705,21 +917,35 @@ fn push_change(
     validator: &str,
 ) -> Result<()> {
     let before = if target.exists() {
-        fs::read_to_string(&target).with_context(|| {
+        Some(fs::read_to_string(&target).with_context(|| {
             format!(
                 "Could not read existing configuration: {}",
                 target.display()
             )
-        })?
+        })?)
     } else {
-        String::new()
+        None
     };
-    let original_hash = target.exists().then(|| hash_content(before.as_bytes()));
+    push_change_with_before(changes, target, before, after, scope, risk, validator)
+}
+
+fn push_change_with_before(
+    changes: &mut Vec<FileChange>,
+    target: PathBuf,
+    before: Option<String>,
+    after: String,
+    scope: ChangeScope,
+    risk: RiskLevel,
+    validator: &str,
+) -> Result<()> {
+    let original_hash = before
+        .as_ref()
+        .map(|content| hash_content(content.as_bytes()));
     changes.push(FileChange {
         target,
         scope,
         original_hash,
-        before,
+        before: before.unwrap_or_default(),
         after,
         risk,
         validator: validator.into(),
@@ -1125,6 +1351,117 @@ mod tests {
     }
 
     #[test]
+    fn plan_preserves_hashes_for_unchanged_managed_outputs() {
+        let dir = tempdir().unwrap();
+        let manifest = default_manifest(dir.path()).unwrap();
+        let first = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        let agents = first
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with("AGENTS.md"))
+            .unwrap();
+        fs::write(&agents.target, &agents.after).unwrap();
+
+        let second =
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        assert!(
+            second
+                .changes
+                .iter()
+                .all(|change| !change.target.ends_with("AGENTS.md"))
+        );
+        let manifest_change = second
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with(".agentkib/manifest.yaml"))
+            .unwrap();
+        let persisted: Manifest = serde_yaml::from_str(&manifest_change.after).unwrap();
+
+        assert!(
+            persisted.adapters[&AgentKind::Codex]
+                .generated_hashes
+                .contains_key("AGENTS.md")
+        );
+    }
+
+    #[test]
+    fn project_plan_preserves_recorded_agent_home_hashes() {
+        let dir = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let home_config = home.path().join(".openclaw/openclaw.json");
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest
+            .adapters
+            .get_mut(&AgentKind::OpenClaw)
+            .unwrap()
+            .generated_hashes
+            .insert(
+                home_config.display().to_string(),
+                "recorded-home-hash".into(),
+            );
+
+        let plan = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        let manifest_change = plan
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with(".agentkib/manifest.yaml"))
+            .unwrap();
+        let persisted: Manifest = serde_yaml::from_str(&manifest_change.after).unwrap();
+
+        assert_eq!(
+            persisted.adapters[&AgentKind::OpenClaw]
+                .generated_hashes
+                .get(&home_config.display().to_string())
+                .map(String::as_str),
+            Some("recorded-home-hash")
+        );
+    }
+
+    #[test]
+    fn cursor_only_skill_is_written_to_the_private_skill_directory() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("skill-sources/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::Cursor],
+        });
+
+        let plan = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+
+        assert!(
+            plan.changes
+                .iter()
+                .any(|change| { change.target.ends_with(".cursor/skills/reviewer/SKILL.md") })
+        );
+        assert!(
+            plan.changes
+                .iter()
+                .all(|change| { !change.target.ends_with(".agents/skills/reviewer/SKILL.md") })
+        );
+
+        manifest
+            .adapters
+            .get_mut(&AgentKind::Cursor)
+            .unwrap()
+            .enabled = false;
+        let disabled =
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        assert!(
+            disabled
+                .changes
+                .iter()
+                .all(|change| { !change.target.ends_with("skills/reviewer/SKILL.md") })
+        );
+    }
+
+    #[test]
     fn cursor_plan_preserves_native_mcp_fields_and_writes_only_platform_override() {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".cursor")).unwrap();
@@ -1418,5 +1755,155 @@ mod tests {
                 .ends_with(".claude/skills/reviewer/references/checklist.md")
                 && change.after == "- Run tests"
         }));
+    }
+
+    #[test]
+    fn rejects_skill_sources_without_skill_md_entrypoint() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("shared/directory-skill")).unwrap();
+        fs::write(
+            dir.path().join("shared/directory-skill/reviewer.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::write(dir.path().join("shared/reviewer.md"), "# Reviewer").unwrap();
+
+        for path in ["shared/directory-skill", "shared/reviewer.md"] {
+            let mut manifest = default_manifest(dir.path()).unwrap();
+            manifest.skills.push(agentkib_core::SkillDefinition {
+                name: "reviewer".into(),
+                path: path.into(),
+                targets: vec![AgentKind::ClaudeCode],
+            });
+
+            assert!(
+                plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("SKILL.md")
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_skill_assets_before_reading_them() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("shared/reviewer");
+        fs::create_dir_all(&source).unwrap();
+        fs::File::create(source.join("SKILL.md"))
+            .unwrap()
+            .set_len(MAX_SKILL_FILE_BYTES + 1)
+            .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "reviewer".into(),
+            path: "shared/reviewer".into(),
+            targets: vec![AgentKind::ClaudeCode],
+        });
+
+        assert!(
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default())
+                .unwrap_err()
+                .to_string()
+                .contains("8 MiB read limit")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symbolic_links_inside_skill_sources() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("shared/reviewer");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "# Reviewer").unwrap();
+        fs::write(dir.path().join("shared/reference.md"), "Reference").unwrap();
+        std::os::unix::fs::symlink(
+            dir.path().join("shared/reference.md"),
+            source.join("reference.md"),
+        )
+        .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "reviewer".into(),
+            path: "shared/reviewer".into(),
+            targets: vec![AgentKind::ClaudeCode],
+        });
+
+        assert!(
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default())
+                .unwrap_err()
+                .to_string()
+                .contains("symbolic links")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symbolic_link_ancestors_of_skill_sources() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("real-shared/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("real-shared/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(dir.path().join("real-shared"), dir.path().join("shared"))
+            .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "reviewer".into(),
+            path: "shared/reviewer".into(),
+            targets: vec![AgentKind::ClaudeCode],
+        });
+
+        assert!(
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default())
+                .unwrap_err()
+                .to_string()
+                .contains("symbolic links")
+        );
+    }
+
+    #[test]
+    fn handoff_export_is_project_scoped_and_ignored_by_git() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "target/\n").unwrap();
+        let plan = plan_handoff_export(dir.path(), "handoff.md", "# Handoff\n").unwrap();
+        assert!(!plan.requires_home_approval);
+        assert!(plan.changes.iter().any(|change| {
+            change.target.ends_with(".agentkib/handoffs/handoff.md")
+                && matches!(change.scope, ChangeScope::Project)
+        }));
+        assert!(plan.changes.iter().any(|change| {
+            change.target.ends_with(".gitignore") && change.after.contains(".agentkib/handoffs/")
+        }));
+    }
+
+    #[test]
+    fn handoff_export_rejects_oversized_gitignore() {
+        let dir = tempdir().unwrap();
+        fs::File::create(dir.path().join(".gitignore"))
+            .unwrap()
+            .set_len(MAX_HANDOFF_GITIGNORE_BYTES + 1)
+            .unwrap();
+
+        let error = plan_handoff_export(dir.path(), "handoff.md", "# Handoff\n").unwrap_err();
+        assert!(error.to_string().contains("exceeds the 1 MiB read limit"));
+    }
+
+    #[test]
+    fn handoff_export_rejects_non_regular_gitignore() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".gitignore")).unwrap();
+
+        let error = plan_handoff_export(dir.path(), "handoff.md", "# Handoff\n").unwrap_err();
+        assert!(error.to_string().contains("must be a regular file"));
+    }
+
+    #[test]
+    fn handoff_export_rejects_path_traversal_and_wrong_extensions() {
+        let dir = tempdir().unwrap();
+        assert!(plan_handoff_export(dir.path(), "../private.md", "text").is_err());
+        assert!(plan_handoff_export(dir.path(), "handoff.txt", "text").is_err());
     }
 }
