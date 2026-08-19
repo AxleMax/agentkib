@@ -18,6 +18,7 @@ const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 const MAX_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TRANSCRIPT_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_CLAUDE_INDEX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CLAUDE_HEADER_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_CLAUDE_HEADER_LINES: usize = 256;
 
@@ -1074,13 +1075,10 @@ impl ClaudeProvider {
         // durable source documented by Claude Code. Parse the cache first only so
         // transcript discovery can enrich it without reading message bodies.
         for index_path in index_paths {
-            let value: Value = match fs::read_to_string(&index_path)
-                .ok()
-                .and_then(|text| serde_json::from_str(&text).ok())
-            {
-                Some(value) => value,
-                None => {
-                    relevant_errors.push(format!("Cannot parse {}", index_path.display()));
+            let value = match read_claude_session_index(&index_path) {
+                Ok(value) => value,
+                Err(error) => {
+                    relevant_errors.push(error.to_string());
                     continue;
                 }
             };
@@ -1228,6 +1226,17 @@ impl ClaudeProvider {
             })
             .collect())
     }
+}
+
+fn read_claude_session_index(path: &Path) -> Result<Value> {
+    let file = File::open(path)
+        .with_context(|| format!("Cannot open Claude session index {}", path.display()))?;
+    let length = file.metadata()?.len();
+    if length > MAX_CLAUDE_INDEX_BYTES {
+        bail!("Claude session index exceeds the 16 MiB read limit");
+    }
+    serde_json::from_reader(BufReader::new(file.take(length)))
+        .with_context(|| format!("Cannot parse Claude session index {}", path.display()))
 }
 
 impl ConversationProvider for ClaudeProvider {
@@ -2263,6 +2272,39 @@ mod tests {
         assert_eq!(page.events.len(), 2);
         assert_eq!(page.events[0].content.as_deref(), Some("question"));
         assert_eq!(page.events[1].content.as_deref(), Some("answer"));
+    }
+
+    #[test]
+    fn claude_ignores_oversized_index_and_discovers_transcript() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let projects = dir.path().join("projects/project");
+        fs::create_dir_all(&projects).unwrap();
+        fs::create_dir_all(&workspace).unwrap();
+        let transcript = projects.join("transcript-only.jsonl");
+        writeln!(
+            File::create(&transcript).unwrap(),
+            "{}",
+            serde_json::json!({
+                "type":"user",
+                "sessionId":"transcript-only",
+                "cwd":workspace,
+                "message":{"role":"user","content":"question"}
+            })
+        )
+        .unwrap();
+        File::create(projects.join("sessions-index.json"))
+            .unwrap()
+            .set_len(MAX_CLAUDE_INDEX_BYTES + 1)
+            .unwrap();
+
+        let sessions = ClaudeProvider::with_home(dir.path().to_path_buf())
+            .list_sessions(&workspace)
+            .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].native_ref, "transcript-only");
+        assert_eq!(sessions[0].availability, SessionAvailability::Readable);
     }
 
     #[test]
