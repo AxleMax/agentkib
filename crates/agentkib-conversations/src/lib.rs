@@ -711,16 +711,10 @@ pub fn sanitize_handoff_export(
 
 fn redact_sensitive_line(line: &str, redaction_count: &mut usize) -> String {
     let lower = line.to_ascii_lowercase();
-    for header in ["authorization", "cookie", "set-cookie"] {
-        if let Some(position) = lower.find(header)
-            && let Some(separator) = line[position + header.len()..].find([':', '='])
-        {
-            let end = position + header.len() + separator + 1;
-            *redaction_count += 1;
-            return format!("{} [REDACTED]", line[..end].trim_end());
-        }
-    }
     for marker in [
+        "authorization",
+        "cookie",
+        "set-cookie",
         "api_key",
         "apikey",
         "api-key",
@@ -733,12 +727,18 @@ fn redact_sensitive_line(line: &str, redaction_count: &mut usize) -> String {
         "database_url",
         "dsn",
     ] {
-        if let Some(position) = lower.find(marker) {
+        for (position, _) in lower.match_indices(marker) {
             let tail = &line[position + marker.len()..];
             if let Some(relative) = tail.find(['=', ':']) {
-                let end = position + marker.len() + relative + 1;
-                *redaction_count += 1;
-                return format!("{} [REDACTED]", line[..end].trim_end());
+                let between = tail[..relative].trim();
+                if between
+                    .chars()
+                    .all(|character| matches!(character, '"' | '\'' | '`'))
+                {
+                    let end = position + marker.len() + relative + 1;
+                    *redaction_count += 1;
+                    return format!("{} [REDACTED]", line[..end].trim_end());
+                }
             }
         }
     }
@@ -2559,7 +2559,7 @@ mod tests {
                 attachment_count: 1,
                 ..handoff_message(
                     ConversationEventKind::UserMessage,
-                    "Authorization: Bearer private\nAuthorization=Bearer opaque-value\nAPI_KEY=private\nuse sk-secret-value",
+                    "Authorization: Bearer private\nAuthorization=Bearer opaque-value\nAPI_KEY=private\nToken budget: 8000\nuse sk-secret-value",
                 )
             }],
             omitted_tool_count: 2,
@@ -2580,6 +2580,7 @@ mod tests {
         assert!(draft.content.contains("[REDACTED]"));
         assert!(!draft.content.contains("private"));
         assert!(!draft.content.contains("opaque-value"));
+        assert!(draft.content.contains("Token budget: 8000"));
         assert!(!draft.content.contains("hashed-session"));
         assert_eq!(draft.included_message_count, 1);
         assert_eq!(draft.omitted_tool_count, 2);
