@@ -455,6 +455,14 @@ pub fn diagnose_workspace(
             }
         }
     }
+    if issues
+        .iter()
+        .any(|issue| issue_blocks_workspace_repair(project, issue))
+    {
+        for issue in &mut issues {
+            issue.repairable = false;
+        }
+    }
     issues.sort_by_key(|issue| {
         (
             severity_rank(issue.severity),
@@ -484,6 +492,21 @@ pub fn diagnose_workspace(
         matrix,
         issues,
     })
+}
+
+fn issue_blocks_workspace_repair(project: &Path, issue: &DoctorIssue) -> bool {
+    if issue.repairable || issue.severity == DoctorSeverity::Info {
+        return false;
+    }
+    match issue.code.as_str() {
+        "skill.source-unavailable" | "native.invalid" | "context.unavailable" => true,
+        "managed.missing" | "managed.drift" => issue
+            .evidence
+            .iter()
+            .filter_map(|evidence| evidence.path.as_deref())
+            .any(|path| path.starts_with(project)),
+        _ => false,
+    }
 }
 
 fn diagnose_skill_sources(project: &Path, manifest: &Manifest, issues: &mut Vec<DoctorIssue>) {
@@ -772,8 +795,12 @@ fn generated_skill_is_current(
     let Some(source_files) = managed_skill_files(project, &source) else {
         return false;
     };
-    if agent == AgentKind::Cursor {
-        let expected_root = cursor_skill_root(manifest, skill);
+    if matches!(agent, AgentKind::Cursor | AgentKind::OpenClaw) {
+        let expected_root = if agent == AgentKind::Cursor {
+            cursor_skill_root(manifest, skill)
+        } else {
+            ".agents/skills"
+        };
         let expected_target = project.join(expected_root).join(&skill.name);
         if managed_skill_files(project, &expected_target)
             .is_none_or(|target_files| target_files != source_files)
@@ -910,12 +937,17 @@ fn generated_skill_can_be_repaired(
         AgentKind::DeepSeekHarness => return false,
     };
     let target = project.join(relative_root).join(&skill.name);
-    if agent == AgentKind::Cursor {
-        for root in [".cursor/skills", ".agents/skills"] {
-            if root == relative_root {
+    if matches!(agent, AgentKind::Cursor | AgentKind::OpenClaw) {
+        let roots: &[&str] = if agent == AgentKind::Cursor {
+            &[".cursor/skills", ".agents/skills"]
+        } else {
+            &["skills", ".agents/skills"]
+        };
+        for root in roots {
+            if *root == relative_root {
                 continue;
             }
-            let alternate = project.join(root).join(&skill.name);
+            let alternate = project.join(*root).join(&skill.name);
             match fs::symlink_metadata(&alternate) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Ok(_)
@@ -1768,6 +1800,75 @@ mod tests {
         assert_eq!(row.skills.actual, 0);
         assert!(report.issues.iter().any(|issue| {
             issue.agent == Some(AgentKind::Cursor)
+                && issue.code == "skill.target-missing"
+                && !issue.repairable
+        }));
+    }
+
+    #[test]
+    fn openclaw_requires_every_visible_skill_root_to_be_current() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::OpenClaw],
+        });
+        for (path, content) in [
+            ("skill-sources/reviewer/SKILL.md", "# Current reviewer"),
+            ("skills/reviewer/SKILL.md", "# Current reviewer"),
+            (".agents/skills/reviewer/SKILL.md", "# Stale reviewer"),
+        ] {
+            let path = dir.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let repairable = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::OpenClaw]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        let row = repairable
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::OpenClaw)
+            .unwrap();
+        assert_eq!(row.skills.actual, 0);
+        assert!(repairable.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::OpenClaw)
+                && issue.code == "skill.target-missing"
+                && issue.repairable
+        }));
+
+        fs::write(
+            dir.path().join("skills/reviewer/SKILL.md"),
+            "# Stale reviewer",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/SKILL.md"),
+            "# Current reviewer",
+        )
+        .unwrap();
+        let blocked = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::OpenClaw]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(blocked.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::OpenClaw)
                 && issue.code == "skill.target-missing"
                 && !issue.repairable
         }));

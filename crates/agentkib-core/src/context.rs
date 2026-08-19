@@ -234,7 +234,7 @@ fn deepseek_harness_sections(
                 ));
                 continue;
             }
-            let Ok(content) = fs::read_to_string(&path) else {
+            let Ok(content) = read_utf8_file_with_limit(&path, DSH_MAX_SOURCE_BYTES) else {
                 warnings.push(format!("Could not read {}", path.display()));
                 continue;
             };
@@ -281,10 +281,21 @@ fn push_deepseek_section(
         ));
         return;
     }
-    match fs::read_to_string(&path) {
+    match read_utf8_file_with_limit(&path, DSH_MAX_SOURCE_BYTES) {
         Ok(content) => push_deepseek_content(sections, path, scope, content, remaining, warnings),
         Err(error) => warnings.push(format!("Could not read {}: {error}", path.display())),
     }
+}
+
+fn read_utf8_file_with_limit(path: &Path, limit: u64) -> Result<String> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!("file exceeds the {limit}-byte read limit");
+    }
+    Ok(String::from_utf8(bytes)?)
 }
 
 fn push_deepseek_content(
@@ -669,6 +680,20 @@ mod tests {
 
         assert_eq!(content.chars().count(), MAX_CONTEXT_CHARS_PER_FILE);
         assert!(truncated);
+    }
+
+    #[test]
+    fn deepseek_source_read_keeps_the_one_mib_hard_limit() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("AGENTS.md");
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(DSH_MAX_SOURCE_BYTES + 1)
+            .unwrap();
+
+        let error = read_utf8_file_with_limit(&path, DSH_MAX_SOURCE_BYTES).unwrap_err();
+
+        assert!(error.to_string().contains("read limit"));
     }
 
     #[test]
