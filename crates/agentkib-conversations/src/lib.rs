@@ -794,26 +794,20 @@ fn sanitize_json_value(
 fn is_sensitive_key(key: &str) -> bool {
     let key = key
         .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase())
         .collect::<String>();
     [
         "authorization",
         "cookie",
-        "api_key",
         "apikey",
-        "access_key",
-        "private_key",
+        "accesskey",
+        "privatekey",
         "token",
         "secret",
         "password",
         "credential",
-        "database_url",
+        "databaseurl",
         "dsn",
     ]
     .iter()
@@ -2730,7 +2724,10 @@ mod tests {
             "tokens": ["first-secret", {"value": "second-secret"}],
             "credentials": {"username": "agent", "password": "third-secret"},
             "api-key": "fourth-secret",
-            "access-key": {"id": "fifth-secret"}
+            "access-key": {"id": "fifth-secret"},
+            "privateKey": "sixth-secret",
+            "databaseUrl": "seventh-secret",
+            "accessKey": "eighth-secret"
         })
         .to_string();
 
@@ -2741,12 +2738,18 @@ mod tests {
         assert_eq!(value["credentials"], "[REDACTED]");
         assert_eq!(value["api-key"], "[REDACTED]");
         assert_eq!(value["access-key"], "[REDACTED]");
+        assert_eq!(value["privateKey"], "[REDACTED]");
+        assert_eq!(value["databaseUrl"], "[REDACTED]");
+        assert_eq!(value["accessKey"], "[REDACTED]");
         assert!(!json.contains("first-secret"));
         assert!(!json.contains("second-secret"));
         assert!(!json.contains("third-secret"));
         assert!(!json.contains("fourth-secret"));
         assert!(!json.contains("fifth-secret"));
-        assert_eq!(redaction_count, 4);
+        assert!(!json.contains("sixth-secret"));
+        assert!(!json.contains("seventh-secret"));
+        assert!(!json.contains("eighth-secret"));
+        assert_eq!(redaction_count, 7);
     }
 
     #[test]
