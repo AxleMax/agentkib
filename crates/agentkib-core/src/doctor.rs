@@ -156,7 +156,7 @@ pub fn diagnose_workspace(
                 .iter()
                 .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
                 .filter(|skill| !generated_skill_is_current(project, agent, skill))
-                .all(|skill| generated_skill_can_be_repaired(project, agent, skill));
+                .all(|skill| generated_skill_can_be_repaired(project, manifest, agent, skill));
         }
 
         if diagnostically_active {
@@ -480,6 +480,7 @@ fn diagnose_managed_files(project: &Path, manifest: &Manifest, issues: &mut Vec<
             let missing = matches!(file_hash, ManagedFileHash::Missing);
             let unavailable = matches!(file_hash, ManagedFileHash::Unavailable);
             let project_scoped = path.starts_with(project);
+            let safe_project_target = project_scoped && target_has_safe_ancestors(project, &path);
             push_issue(
                 issues,
                 if missing {
@@ -490,7 +491,7 @@ fn diagnose_managed_files(project: &Path, manifest: &Manifest, issues: &mut Vec<
                 DoctorSeverity::Warning,
                 Some(*agent),
                 Some(asset_kind_for_path(&path)),
-                project_scoped
+                safe_project_target
                     && !unavailable
                     && state.enabled
                     && AgentKind::WRITABLE.contains(agent),
@@ -642,6 +643,7 @@ fn managed_skill_files(source: &Path) -> Option<BTreeMap<PathBuf, String>> {
 
 fn generated_skill_can_be_repaired(
     project: &Path,
+    manifest: &Manifest,
     agent: AgentKind,
     skill: &crate::SkillDefinition,
 ) -> bool {
@@ -650,13 +652,27 @@ fn generated_skill_can_be_repaired(
     };
     let relative_root = match agent {
         AgentKind::ClaudeCode => ".claude/skills",
-        AgentKind::Codex | AgentKind::Cursor | AgentKind::OpenClaw | AgentKind::Hermes => {
-            ".agents/skills"
+        AgentKind::Cursor => {
+            let shared_skill_enabled = [AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
+                .into_iter()
+                .any(|shared_agent| {
+                    manifest
+                        .adapters
+                        .get(&shared_agent)
+                        .is_none_or(|state| state.enabled)
+                        && (skill.targets.is_empty() || skill.targets.contains(&shared_agent))
+                });
+            if shared_skill_enabled {
+                ".agents/skills"
+            } else {
+                ".cursor/skills"
+            }
         }
+        AgentKind::Codex | AgentKind::OpenClaw | AgentKind::Hermes => ".agents/skills",
         AgentKind::DeepSeekHarness => return false,
     };
     let target = project.join(relative_root).join(&skill.name);
-    if !generated_skill_target_has_safe_ancestors(project, &target) {
+    if !target_has_safe_ancestors(project, &target) {
         return false;
     }
     let metadata = match fs::symlink_metadata(&target) {
@@ -690,7 +706,7 @@ fn generated_skill_can_be_repaired(
     true
 }
 
-fn generated_skill_target_has_safe_ancestors(project: &Path, target: &Path) -> bool {
+fn target_has_safe_ancestors(project: &Path, target: &Path) -> bool {
     let Ok(relative) = target.strip_prefix(project) else {
         return false;
     };
@@ -885,6 +901,42 @@ mod tests {
                 .iter()
                 .all(|issue| issue.code != "managed.missing" && issue.code != "managed.drift")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_managed_file_through_symlinked_parent_is_not_repairable() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value
+            .adapters
+            .get_mut(&AgentKind::Codex)
+            .unwrap()
+            .generated_hashes
+            .insert(".codex/config.toml".into(), hash_content(b"managed"));
+        fs::create_dir(dir.path().join("linked-codex")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("linked-codex"), dir.path().join(".codex"))
+            .unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(report.issues.iter().any(|issue| {
+            issue.code == "managed.missing"
+                && issue.agent == Some(AgentKind::Codex)
+                && !issue.repairable
+        }));
     }
 
     #[test]
@@ -1344,8 +1396,8 @@ mod tests {
             "# Reviewer",
         )
         .unwrap();
-        fs::create_dir(dir.path().join("linked-agents")).unwrap();
-        std::os::unix::fs::symlink(dir.path().join("linked-agents"), dir.path().join(".agents"))
+        fs::create_dir(dir.path().join("linked-cursor")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("linked-cursor"), dir.path().join(".cursor"))
             .unwrap();
         fs::create_dir(dir.path().join(".agentkib")).unwrap();
         fs::write(
