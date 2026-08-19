@@ -594,12 +594,7 @@ fn generated_skill_is_current(
     };
     roots.iter().any(|root| {
         let target = project.join(root).join(&skill.name);
-        source_files.iter().all(|(relative, expected_hash)| {
-            matches!(
-                hash_managed_file(&target.join(relative)),
-                ManagedFileHash::Hashed(actual_hash) if actual_hash == *expected_hash
-            )
-        })
+        managed_skill_files(&target).is_some_and(|target_files| target_files == source_files)
     })
 }
 
@@ -1038,6 +1033,26 @@ mod tests {
             .find(|row| row.agent == AgentKind::Codex)
             .unwrap();
         assert_eq!(row.skills.actual, 1);
+
+        fs::write(
+            dir.path()
+                .join(".agents/skills/reviewer/scripts/removed.sh"),
+            "echo stale",
+        )
+        .unwrap();
+        let extra = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = extra
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.skills.actual, 0);
     }
 
     #[test]
