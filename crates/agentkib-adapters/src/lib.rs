@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use agentkib_core::{
@@ -18,6 +19,7 @@ const START: &str = "<!-- agentkib:managed:start -->";
 const END: &str = "<!-- agentkib:managed:end -->";
 const TOML_START: &str = "# agentkib:managed:start";
 const TOML_END: &str = "# agentkib:managed:end";
+const MAX_HANDOFF_GITIGNORE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct HomeTargets {
@@ -609,18 +611,23 @@ pub fn plan_handoff_export(project: &Path, filename: &str, content: &str) -> Res
         validator,
     )?;
     let ignore_path = root.join(".gitignore");
-    let before = fs::read_to_string(&ignore_path).unwrap_or_default();
+    let before = read_handoff_gitignore(&ignore_path)?;
+    let before_content = before.as_deref().unwrap_or_default();
     let ignore_rule = ".agentkib/handoffs/";
-    if !before.lines().any(|line| line.trim() == ignore_rule) {
-        let mut after = before.clone();
+    if !before_content
+        .lines()
+        .any(|line| line.trim() == ignore_rule)
+    {
+        let mut after = before_content.to_string();
         if !after.is_empty() && !after.ends_with('\n') {
             after.push('\n');
         }
         after.push_str(ignore_rule);
         after.push('\n');
-        push_change(
+        push_change_with_before(
             &mut changes,
             ignore_path,
+            before,
             after,
             ChangeScope::Project,
             RiskLevel::Low,
@@ -634,6 +641,35 @@ pub fn plan_handoff_export(project: &Path, filename: &str, content: &str) -> Res
         changes,
         requires_home_approval: false,
     })
+}
+
+fn read_handoff_gitignore(path: &Path) -> Result<Option<String>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("Could not inspect {}", path.display()));
+        }
+    };
+    if !metadata.file_type().is_file() {
+        anyhow::bail!(
+            "Handoff .gitignore must be a regular file: {}",
+            path.display()
+        );
+    }
+    if metadata.len() > MAX_HANDOFF_GITIGNORE_BYTES {
+        anyhow::bail!("Handoff .gitignore exceeds the 1 MiB read limit");
+    }
+    let file = fs::File::open(path)
+        .with_context(|| format!("Could not open handoff .gitignore: {}", path.display()))?;
+    let mut content = String::new();
+    file.take(MAX_HANDOFF_GITIGNORE_BYTES + 1)
+        .read_to_string(&mut content)
+        .with_context(|| format!("Handoff .gitignore must be UTF-8: {}", path.display()))?;
+    if content.len() as u64 > MAX_HANDOFF_GITIGNORE_BYTES {
+        anyhow::bail!("Handoff .gitignore exceeds the 1 MiB read limit");
+    }
+    Ok(Some(content))
 }
 
 fn adapter_enabled(manifest: &Manifest, agent: AgentKind) -> bool {
@@ -759,21 +795,35 @@ fn push_change(
     validator: &str,
 ) -> Result<()> {
     let before = if target.exists() {
-        fs::read_to_string(&target).with_context(|| {
+        Some(fs::read_to_string(&target).with_context(|| {
             format!(
                 "Could not read existing configuration: {}",
                 target.display()
             )
-        })?
+        })?)
     } else {
-        String::new()
+        None
     };
-    let original_hash = target.exists().then(|| hash_content(before.as_bytes()));
+    push_change_with_before(changes, target, before, after, scope, risk, validator)
+}
+
+fn push_change_with_before(
+    changes: &mut Vec<FileChange>,
+    target: PathBuf,
+    before: Option<String>,
+    after: String,
+    scope: ChangeScope,
+    risk: RiskLevel,
+    validator: &str,
+) -> Result<()> {
+    let original_hash = before
+        .as_ref()
+        .map(|content| hash_content(content.as_bytes()));
     changes.push(FileChange {
         target,
         scope,
         original_hash,
-        before,
+        before: before.unwrap_or_default(),
         after,
         risk,
         validator: validator.into(),
@@ -1521,6 +1571,27 @@ mod tests {
         assert!(plan.changes.iter().any(|change| {
             change.target.ends_with(".gitignore") && change.after.contains(".agentkib/handoffs/")
         }));
+    }
+
+    #[test]
+    fn handoff_export_rejects_oversized_gitignore() {
+        let dir = tempdir().unwrap();
+        fs::File::create(dir.path().join(".gitignore"))
+            .unwrap()
+            .set_len(MAX_HANDOFF_GITIGNORE_BYTES + 1)
+            .unwrap();
+
+        let error = plan_handoff_export(dir.path(), "handoff.md", "# Handoff\n").unwrap_err();
+        assert!(error.to_string().contains("exceeds the 1 MiB read limit"));
+    }
+
+    #[test]
+    fn handoff_export_rejects_non_regular_gitignore() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".gitignore")).unwrap();
+
+        let error = plan_handoff_export(dir.path(), "handoff.md", "# Handoff\n").unwrap_err();
+        assert!(error.to_string().contains("must be a regular file"));
     }
 
     #[test]
