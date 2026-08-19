@@ -1583,7 +1583,7 @@ mod tests {
             &child_script,
             r#"param([string] $Started, [string] $Marker)
 Set-Content -LiteralPath $Started -Value "started"
-Start-Sleep -Milliseconds 7000
+Start-Sleep -Milliseconds 30000
 Set-Content -LiteralPath $Marker -Value "survived"
 "#,
         )
@@ -1629,7 +1629,10 @@ Wait-Process -Id $child.Id
                 "-Marker",
                 &child_survived_arg,
             ],
-            Duration::from_secs(5),
+            // Hosted Windows runners can take several seconds to cold-start the nested
+            // PowerShell process. Keep the descendant alive well beyond this deadline so
+            // the assertion still proves that Job Object termination stopped it.
+            Duration::from_secs(12),
         )
         .unwrap_err();
         assert!(error.to_string().contains("timed out"));
