@@ -483,7 +483,10 @@ pub fn plan_workspace_changes(
                     || skill.targets.iter().any(|agent| {
                         matches!(
                             agent,
-                            AgentKind::Codex | AgentKind::OpenClaw | AgentKind::Hermes
+                            AgentKind::Codex
+                                | AgentKind::Cursor
+                                | AgentKind::OpenClaw
+                                | AgentKind::Hermes
                         )
                     }))
             {
@@ -1306,6 +1309,31 @@ mod tests {
                 .get(&home_config.display().to_string())
                 .map(String::as_str),
             Some("recorded-home-hash")
+        );
+    }
+
+    #[test]
+    fn cursor_only_skill_is_written_to_the_shared_skill_directory() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("skill-sources/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest.skills.push(agentkib_core::SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::Cursor],
+        });
+
+        let plan = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+
+        assert!(
+            plan.changes
+                .iter()
+                .any(|change| { change.target.ends_with(".agents/skills/reviewer/SKILL.md") })
         );
     }
 
