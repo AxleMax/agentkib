@@ -542,7 +542,7 @@ pub fn plan_workspace_changes(
     let mut persisted_manifest = manifest.clone();
     persisted_manifest.schema_version = 2;
     persisted_manifest.connections.clear();
-    update_generated_hashes(&root, &mut persisted_manifest, &changes);
+    update_generated_hashes(&root, &mut persisted_manifest, &changes, home);
     changes.retain(|change| change.before != change.after);
     let manifest_target = manifest_path(&root);
     let manifest_after = serde_yaml::to_string(&persisted_manifest)?;
@@ -743,9 +743,23 @@ fn validator_for_skill_file(path: &Path) -> &'static str {
     }
 }
 
-fn update_generated_hashes(root: &Path, manifest: &mut Manifest, changes: &[FileChange]) {
-    for state in manifest.adapters.values_mut() {
-        state.generated_hashes.clear();
+fn update_generated_hashes(
+    root: &Path,
+    manifest: &mut Manifest,
+    changes: &[FileChange],
+    home: &HomeTargets,
+) {
+    for (agent, state) in &mut manifest.adapters {
+        let refreshes_home = match agent {
+            AgentKind::OpenClaw => home.openclaw_config.is_some(),
+            AgentKind::Hermes => home.hermes_config.is_some(),
+            _ => false,
+        };
+        state.generated_hashes.retain(|target, _| {
+            let path = Path::new(target);
+            let project_scoped = !path.is_absolute() || path_starts_with(path, root);
+            !project_scoped && !refreshes_home
+        });
     }
     for change in changes {
         let key = change
@@ -1259,6 +1273,39 @@ mod tests {
             persisted.adapters[&AgentKind::Codex]
                 .generated_hashes
                 .contains_key("AGENTS.md")
+        );
+    }
+
+    #[test]
+    fn project_plan_preserves_recorded_agent_home_hashes() {
+        let dir = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let home_config = home.path().join(".openclaw/openclaw.json");
+        let mut manifest = default_manifest(dir.path()).unwrap();
+        manifest
+            .adapters
+            .get_mut(&AgentKind::OpenClaw)
+            .unwrap()
+            .generated_hashes
+            .insert(
+                home_config.display().to_string(),
+                "recorded-home-hash".into(),
+            );
+
+        let plan = plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        let manifest_change = plan
+            .changes
+            .iter()
+            .find(|change| change.target.ends_with(".agentkib/manifest.yaml"))
+            .unwrap();
+        let persisted: Manifest = serde_yaml::from_str(&manifest_change.after).unwrap();
+
+        assert_eq!(
+            persisted.adapters[&AgentKind::OpenClaw]
+                .generated_hashes
+                .get(&home_config.display().to_string())
+                .map(String::as_str),
+            Some("recorded-home-hash")
         );
     }
 
