@@ -627,27 +627,33 @@ function ContextPage({ project, onOpenInstructions }: { project: string; onOpenI
 function Changes({ changeSet, origin, launchRequest, onPlanHome, onApplied, onLaunchCompleted, onRejected, onApplyingChange }: { changeSet?: ChangeSet; origin: ChangeSetOrigin; launchRequest?: SessionHandoffLaunchRequest; onPlanHome: () => void; onApplied: (keepLaunchRequest?: boolean) => void | Promise<void>; onLaunchCompleted: () => void; onRejected: () => void; onApplyingChange: (applying: boolean) => void }) {
   const [selected, setSelected] = useState(0); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [homeApproved, setHomeApproved] = useState(false); const [appliedLaunchFailure, setAppliedLaunchFailure] = useState("");
   const applying = useRef(false);
+  const active = useRef(true);
   const change = changeSet?.changes[selected];
   const launchSupported = launchRequest?.target_agent === "codex" || launchRequest?.target_agent === "claude-code";
   const targetAgentName = launchRequest ? agentLabels[launchRequest.target_agent] : "";
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
   useEffect(() => { if (changeSet) setAppliedLaunchFailure(""); }, [changeSet?.id]);
   const runLocked = async (operation: () => Promise<void>) => {
     if (applying.current) return;
     applying.current = true;
     setBusy(true); setError(""); onApplyingChange(true);
     try { await operation(); }
-    catch (value) { setError(localizeMessage(value)); }
-    finally { applying.current = false; onApplyingChange(false); setBusy(false); }
+    catch (value) { if (active.current) setError(localizeMessage(value)); }
+    finally { applying.current = false; onApplyingChange(false); if (active.current) setBusy(false); }
   };
-  if (!changeSet && launchRequest && appliedLaunchFailure) return <div className="panel handoff-launch-result"><CircleAlert size={24} /><div><h2>{tr("handoff.savedLaunchFailed")}</h2><p>{error || appliedLaunchFailure}</p><code>.agentkib/handoffs/{launchRequest.filename}</code></div><button className="primary" disabled={busy} onClick={() => void runLocked(async () => { await api.launchSessionHandoff(launchRequest); setAppliedLaunchFailure(""); onLaunchCompleted(); })}><ExternalLink size={15} />{tr(busy ? "handoff.opening" : "handoff.retryOpen", { agent: targetAgentName })}</button></div>;
+  if (!changeSet && launchRequest && appliedLaunchFailure) return <div className="panel handoff-launch-result"><CircleAlert size={24} /><div><h2>{tr("handoff.savedLaunchFailed")}</h2><p>{error || appliedLaunchFailure}</p><code>.agentkib/handoffs/{launchRequest.filename}</code></div><button className="primary" disabled={busy} onClick={() => void runLocked(async () => { await api.launchSessionHandoff(launchRequest); if (!active.current) return; setAppliedLaunchFailure(""); onLaunchCompleted(); })}><ExternalLink size={15} />{tr(busy ? "handoff.opening" : "handoff.retryOpen", { agent: targetAgentName })}</button></div>;
   if (!changeSet) return <Empty compact icon={GitCompareArrows} title={tr("changes.empty")} text={tr("changes.emptyText")} />;
   const apply = async () => {
-    await runLocked(async () => { await api.apply(changeSet, homeApproved); await onApplied(false); });
+    await runLocked(async () => { await api.apply(changeSet, homeApproved); if (active.current) await onApplied(false); });
   };
   const applyAndContinue = async () => {
     if (!launchRequest || !launchSupported) return;
     await runLocked(async () => {
       const result = await api.continueSessionHandoff(changeSet, launchRequest);
+      if (!active.current) return;
       if (result.status === "launched") {
         await onApplied(false);
       } else {

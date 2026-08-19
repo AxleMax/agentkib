@@ -204,6 +204,7 @@ describe("WorkspaceSessionsPage", () => {
     expect(await screen.findByDisplayValue("# Agent handoff")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Review save changes" }));
     await waitFor(() => expect(api.planSessionHandoff).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog", { name: "Create session handoff" })).not.toBeInTheDocument();
 

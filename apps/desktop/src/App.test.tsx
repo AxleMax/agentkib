@@ -196,6 +196,37 @@ describe("AgentKib desktop", () => {
     expect(screen.queryByRole("button", { name: "Apply 1 Changes" })).not.toBeInTheDocument();
   });
 
+  it("ignores ChangeSet completion after leaving its workspace", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(api.workspaces).mockResolvedValue([{
+      id: "project", path: "/tmp/project", name: "Project", status: "healthy",
+      asset_count: 0, warning_count: 0, sources: [],
+    }]);
+    vi.mocked(api.plan).mockResolvedValue({
+      id: "change-set", project_root: "/tmp/project", created_at: "2026-08-18T00:00:00Z",
+      requires_home_approval: false,
+      changes: [{ target: "/tmp/project/AGENTS.md", scope: "project", before: "", after: "updated", risk: "low", validator: "markdown" }],
+    });
+    let finishApply!: () => void;
+    vi.mocked(api.apply).mockImplementation(() => new Promise<void>((resolve) => { finishApply = resolve; }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
+    fireEvent.change(await screen.findByLabelText("Shared Project Instructions"), { target: { value: "updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Apply 1 Changes" }));
+    const scanCount = vi.mocked(api.scan).mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(await screen.findByRole("heading", { name: "Home" })).toBeInTheDocument();
+    await act(async () => { finishApply(); });
+
+    expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument();
+    expect(api.scan).toHaveBeenCalledTimes(scanCount);
+    confirm.mockRestore();
+  });
+
   it("renders structured ChangeSet errors instead of object coercion", async () => {
     vi.mocked(api.workspaces).mockResolvedValue([{
       id: "project", path: "/tmp/project", name: "Project", status: "healthy",

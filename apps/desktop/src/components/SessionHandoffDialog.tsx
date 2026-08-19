@@ -39,17 +39,28 @@ export function SessionHandoffDialog({
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const activeRef = useRef(true);
+  const requestGenerationRef = useRef(0);
   const identityRef = useRef({ workspaceId: workspace.id, sessionId: session.id });
   identityRef.current = { workspaceId: workspace.id, sessionId: session.id };
 
   useEffect(() => {
     activeRef.current = true;
-    return () => { activeRef.current = false; };
+    return () => {
+      activeRef.current = false;
+      requestGenerationRef.current += 1;
+    };
   }, []);
 
-  const captureIdentity = () => ({ workspaceId: workspace.id, sessionId: session.id });
-  const isCurrent = (identity: { workspaceId: string; sessionId: string }) => (
-    activeRef.current
+  const captureIdentity = () => ({
+    workspaceId: workspace.id,
+    sessionId: session.id,
+    generation: ++requestGenerationRef.current,
+  });
+  const isLatest = (identity: { generation: number }) => (
+    activeRef.current && requestGenerationRef.current === identity.generation
+  );
+  const isCurrent = (identity: { workspaceId: string; sessionId: string; generation: number }) => (
+    isLatest(identity)
     && identityRef.current.workspaceId === identity.workspaceId
     && identityRef.current.sessionId === identity.sessionId
   );
@@ -78,7 +89,7 @@ export function SessionHandoffDialog({
     } catch (reason) {
       if (isCurrent(identity)) setError(localizeMessage(reason));
     } finally {
-      if (activeRef.current) setBusy(false);
+      if (isLatest(identity)) setBusy(false);
     }
   };
 
@@ -93,7 +104,7 @@ export function SessionHandoffDialog({
     } catch (reason) {
       if (isCurrent(identity)) setError(localizeMessage(reason));
     } finally {
-      if (activeRef.current) {
+      if (isLatest(identity)) {
         setBusy(false);
         setSummarizing(false);
       }
@@ -111,26 +122,30 @@ export function SessionHandoffDialog({
     } catch (reason) {
       if (isCurrent(identity)) setError(localizeMessage(reason));
     } finally {
-      if (activeRef.current) setBusy(false);
+      if (isLatest(identity)) setBusy(false);
     }
   };
 
   const copy = async () => {
+    const identity = captureIdentity();
     setBusy(true);
     setError("");
     try {
       const sanitized = await api.sanitizeSessionHandoff(format, content);
+      if (!isCurrent(identity)) return;
       await navigator.clipboard?.writeText(sanitized);
+      if (!isCurrent(identity)) return;
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
+      window.setTimeout(() => { if (activeRef.current) setCopied(false); }, 1200);
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (isCurrent(identity)) setError(localizeMessage(reason));
     } finally {
-      setBusy(false);
+      if (isLatest(identity)) setBusy(false);
     }
   };
 
   const reset = () => {
+    requestGenerationRef.current += 1;
     setDraft(undefined);
     setSummaryRequired(undefined);
     setError("");
@@ -139,6 +154,7 @@ export function SessionHandoffDialog({
   const sourceAgentName = agentName(summaryRequired?.source_agent ?? session.agent);
   const close = () => {
     activeRef.current = false;
+    requestGenerationRef.current += 1;
     onClose();
   };
 
@@ -162,7 +178,7 @@ export function SessionHandoffDialog({
           <details className="handoff-advanced"><summary>{tr("handoff.advanced")}</summary><label>{tr("handoff.format")}<select value={format} disabled={busy} onChange={(event) => setFormat(event.target.value as HandoffFormat)}><option value="markdown">Markdown</option><option value="json">JSON</option></select></label></details>
         </div>
       </div>}
-      <footer>{draft ? <><button className="ghost" onClick={reset}>{tr("common.back")}</button><button className="ghost" disabled={busy} onClick={() => void copy()}><Copy size={14} />{tr(copied ? "handoff.copied" : "handoff.copy")}</button><button className="primary" disabled={busy} onClick={() => void plan()}><FileOutput size={14} />{tr("handoff.reviewSave")}</button></> : summaryRequired ? <><button className="ghost" disabled={busy} onClick={() => setSummaryRequired(undefined)}>{tr("common.cancel")}</button><button className="primary" disabled={busy} onClick={() => void summarize()}><Sparkles size={14} />{tr(summarizing ? "handoff.summarizing" : "handoff.summarizeWith", { agent: sourceAgentName })}</button></> : <button className="primary" disabled={busy} onClick={() => void prepare()}><FileOutput size={14} />{tr(busy ? "common.loading" : "handoff.prepare")}</button>}</footer>
+      <footer>{draft ? <><button className="ghost" disabled={busy} onClick={reset}>{tr("common.back")}</button><button className="ghost" disabled={busy} onClick={() => void copy()}><Copy size={14} />{tr(copied ? "handoff.copied" : "handoff.copy")}</button><button className="primary" disabled={busy} onClick={() => void plan()}><FileOutput size={14} />{tr("handoff.reviewSave")}</button></> : summaryRequired ? <><button className="ghost" disabled={busy} onClick={() => setSummaryRequired(undefined)}>{tr("common.cancel")}</button><button className="primary" disabled={busy} onClick={() => void summarize()}><Sparkles size={14} />{tr(summarizing ? "handoff.summarizing" : "handoff.summarizeWith", { agent: sourceAgentName })}</button></> : <button className="primary" disabled={busy} onClick={() => void prepare()}><FileOutput size={14} />{tr(busy ? "common.loading" : "handoff.prepare")}</button>}</footer>
     </section>
   </div>;
 }
