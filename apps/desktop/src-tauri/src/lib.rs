@@ -1513,16 +1513,30 @@ async fn get_workspace_doctor_summaries(
     tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Vec<ContextDoctorSummary>> {
         Ok(workspace_ids
             .iter()
-            .filter_map(|workspace_id| {
-                workspace_doctor_report(workspace_id)
-                    .ok()
-                    .map(|report| report.summary)
+            .map(|workspace_id| {
+                doctor_summary_or_unavailable(workspace_id, workspace_doctor_report(workspace_id))
             })
             .collect())
     })
     .await
     .map_err(format_error)?
     .map_err(format_error)
+}
+
+fn doctor_summary_or_unavailable(
+    workspace_id: &str,
+    report: anyhow::Result<ContextDoctorReport>,
+) -> ContextDoctorSummary {
+    report
+        .map(|report| report.summary)
+        .unwrap_or_else(|_| ContextDoctorSummary {
+            workspace_id: workspace_id.to_string(),
+            error_count: 1,
+            warning_count: 0,
+            info_count: 0,
+            repairable_count: 0,
+            checked_at: Utc::now(),
+        })
 }
 
 #[tauri::command]
@@ -4565,6 +4579,19 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn doctor_summary_marks_workspace_failures_as_errors() {
+        let summary = doctor_summary_or_unavailable(
+            "missing-workspace",
+            Err(anyhow::anyhow!("workspace disappeared")),
+        );
+
+        assert_eq!(summary.workspace_id, "missing-workspace");
+        assert_eq!(summary.error_count, 1);
+        assert_eq!(summary.warning_count, 0);
+        assert_eq!(summary.repairable_count, 0);
+    }
 
     #[test]
     fn close_behavior_round_trips() {

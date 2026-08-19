@@ -383,11 +383,13 @@ pub fn diagnose_workspace(
 fn diagnose_skill_sources(project: &Path, manifest: &Manifest, issues: &mut Vec<DoctorIssue>) {
     for skill in &manifest.skills {
         let source = project.join(&skill.path);
-        let readable = if source.is_file() {
-            fs::read_to_string(&source).is_ok()
-        } else {
-            source.join("SKILL.md").is_file() && fs::read_to_string(source.join("SKILL.md")).is_ok()
-        };
+        let entrypoint =
+            if fs::symlink_metadata(&source).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+                source.join("SKILL.md")
+            } else {
+                source.clone()
+            };
+        let readable = matches!(hash_managed_file(&entrypoint), ManagedFileHash::Hashed(_));
         if !readable {
             push_issue(
                 issues,
@@ -787,6 +789,39 @@ mod tests {
                 .issues
                 .iter()
                 .any(|issue| issue.code == "skill.source-unavailable" && !issue.repairable)
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_manifest_skill_sources_without_reading_them() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("skill-sources/large.md");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::File::create(&source)
+            .unwrap()
+            .set_len(MAX_MANAGED_FILE_BYTES + 1)
+            .unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "large".into(),
+            path: "skill-sources/large.md".into(),
+            targets: Vec::new(),
+        });
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report =
+            diagnose_workspace(dir.path(), "workspace", &BTreeSet::new(), &BTreeMap::new())
+                .unwrap();
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| { issue.code == "skill.source-unavailable" && !issue.repairable })
         );
     }
 
