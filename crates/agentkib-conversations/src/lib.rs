@@ -713,11 +713,9 @@ pub fn sanitize_handoff_export(
 fn redact_sensitive_line(line: &str, redaction_count: &mut usize) -> String {
     if let Some(end) = line
         .char_indices()
-        .find(|(_, character)| matches!(character, '=' | ':'))
-        .and_then(|(position, character)| {
-            let candidate = line[..position].trim().trim_matches(|character: char| {
-                !character.is_ascii_alphanumeric() && !matches!(character, '_' | '-' | ' ' | '\t')
-            });
+        .filter(|(_, character)| matches!(character, '=' | ':'))
+        .find_map(|(position, character)| {
+            let candidate = assignment_key_before(line, position);
             is_sensitive_key(candidate).then_some(position + character.len_utf8())
         })
     {
@@ -729,6 +727,22 @@ fn redact_sensitive_line(line: &str, redaction_count: &mut usize) -> String {
         redact_prefixed_credentials(&mut output, prefix, redaction_count);
     }
     output
+}
+
+fn assignment_key_before(line: &str, delimiter: usize) -> &str {
+    line[..delimiter]
+        .rsplit(|character: char| {
+            matches!(
+                character,
+                '=' | ':' | '?' | '&' | '/' | '\\' | ',' | ';' | '(' | '[' | '{' | '"' | '\''
+            )
+        })
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches(|character: char| {
+            !character.is_ascii_alphanumeric() && !matches!(character, '_' | '-' | ' ' | '\t')
+        })
 }
 
 fn redact_prefixed_credentials(output: &mut String, prefix: &str, redaction_count: &mut usize) {
@@ -3012,6 +3026,22 @@ mod tests {
         assert!(content.contains("task-runner risk-based disk-backed sk-short"));
         assert!(content.contains("risk-sk-abcdefghijkl"));
         assert!(content.contains("actual=[REDACTED]"));
+        assert_eq!(redaction_count, 1);
+    }
+
+    #[test]
+    fn line_redaction_scans_assignments_after_url_delimiters() {
+        let mut redaction_count = 0;
+        let content = sanitize_handoff_content(
+            "callback=https://host/path?mode=plain&token=plain-secret-value\nurl=https://host/path?mode=plain",
+            None,
+            &mut redaction_count,
+        );
+
+        assert_eq!(
+            content,
+            "callback=https://host/path?mode=plain&token= [REDACTED]\nurl=https://host/path?mode=plain"
+        );
         assert_eq!(redaction_count, 1);
     }
 

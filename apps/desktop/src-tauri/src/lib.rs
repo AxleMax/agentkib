@@ -1275,11 +1275,12 @@ impl HandoffSummaryRunner for CliHandoffSummaryRunner {
                     &self.lifecycle,
                     HANDOFF_SUMMARY_TIMEOUT,
                 )?;
-                let output =
-                    fs::read(&output_path).context("Codex did not return a handoff summary")?;
-                if output.len() > HANDOFF_SUMMARY_OUTPUT_LIMIT {
-                    anyhow::bail!("Codex handoff summary exceeded the output limit");
-                }
+                let output = read_bounded_summary_output(
+                    fs::File::open(&output_path)
+                        .context("Codex did not return a handoff summary")?,
+                    HANDOFF_SUMMARY_OUTPUT_LIMIT,
+                )
+                .context("Could not read the Codex handoff summary")?;
                 serde_json::from_slice(&output).context("Codex returned an invalid handoff summary")
             }
             AgentKind::ClaudeCode => {
@@ -4984,6 +4985,16 @@ mod tests {
                 .any(|value| value == "--ignore-user-config")
         );
         assert!(arguments.iter().any(|value| value == "--ignore-rules"));
+    }
+
+    #[test]
+    fn handoff_summary_output_is_read_within_the_size_limit() {
+        let output = read_bounded_summary_output(std::io::Cursor::new(vec![b'x'; 8]), 8).unwrap();
+        assert_eq!(output, vec![b'x'; 8]);
+
+        let error =
+            read_bounded_summary_output(std::io::Cursor::new(vec![b'x'; 9]), 8).unwrap_err();
+        assert!(error.to_string().contains("exceeded the size limit"));
     }
 
     #[test]

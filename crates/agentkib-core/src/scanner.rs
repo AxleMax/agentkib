@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -6,6 +7,8 @@ use walkdir::WalkDir;
 
 use crate::manifest::manifest_entry_exists;
 use crate::{AgentDetection, AgentKind, AssetKind, AssetRecord, WorkspaceScan, canonical_project};
+
+const MAX_NATIVE_CONFIG_BYTES: u64 = 1024 * 1024;
 
 pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
     let root = canonical_project(project)?;
@@ -88,25 +91,51 @@ pub fn scan_workspace(project: &Path) -> Result<WorkspaceScan> {
 
 fn validate_native_config(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?;
-    let content = fs::read_to_string(path).ok()?;
-    let error = if name.ends_with(".json") {
+    let format = if name.ends_with(".json") {
+        "JSON"
+    } else if name.ends_with(".toml") {
+        "TOML"
+    } else {
+        return None;
+    };
+    let invalid = |detail: String| {
+        format!(
+            "Configuration file is invalid: {} ({detail})",
+            path.display()
+        )
+    };
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => metadata,
+        Ok(_) => return Some(invalid("must be a regular file".into())),
+        Err(error) => return Some(invalid(error.to_string())),
+    };
+    if metadata.len() > MAX_NATIVE_CONFIG_BYTES {
+        return Some(invalid(format!(
+            "{format} exceeds the 1 MiB validation limit"
+        )));
+    }
+    let mut content = String::new();
+    if let Err(error) = fs::File::open(path).and_then(|file| {
+        file.take(MAX_NATIVE_CONFIG_BYTES + 1)
+            .read_to_string(&mut content)
+    }) {
+        return Some(invalid(error.to_string()));
+    }
+    if content.len() as u64 > MAX_NATIVE_CONFIG_BYTES {
+        return Some(invalid(format!(
+            "{format} exceeds the 1 MiB validation limit"
+        )));
+    }
+    let error = if format == "JSON" {
         serde_json::from_str::<serde_json::Value>(&content)
             .err()
             .map(|error| error.to_string())
-    } else if name.ends_with(".toml") {
+    } else {
         toml::from_str::<toml::Value>(&content)
             .err()
             .map(|error| error.to_string())
-    } else {
-        None
     };
-    error.map(|error| {
-        format!(
-            "Configuration file is invalid: {} ({})",
-            path.display(),
-            error
-        )
-    })
+    error.map(invalid)
 }
 
 fn candidates(agent: AgentKind) -> Vec<(&'static str, AssetKind, &'static str)> {
@@ -300,6 +329,24 @@ mod tests {
                 .warnings
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_native_configuration_before_reading_it() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".codex")).unwrap();
+        fs::File::create(dir.path().join(".codex/config.toml"))
+            .unwrap()
+            .set_len(MAX_NATIVE_CONFIG_BYTES + 1)
+            .unwrap();
+
+        let scan = scan_workspace(dir.path()).unwrap();
+
+        assert!(
+            scan.warnings
+                .iter()
+                .any(|warning| warning.contains("exceeds the 1 MiB validation limit"))
         );
     }
 
