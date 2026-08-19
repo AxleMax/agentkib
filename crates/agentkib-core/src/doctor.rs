@@ -121,6 +121,7 @@ pub fn diagnose_workspace(
         let mut instruction_actual = 0;
         let mut skill_expected = 0;
         let mut skill_actual = 0;
+        let mut skill_repairable = true;
         let expected_mcp_names = manifest
             .filter(|_| writable)
             .map(|value| {
@@ -150,6 +151,12 @@ pub fn diagnose_workspace(
                 .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
                 .filter(|skill| generated_skill_is_current(project, agent, skill))
                 .count();
+            skill_repairable = manifest
+                .skills
+                .iter()
+                .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
+                .filter(|skill| !generated_skill_is_current(project, agent, skill))
+                .all(|skill| generated_skill_can_be_repaired(project, agent, skill));
         }
 
         if diagnostically_active {
@@ -278,14 +285,7 @@ pub fn diagnose_workspace(
                 DoctorSeverity::Warning,
                 Some(agent),
                 Some(AssetKind::Skill),
-                enabled
-                    && matches!(
-                        agent,
-                        AgentKind::Codex
-                            | AgentKind::ClaudeCode
-                            | AgentKind::OpenClaw
-                            | AgentKind::Hermes
-                    ),
+                enabled && writable && skill_repairable,
                 None,
                 "Manifest Skills are not all visible in the target Agent's project paths".into(),
                 Some(skill_expected.to_string()),
@@ -638,6 +638,53 @@ fn managed_skill_files(source: &Path) -> Option<BTreeMap<PathBuf, String>> {
         files.insert(relative, hash);
     }
     (!files.is_empty()).then_some(files)
+}
+
+fn generated_skill_can_be_repaired(
+    project: &Path,
+    agent: AgentKind,
+    skill: &crate::SkillDefinition,
+) -> bool {
+    let Some(source_files) = managed_skill_files(&project.join(&skill.path)) else {
+        return false;
+    };
+    let relative_root = match agent {
+        AgentKind::ClaudeCode => ".claude/skills",
+        AgentKind::Codex | AgentKind::Cursor | AgentKind::OpenClaw | AgentKind::Hermes => {
+            ".agents/skills"
+        }
+        AgentKind::DeepSeekHarness => return false,
+    };
+    let target = project.join(relative_root).join(&skill.name);
+    let metadata = match fs::symlink_metadata(&target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(_) => return false,
+    };
+    if !metadata.file_type().is_dir() {
+        return false;
+    }
+    for entry in WalkDir::new(&target).follow_links(false) {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        if !is_safe_scan_entry(entry.path()) {
+            return false;
+        }
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        if !entry.file_type().is_file() {
+            return false;
+        }
+        let Ok(relative) = entry.path().strip_prefix(&target) else {
+            return false;
+        };
+        if !source_files.contains_key(relative) {
+            return false;
+        }
+    }
+    true
 }
 
 fn asset_kind_for_path(path: &Path) -> AssetKind {
@@ -1056,6 +1103,11 @@ mod tests {
             .find(|row| row.agent == AgentKind::Codex)
             .unwrap();
         assert_eq!(row.skills.actual, 0);
+        assert!(extra.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Codex)
+                && issue.code == "skill.target-missing"
+                && !issue.repairable
+        }));
 
         #[cfg(unix)]
         {
@@ -1083,6 +1135,11 @@ mod tests {
                 .find(|row| row.agent == AgentKind::Codex)
                 .unwrap();
             assert_eq!(row.skills.actual, 0);
+            assert!(symlink.issues.iter().any(|issue| {
+                issue.agent == Some(AgentKind::Codex)
+                    && issue.code == "skill.target-missing"
+                    && !issue.repairable
+            }));
         }
     }
 
@@ -1203,6 +1260,43 @@ mod tests {
         assert_eq!(row.skills.status, DoctorStatus::Healthy);
         assert!(report.issues.iter().all(|issue| {
             issue.agent != Some(AgentKind::Cursor) || issue.code != "skill.target-missing"
+        }));
+    }
+
+    #[test]
+    fn missing_cursor_skill_is_repairable() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::Cursor],
+        });
+        fs::create_dir_all(dir.path().join("skill-sources/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Cursor]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(report.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Cursor)
+                && issue.code == "skill.target-missing"
+                && issue.repairable
         }));
     }
 

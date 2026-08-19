@@ -171,6 +171,7 @@ fn candidates(agent: AgentKind) -> Vec<(&'static str, AssetKind, &'static str)> 
                 "Cursor commands",
             ),
             (".cursor/skills", AssetKind::Skill, "Cursor Skills"),
+            (".agents/skills", AssetKind::Skill, "Shared Agent Skill"),
             (".cursor/hooks.json", AssetKind::Hook, "Cursor Hooks"),
             (".cursor/mcp.json", AssetKind::Connection, "Cursor MCP"),
         ],
@@ -318,6 +319,12 @@ mod tests {
         fs::write(dir.path().join(".cursor/commands/review.md"), "Review").unwrap();
         fs::write(dir.path().join(".cursor/hooks.json"), "{}").unwrap();
         fs::write(dir.path().join(".cursor/mcp.json"), "{}").unwrap();
+        fs::create_dir_all(dir.path().join(".agents/skills/reviewer")).unwrap();
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
 
         let scan = scan_workspace(dir.path()).unwrap();
         let cursor = scan
@@ -326,6 +333,11 @@ mod tests {
             .find(|agent| agent.agent == AgentKind::Cursor)
             .unwrap();
         assert!(cursor.detected);
-        assert_eq!(cursor.asset_count, 4);
+        assert_eq!(cursor.asset_count, 5);
+        assert!(scan.assets.iter().any(|asset| {
+            asset.agent == AgentKind::Cursor
+                && asset.kind == AssetKind::Skill
+                && asset.path.ends_with(".agents/skills/reviewer/SKILL.md")
+        }));
     }
 }
