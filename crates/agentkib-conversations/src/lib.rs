@@ -792,7 +792,16 @@ fn sanitize_json_value(
 }
 
 fn is_sensitive_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
+    let key = key
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
     [
         "authorization",
         "cookie",
@@ -2719,7 +2728,9 @@ mod tests {
             "schema_version": 1,
             "context": {"messages": []},
             "tokens": ["first-secret", {"value": "second-secret"}],
-            "credentials": {"username": "agent", "password": "third-secret"}
+            "credentials": {"username": "agent", "password": "third-secret"},
+            "api-key": "fourth-secret",
+            "access-key": {"id": "fifth-secret"}
         })
         .to_string();
 
@@ -2728,10 +2739,14 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["tokens"], "[REDACTED]");
         assert_eq!(value["credentials"], "[REDACTED]");
+        assert_eq!(value["api-key"], "[REDACTED]");
+        assert_eq!(value["access-key"], "[REDACTED]");
         assert!(!json.contains("first-secret"));
         assert!(!json.contains("second-secret"));
         assert!(!json.contains("third-secret"));
-        assert_eq!(redaction_count, 2);
+        assert!(!json.contains("fourth-secret"));
+        assert!(!json.contains("fifth-secret"));
+        assert_eq!(redaction_count, 4);
     }
 
     #[test]

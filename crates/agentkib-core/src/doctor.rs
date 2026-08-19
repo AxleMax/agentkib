@@ -1,16 +1,20 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 
 use crate::{
     AgentKind, AssetKind, ContextDoctorReport, ContextDoctorSummary, DoctorAgentRow,
     DoctorAssetStatus, DoctorEvidence, DoctorIssue, DoctorSeverity, DoctorStatus, Manifest,
     hash_content, load_manifest, manifest_path, resolve_context, scan_workspace,
 };
+
+const MAX_MANAGED_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 pub fn diagnose_workspace(
     project: &Path,
@@ -413,11 +417,16 @@ fn diagnose_managed_files(project: &Path, manifest: &Manifest, issues: &mut Vec<
             } else {
                 project.join(path)
             };
-            let actual = fs::read(&path).ok().map(|content| hash_content(&content));
+            let file_hash = hash_managed_file(&path);
+            let actual = match &file_hash {
+                ManagedFileHash::Hashed(hash) => Some(hash.clone()),
+                ManagedFileHash::Missing | ManagedFileHash::Unavailable => None,
+            };
             if actual.as_deref() == Some(expected) {
                 continue;
             }
-            let missing = actual.is_none();
+            let missing = matches!(file_hash, ManagedFileHash::Missing);
+            let unavailable = matches!(file_hash, ManagedFileHash::Unavailable);
             let project_scoped = path.starts_with(project);
             push_issue(
                 issues,
@@ -429,10 +438,15 @@ fn diagnose_managed_files(project: &Path, manifest: &Manifest, issues: &mut Vec<
                 DoctorSeverity::Warning,
                 Some(*agent),
                 Some(asset_kind_for_path(&path)),
-                project_scoped && state.enabled && AgentKind::WRITABLE.contains(agent),
+                project_scoped
+                    && !unavailable
+                    && state.enabled
+                    && AgentKind::WRITABLE.contains(agent),
                 Some(path),
                 if missing {
                     "AgentKib-managed file is missing".into()
+                } else if unavailable {
+                    "AgentKib-managed file is not a readable bounded regular file".into()
                 } else {
                     "AgentKib-managed file differs from its recorded hash".into()
                 },
@@ -441,6 +455,45 @@ fn diagnose_managed_files(project: &Path, manifest: &Manifest, issues: &mut Vec<
             );
         }
     }
+}
+
+enum ManagedFileHash {
+    Missing,
+    Unavailable,
+    Hashed(String),
+}
+
+fn hash_managed_file(path: &Path) -> ManagedFileHash {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ManagedFileHash::Missing;
+        }
+        Err(_) => return ManagedFileHash::Unavailable,
+    };
+    if !metadata.file_type().is_file() || metadata.len() > MAX_MANAGED_FILE_BYTES {
+        return ManagedFileHash::Unavailable;
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return ManagedFileHash::Unavailable;
+    };
+    let mut reader = file.take(MAX_MANAGED_FILE_BYTES + 1);
+    let mut hasher = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(_) => return ManagedFileHash::Unavailable,
+        };
+        total += read as u64;
+        if total > MAX_MANAGED_FILE_BYTES {
+            return ManagedFileHash::Unavailable;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    ManagedFileHash::Hashed(hex::encode(hasher.finalize()))
 }
 
 fn diagnose_exact_duplicates(
@@ -668,6 +721,47 @@ mod tests {
                 .iter()
                 .all(|issue| issue.code != "managed.missing" && issue.code != "managed.drift")
         );
+    }
+
+    #[test]
+    fn rejects_oversized_managed_files_without_reading_them() {
+        let project = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let managed = home.path().join(".openclaw/openclaw.json");
+        fs::create_dir_all(managed.parent().unwrap()).unwrap();
+        let file = fs::File::create(&managed).unwrap();
+        file.set_len(MAX_MANAGED_FILE_BYTES + 1).unwrap();
+
+        let mut value = manifest(project.path());
+        value
+            .adapters
+            .get_mut(&AgentKind::OpenClaw)
+            .unwrap()
+            .generated_hashes
+            .insert(managed.display().to_string(), hash_content(b"expected"));
+        fs::create_dir(project.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(project.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            project.path(),
+            "workspace",
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(report.issues.iter().any(|issue| {
+            issue.code == "managed.drift"
+                && issue.agent == Some(AgentKind::OpenClaw)
+                && !issue.repairable
+                && issue
+                    .evidence
+                    .iter()
+                    .any(|evidence| evidence.detail.contains("bounded regular file"))
+        }));
     }
 
     #[test]

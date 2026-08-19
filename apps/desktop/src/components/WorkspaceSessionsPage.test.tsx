@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeI18n } from "../i18n";
 import { api } from "../api";
-import type { ConversationSessionSummary, WorkspaceSummary } from "../types";
+import type { ConversationSessionSummary, SessionHandoffPreparation, WorkspaceSummary } from "../types";
 import { WorkspaceSessionsPage } from "./WorkspaceSessionsPage";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
@@ -186,6 +186,32 @@ describe("WorkspaceSessionsPage", () => {
       change_set: expect.objectContaining({ id: "changes" }),
       launch_request: expect.objectContaining({ target_agent: "claude-code" }),
     }));
+  });
+
+  it("freezes the target Agent while preparing a handoff", async () => {
+    let resolvePreparation: ((value: SessionHandoffPreparation) => void) | undefined;
+    vi.mocked(api.prepareSessionHandoff).mockImplementationOnce(() => (
+      new Promise<SessionHandoffPreparation>((resolve) => {
+        resolvePreparation = resolve;
+      })
+    ));
+    render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
+    expect(await screen.findByText("Visible message")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create handoff" }));
+    const target = screen.getByLabelText("Target Agent");
+    fireEvent.click(screen.getByRole("button", { name: "Prepare handoff" }));
+
+    expect(target).toBeDisabled();
+    resolvePreparation?.({
+      status: "ready",
+      draft: {
+        filename: "handoff.md", format: "markdown", content: "# Agent handoff",
+        redaction_count: 0, included_message_count: 1, omitted_tool_count: 0,
+        context_source: "full-transcript", warnings: [],
+      },
+    });
+    expect(await screen.findByDisplayValue("# Agent handoff")).toBeInTheDocument();
   });
 
   it("requires explicit consent before using the source Agent to summarize oversized context", async () => {
