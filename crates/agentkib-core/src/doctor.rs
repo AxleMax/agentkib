@@ -533,7 +533,7 @@ fn generated_skill_exists(
 ) -> bool {
     let roots: &[&str] = match agent {
         AgentKind::ClaudeCode => &[".claude/skills"],
-        AgentKind::Cursor => &[".cursor/skills"],
+        AgentKind::Cursor => &[".cursor/skills", ".agents/skills"],
         AgentKind::DeepSeekHarness => &[".dsh/skills", ".agents/skills"],
         AgentKind::OpenClaw => &["skills", ".agents/skills"],
         AgentKind::Codex | AgentKind::Hermes => &[".agents/skills"],
@@ -882,6 +882,54 @@ mod tests {
             .find(|row| row.agent == AgentKind::ClaudeCode)
             .unwrap();
         assert_eq!(row.skills.actual, 1);
+    }
+
+    #[test]
+    fn cursor_sees_untargeted_skills_in_shared_directory() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: Vec::new(),
+        });
+        fs::create_dir_all(dir.path().join("skill-sources/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(".agents/skills/reviewer")).unwrap();
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/SKILL.md"),
+            "# Reviewer",
+        )
+        .unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Cursor]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = report
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Cursor)
+            .unwrap();
+        assert_eq!(row.skills.expected, 1);
+        assert_eq!(row.skills.actual, 1);
+        assert_eq!(row.skills.status, DoctorStatus::Healthy);
+        assert!(report.issues.iter().all(|issue| {
+            issue.agent != Some(AgentKind::Cursor) || issue.code != "skill.target-missing"
+        }));
     }
 
     #[test]
