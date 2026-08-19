@@ -79,8 +79,9 @@ pub fn diagnose_workspace(
         let applicable = detected || installed;
         let writable = AgentKind::WRITABLE.contains(&agent);
         let enabled = writable
-            && manifest
-                .is_some_and(|value| value.adapters.get(&agent).is_none_or(|state| state.enabled));
+            && manifest.map_or(applicable, |value| {
+                value.adapters.get(&agent).is_none_or(|state| state.enabled)
+            });
         let diagnostically_active = applicable && (enabled || agent == AgentKind::DeepSeekHarness);
         let expected_instruction_fragments = manifest
             .map(|value| {
@@ -940,6 +941,40 @@ mod tests {
                 .status,
             DoctorStatus::NotApplicable
         );
+        assert!(
+            !report
+                .matrix
+                .iter()
+                .find(|row| row.agent == AgentKind::Codex)
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[test]
+    fn diagnoses_native_context_without_manifest() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "Shared rule").unwrap();
+        fs::write(dir.path().join("TOOLS.md"), "Shared rule").unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::OpenClaw]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = report
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::OpenClaw)
+            .unwrap();
+
+        assert!(row.enabled);
+        assert_eq!(row.instructions.status, DoctorStatus::Attention);
+        assert!(report.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::OpenClaw) && issue.code == "instruction.exact-duplicate"
+        }));
     }
 
     #[test]
