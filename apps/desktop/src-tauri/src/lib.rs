@@ -1245,6 +1245,8 @@ fn launch_session_handoff_inner(
 const HANDOFF_SUMMARY_TIMEOUT: Duration = Duration::from_secs(120);
 const HANDOFF_SUMMARY_OUTPUT_LIMIT: usize = 512 * 1024;
 const HANDOFF_SUMMARY_ERROR_LIMIT: usize = 64 * 1024;
+const CODEX_HANDOFF_DISABLED_FEATURES: &[&str] =
+    &["shell_tool", "unified_exec", "code_mode", "code_mode_only"];
 
 struct CliHandoffSummaryRunner {
     lifecycle: Arc<LifecycleState>,
@@ -1261,21 +1263,12 @@ impl HandoffSummaryRunner for CliHandoffSummaryRunner {
                 let schema_path = temporary.path.join("summary-schema.json");
                 let output_path = temporary.path.join("summary-output.json");
                 fs::write(&schema_path, serde_json::to_vec(&schema)?)?;
-                let mut command = Command::new(executable);
-                command
-                    .arg("exec")
-                    .arg("--ephemeral")
-                    .args(["--sandbox", "read-only"])
-                    .arg("--skip-git-repo-check")
-                    .arg("--ignore-user-config")
-                    .arg("--ignore-rules")
-                    .args(["--color", "never"])
-                    .arg("--output-schema")
-                    .arg(&schema_path)
-                    .arg("--output-last-message")
-                    .arg(&output_path)
-                    .arg("-")
-                    .current_dir(&temporary.path);
+                let command = build_codex_handoff_summary_command(
+                    &executable,
+                    &temporary.path,
+                    &schema_path,
+                    &output_path,
+                );
                 run_handoff_summary_command(
                     command,
                     input,
@@ -1320,6 +1313,36 @@ impl HandoffSummaryRunner for CliHandoffSummaryRunner {
             _ => anyhow::bail!("The source Agent does not support handoff summarization"),
         }
     }
+}
+
+fn build_codex_handoff_summary_command(
+    executable: &Path,
+    working_directory: &Path,
+    schema_path: &Path,
+    output_path: &Path,
+) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .arg("exec")
+        .arg("--ephemeral")
+        .args(["--sandbox", "read-only"])
+        .arg("--skip-git-repo-check")
+        .arg("--ignore-user-config")
+        .arg("--ignore-rules");
+    // The transcript is untrusted input. Disable both the default shell tool and
+    // alternate execution modes so summarization cannot inspect the local machine.
+    for feature in CODEX_HANDOFF_DISABLED_FEATURES {
+        command.args(["--disable", feature]);
+    }
+    command
+        .args(["--color", "never"])
+        .arg("--output-schema")
+        .arg(schema_path)
+        .arg("--output-last-message")
+        .arg(output_path)
+        .arg("-")
+        .current_dir(working_directory);
+    command
 }
 
 fn handoff_summary_schema() -> serde_json::Value {
@@ -4848,6 +4871,40 @@ mod tests {
 
         assert!(error.to_string().contains("timed out"));
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn codex_handoff_summary_disables_execution_tools() {
+        let command = build_codex_handoff_summary_command(
+            Path::new("/usr/local/bin/codex"),
+            Path::new("/tmp/agentkib-summary"),
+            Path::new("/tmp/agentkib-summary/schema.json"),
+            Path::new("/tmp/agentkib-summary/output.json"),
+        );
+        let arguments: Vec<_> = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect();
+
+        for feature in CODEX_HANDOFF_DISABLED_FEATURES {
+            assert!(
+                arguments
+                    .windows(2)
+                    .any(|pair| pair == ["--disable", *feature]),
+                "expected Codex feature {feature} to be disabled"
+            );
+        }
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["--sandbox", "read-only"])
+        );
+        assert!(
+            arguments
+                .iter()
+                .any(|value| value == "--ignore-user-config")
+        );
+        assert!(arguments.iter().any(|value| value == "--ignore-rules"));
     }
 
     #[test]
