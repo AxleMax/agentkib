@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, Copy, FileOutput, ShieldCheck, Sparkles, X } from "lucide-react";
 import { api } from "../api";
 import { localizeMessage, tr } from "../i18n";
@@ -38,6 +38,21 @@ export function SessionHandoffDialog({
   const [summarizing, setSummarizing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+  const activeRef = useRef(true);
+  const identityRef = useRef({ workspaceId: workspace.id, sessionId: session.id });
+  identityRef.current = { workspaceId: workspace.id, sessionId: session.id };
+
+  useEffect(() => {
+    activeRef.current = true;
+    return () => { activeRef.current = false; };
+  }, []);
+
+  const captureIdentity = () => ({ workspaceId: workspace.id, sessionId: session.id });
+  const isCurrent = (identity: { workspaceId: string; sessionId: string }) => (
+    activeRef.current
+    && identityRef.current.workspaceId === identity.workspaceId
+    && identityRef.current.sessionId === identity.sessionId
+  );
 
   const request = (): SessionHandoffRequest => ({
     session_id: session.id,
@@ -52,43 +67,51 @@ export function SessionHandoffDialog({
   };
 
   const prepare = async () => {
+    const identity = captureIdentity();
     setBusy(true);
     setError("");
     try {
       const preparation = await api.prepareSessionHandoff(request());
+      if (!isCurrent(identity)) return;
       if (preparation.status === "ready") showDraft(preparation.draft);
       else setSummaryRequired(preparation);
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (isCurrent(identity)) setError(localizeMessage(reason));
     } finally {
-      setBusy(false);
+      if (activeRef.current) setBusy(false);
     }
   };
 
   const summarize = async () => {
+    const identity = captureIdentity();
     setBusy(true);
     setSummarizing(true);
     setError("");
     try {
-      showDraft(await api.summarizeSessionHandoff(request()));
+      const nextDraft = await api.summarizeSessionHandoff(request());
+      if (isCurrent(identity)) showDraft(nextDraft);
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (isCurrent(identity)) setError(localizeMessage(reason));
     } finally {
-      setBusy(false);
-      setSummarizing(false);
+      if (activeRef.current) {
+        setBusy(false);
+        setSummarizing(false);
+      }
     }
   };
 
   const plan = async () => {
     if (!draft) return;
+    const identity = captureIdentity();
     setBusy(true);
     setError("");
     try {
-      onPlanned(await api.planSessionHandoff(workspace.id, draft.filename, draft.format, content, targetAgent));
+      const planned = await api.planSessionHandoff(workspace.id, draft.filename, draft.format, content, targetAgent);
+      if (isCurrent(identity)) onPlanned(planned);
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (isCurrent(identity)) setError(localizeMessage(reason));
     } finally {
-      setBusy(false);
+      if (activeRef.current) setBusy(false);
     }
   };
 
@@ -114,10 +137,14 @@ export function SessionHandoffDialog({
   };
 
   const sourceAgentName = agentName(summaryRequired?.source_agent ?? session.agent);
+  const close = () => {
+    activeRef.current = false;
+    onClose();
+  };
 
   return <div className="modal-backdrop handoff-backdrop" role="presentation">
     <section className="panel handoff-dialog" role="dialog" aria-modal="true" aria-label={tr("handoff.title")}>
-      <header><div><span className="eyebrow">Session Handoff</span><h2>{tr("handoff.title")}</h2><p>{tr("handoff.description")}</p></div><button className="icon-button" onClick={onClose} aria-label={tr("common.close")}><X size={17} /></button></header>
+      <header><div><span className="eyebrow">Session Handoff</span><h2>{tr("handoff.title")}</h2><p>{tr("handoff.description")}</p></div><button className="icon-button" onClick={close} aria-label={tr("common.close")}><X size={17} /></button></header>
       {error && <div className="alert"><CircleAlert size={15} />{error}</div>}
       {draft ? <div className="handoff-preview">
         <div className="handoff-safety"><ShieldCheck size={16} /><span>{tr("handoff.redacted", { count: draft.redaction_count })}</span><code>{draft.filename}</code></div>

@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeI18n } from "../i18n";
 import { api } from "../api";
-import type { ConversationSessionSummary, SessionHandoffPreparation, WorkspaceSummary } from "../types";
+import type { ConversationSessionSummary, PlannedSessionHandoff, SessionHandoffPreparation, WorkspaceSummary } from "../types";
 import { WorkspaceSessionsPage } from "./WorkspaceSessionsPage";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
@@ -29,6 +29,14 @@ const workspace: WorkspaceSummary = {
   asset_count: 0,
   warning_count: 0,
   sources: [],
+};
+
+const plannedHandoff: PlannedSessionHandoff = {
+  change_set: {
+    id: "changes", project_root: workspace.path, created_at: "2026-08-18T00:00:00Z",
+    changes: [], requires_home_approval: false,
+  },
+  launch_request: { workspace_id: workspace.id, filename: "handoff.md", target_agent: "claude-code" },
 };
 
 const sessions: ConversationSessionSummary[] = [
@@ -94,13 +102,7 @@ beforeEach(async () => {
   vi.mocked(api.sanitizeSessionHandoff).mockImplementation(async (_format, content) => (
     content.replace("TOKEN=private", "TOKEN= [REDACTED]")
   ));
-  vi.mocked(api.planSessionHandoff).mockResolvedValue({
-    change_set: {
-      id: "changes", project_root: workspace.path, created_at: "2026-08-18T00:00:00Z",
-      changes: [], requires_home_approval: false,
-    },
-    launch_request: { workspace_id: workspace.id, filename: "handoff.md", target_agent: "claude-code" },
-  });
+  vi.mocked(api.planSessionHandoff).mockResolvedValue(plannedHandoff);
 });
 
 afterEach(() => {
@@ -186,6 +188,28 @@ describe("WorkspaceSessionsPage", () => {
       change_set: expect.objectContaining({ id: "changes" }),
       launch_request: expect.objectContaining({ target_agent: "claude-code" }),
     }));
+  });
+
+  it("ignores a handoff plan that finishes after the dialog closes", async () => {
+    let resolvePlan: ((value: PlannedSessionHandoff) => void) | undefined;
+    vi.mocked(api.planSessionHandoff).mockImplementationOnce(() => (
+      new Promise<PlannedSessionHandoff>((resolve) => { resolvePlan = resolve; })
+    ));
+    const onHandoffPlanned = vi.fn();
+    render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={onHandoffPlanned} />);
+    expect(await screen.findByText("Visible message")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create handoff" }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare handoff" }));
+    expect(await screen.findByDisplayValue("# Agent handoff")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review save changes" }));
+    await waitFor(() => expect(api.planSessionHandoff).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "Create session handoff" })).not.toBeInTheDocument();
+
+    resolvePlan?.(plannedHandoff);
+    await Promise.resolve();
+    expect(onHandoffPlanned).not.toHaveBeenCalled();
   });
 
   it("freezes the target Agent while preparing a handoff", async () => {
