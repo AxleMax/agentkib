@@ -93,9 +93,18 @@ export function SessionHandoffDialog({
   };
 
   const copy = async () => {
-    await navigator.clipboard?.writeText(content);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1200);
+    setBusy(true);
+    setError("");
+    try {
+      const sanitized = await api.sanitizeSessionHandoff(format, content);
+      await navigator.clipboard?.writeText(sanitized);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch (reason) {
+      setError(localizeMessage(reason));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const reset = () => {
@@ -126,7 +135,7 @@ export function SessionHandoffDialog({
           <details className="handoff-advanced"><summary>{tr("handoff.advanced")}</summary><label>{tr("handoff.format")}<select value={format} onChange={(event) => setFormat(event.target.value as HandoffFormat)}><option value="markdown">Markdown</option><option value="json">JSON</option></select></label></details>
         </div>
       </div>}
-      <footer>{draft ? <><button className="ghost" onClick={reset}>{tr("common.back")}</button><button className="ghost" onClick={() => void copy()}><Copy size={14} />{tr(copied ? "handoff.copied" : "handoff.copy")}</button><button className="primary" disabled={busy} onClick={() => void plan()}><FileOutput size={14} />{tr("handoff.reviewSave")}</button></> : summaryRequired ? <><button className="ghost" disabled={busy} onClick={() => setSummaryRequired(undefined)}>{tr("common.cancel")}</button><button className="primary" disabled={busy} onClick={() => void summarize()}><Sparkles size={14} />{tr(summarizing ? "handoff.summarizing" : "handoff.summarizeWith", { agent: sourceAgentName })}</button></> : <button className="primary" disabled={busy} onClick={() => void prepare()}><FileOutput size={14} />{tr(busy ? "common.loading" : "handoff.prepare")}</button>}</footer>
+      <footer>{draft ? <><button className="ghost" onClick={reset}>{tr("common.back")}</button><button className="ghost" disabled={busy} onClick={() => void copy()}><Copy size={14} />{tr(copied ? "handoff.copied" : "handoff.copy")}</button><button className="primary" disabled={busy} onClick={() => void plan()}><FileOutput size={14} />{tr("handoff.reviewSave")}</button></> : summaryRequired ? <><button className="ghost" disabled={busy} onClick={() => setSummaryRequired(undefined)}>{tr("common.cancel")}</button><button className="primary" disabled={busy} onClick={() => void summarize()}><Sparkles size={14} />{tr(summarizing ? "handoff.summarizing" : "handoff.summarizeWith", { agent: sourceAgentName })}</button></> : <button className="primary" disabled={busy} onClick={() => void prepare()}><FileOutput size={14} />{tr(busy ? "common.loading" : "handoff.prepare")}</button>}</footer>
     </section>
   </div>;
 }

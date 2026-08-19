@@ -16,6 +16,7 @@ vi.mock("../api", () => ({
     sessionEvents: vi.fn(),
     prepareSessionHandoff: vi.fn(),
     summarizeSessionHandoff: vi.fn(),
+    sanitizeSessionHandoff: vi.fn(),
     planSessionHandoff: vi.fn(),
   },
 }));
@@ -90,6 +91,9 @@ beforeEach(async () => {
     filename: "handoff.md", format: "markdown", content: "# Summary", redaction_count: 1,
     included_message_count: 201, omitted_tool_count: 3, context_source: "model-summary", warnings: [],
   });
+  vi.mocked(api.sanitizeSessionHandoff).mockImplementation(async (_format, content) => (
+    content.replace("TOKEN=private", "TOKEN= [REDACTED]")
+  ));
   vi.mocked(api.planSessionHandoff).mockResolvedValue({
     change_set: {
       id: "changes", project_root: workspace.path, created_at: "2026-08-18T00:00:00Z",
@@ -168,12 +172,15 @@ describe("WorkspaceSessionsPage", () => {
     expect(await screen.findByDisplayValue("# Agent handoff")).toBeInTheDocument();
     expect(screen.getByText(/1 sensitive values redacted/)).toBeInTheDocument();
     expect(screen.getByText(/This session has not been compacted/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Preview handoff"), { target: { value: "# Edited handoff" } });
+    fireEvent.change(screen.getByLabelText("Preview handoff"), { target: { value: "# Edited handoff\nTOKEN=private" } });
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("# Edited handoff"));
+    await waitFor(() => expect(api.sanitizeSessionHandoff).toHaveBeenCalledWith(
+      "markdown", "# Edited handoff\nTOKEN=private",
+    ));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("# Edited handoff\nTOKEN= [REDACTED]");
     fireEvent.click(screen.getByRole("button", { name: "Review save changes" }));
     await waitFor(() => expect(api.planSessionHandoff).toHaveBeenCalledWith(
-      "workspace", "handoff.md", "markdown", "# Edited handoff", "claude-code",
+      "workspace", "handoff.md", "markdown", "# Edited handoff\nTOKEN=private", "claude-code",
     ));
     expect(onHandoffPlanned).toHaveBeenCalledWith(expect.objectContaining({
       change_set: expect.objectContaining({ id: "changes" }),

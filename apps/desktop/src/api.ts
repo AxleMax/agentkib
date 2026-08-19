@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Achievement, ActivityRecord, AgentInstallation, AgentKind, AgentUsageBreakdown, AppIconPreference, CatalogAsset, ChangeSet, CloseBehavior, ContextDoctorReport, ContextDoctorSummary, ContextPreview, ConversationEventPage, ConversationIndexStatus, ConversationSessionSummary, ExcludedWorkspace, GitCommitPage, GitDiff, GitDiffRequest, GitFileChange, GitHistoryQuery, GitIdentitySummary, GitWorkspaceSummary, HandoffContinuationResult, HandoffFormat, HandoffLaunchReceipt, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, InsightsView, LocalePreference, Manifest, McpHubStatus, McpInstallation, McpInstallResult, McpMigrationCandidate, McpNetworkSettings, McpOAuthStart, McpRegistryEntry, McpRuntimeStatus, McpServerConfig, McpToolDescriptor, MemoryRecord, MemoryStatus, MemoryType, ModelUsageBreakdown, ObsidianIntegration, ObsidianWorkspaceLink, PlannedSessionHandoff, QuotaCollectorStatus, QuotaPopoverPreferences, QuotaSnapshot, QuotaWindowSelector, RefreshJobStatus, RefreshKind, RefreshReceipt, RemoteGatewayInput, RemoteGatewaySummary, RepositoryCommitBreakdown, RuntimeInfo, ScanRoot, SessionHandoffDraft, SessionHandoffLaunchRequest, SessionHandoffPreparation, SessionHandoffRequest, StorageNode, StorageOverview, ThemePreference, WorkspaceOpener, WorkspaceScan, WorkspaceSummary, WorkspaceUsageBreakdown } from "./types";
 
+const DOCTOR_SUMMARY_BATCH_LIMIT = 100;
+
 export const api = {
   scan: (project: string) => invoke<WorkspaceScan>("scan_workspace", { project }),
   manifest: async (project: string) => {
@@ -63,6 +65,7 @@ export const api = {
   sessionEvents: (sessionId: string, cursor?: string, limit = 100) => invoke<ConversationEventPage>("read_session_events", { sessionId, cursor, limit }),
   prepareSessionHandoff: (request: SessionHandoffRequest) => invoke<SessionHandoffPreparation>("prepare_session_handoff", { request }),
   summarizeSessionHandoff: (request: SessionHandoffRequest) => invoke<SessionHandoffDraft>("summarize_session_handoff", { request }),
+  sanitizeSessionHandoff: (format: HandoffFormat, editedContent: string) => invoke<string>("sanitize_session_handoff", { format, editedContent }),
   planSessionHandoff: (workspaceId: string, filename: string, format: HandoffFormat, editedContent: string, targetAgent: AgentKind) => invoke<PlannedSessionHandoff>("plan_session_handoff", { workspaceId, filename, format, editedContent, targetAgent }),
   continueSessionHandoff: (changeSet: ChangeSet, launchRequest: SessionHandoffLaunchRequest) => invoke<HandoffContinuationResult>("continue_session_handoff", { changeSet, launchRequest }),
   launchSessionHandoff: (launchRequest: SessionHandoffLaunchRequest) => invoke<HandoffLaunchReceipt>("launch_session_handoff", { launchRequest }),
@@ -89,7 +92,15 @@ export const api = {
   removeScanRoot: (id: string) => invoke<void>("remove_scan_root", { id }),
   agentInstallations: () => invoke<AgentInstallation[]>("list_agent_installations"),
   workspaceDoctorReport: (workspaceId: string) => invoke<ContextDoctorReport>("get_workspace_doctor_report", { workspaceId }),
-  workspaceDoctorSummaries: (workspaceIds: string[]) => invoke<ContextDoctorSummary[]>("get_workspace_doctor_summaries", { workspaceIds }),
+  workspaceDoctorSummaries: async (workspaceIds: string[]) => {
+    const summaries: ContextDoctorSummary[] = [];
+    for (let offset = 0; offset < workspaceIds.length; offset += DOCTOR_SUMMARY_BATCH_LIMIT) {
+      summaries.push(...await invoke<ContextDoctorSummary[]>("get_workspace_doctor_summaries", {
+        workspaceIds: workspaceIds.slice(offset, offset + DOCTOR_SUMMARY_BATCH_LIMIT),
+      }));
+    }
+    return summaries;
+  },
   catalogAssets: (query = "", agent?: AgentKind, workspaceId?: string, limit = 500) => invoke<CatalogAsset[]>("search_catalog_assets", { query, agent, workspaceId, limit }),
   globalMemories: (status?: MemoryStatus) => invoke<MemoryRecord[]>("list_global_memories", { status }),
   activity: (limit = 200) => invoke<ActivityRecord[]>("list_activity", { limit }),

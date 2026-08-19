@@ -115,6 +115,21 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("get_workspace_doctor_report", { workspaceId: "workspace-1" });
   });
 
+  it("batches Doctor summaries within the backend limit", async () => {
+    const workspaceIds = Array.from({ length: 201 }, (_, index) => `workspace-${index}`);
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(workspaceIds.slice(0, 100).map((workspace_id) => ({ workspace_id })))
+      .mockResolvedValueOnce(workspaceIds.slice(100, 200).map((workspace_id) => ({ workspace_id })))
+      .mockResolvedValueOnce(workspaceIds.slice(200).map((workspace_id) => ({ workspace_id })));
+
+    await expect(api.workspaceDoctorSummaries(workspaceIds)).resolves.toHaveLength(201);
+
+    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(invoke).toHaveBeenNthCalledWith(1, "get_workspace_doctor_summaries", { workspaceIds: workspaceIds.slice(0, 100) });
+    expect(invoke).toHaveBeenNthCalledWith(2, "get_workspace_doctor_summaries", { workspaceIds: workspaceIds.slice(100, 200) });
+    expect(invoke).toHaveBeenNthCalledWith(3, "get_workspace_doctor_summaries", { workspaceIds: workspaceIds.slice(200) });
+  });
+
   it("previews handoffs before planning a ChangeSet save", async () => {
     vi.mocked(invoke).mockResolvedValue({ status: "ready", draft: { filename: "handoff.md", content: "# handoff" } });
     const request = { session_id: "hashed-session", target_agent: "claude-code" as const, format: "markdown" as const };
@@ -124,6 +139,12 @@ describe("AgentKib API boundary", () => {
 
     await api.summarizeSessionHandoff(request);
     expect(invoke).toHaveBeenCalledWith("summarize_session_handoff", { request });
+
+    await api.sanitizeSessionHandoff("markdown", "# edited handoff");
+    expect(invoke).toHaveBeenCalledWith("sanitize_session_handoff", {
+      format: "markdown",
+      editedContent: "# edited handoff",
+    });
 
     await api.planSessionHandoff("workspace-1", "handoff.md", "markdown", "# handoff", "claude-code");
     expect(invoke).toHaveBeenCalledWith("plan_session_handoff", {

@@ -1000,6 +1000,18 @@ async fn summarize_session_handoff(
 }
 
 #[tauri::command]
+fn sanitize_session_handoff(
+    format: HandoffFormat,
+    edited_content: String,
+) -> CommandResult<String> {
+    sanitize_handoff_export(&edited_content, format, dirs::home_dir().as_deref())
+        .map(|(content, _)| content)
+        .map_err(|error| {
+            LocalizedMessage::with_detail("errors.handoff.prepareFailed", error.to_string())
+        })
+}
+
+#[tauri::command]
 fn plan_session_handoff(
     workspace_id: String,
     filename: String,
@@ -1360,34 +1372,55 @@ fn run_handoff_summary_command(
     let stderr_reader = std::thread::spawn(move || {
         read_bounded_summary_output(stderr, HANDOFF_SUMMARY_ERROR_LIMIT)
     });
-    child
+    let mut stdin = child
         .stdin
         .take()
-        .context("Source Agent stdin is unavailable")?
-        .write_all(input.as_bytes())?;
+        .context("Source Agent stdin is unavailable")?;
+    let input = input.as_bytes().to_vec();
     let started = Instant::now();
-    let success = loop {
+    let stdin_writer = std::thread::spawn(move || stdin.write_all(&input));
+    let mut exit_status = None;
+    let outcome = loop {
         if lifecycle.quitting.load(Ordering::SeqCst) {
-            let _ = process_tree.terminate();
-            let _ = child.wait();
-            anyhow::bail!("Handoff summarization was cancelled because AgentKib is exiting");
+            break Err(anyhow::anyhow!(
+                "Handoff summarization was cancelled because AgentKib is exiting"
+            ));
         }
         if started.elapsed() >= timeout {
-            let _ = process_tree.terminate();
-            let _ = child.wait();
-            anyhow::bail!("Source Agent handoff summarization timed out");
+            break Err(anyhow::anyhow!(
+                "Source Agent handoff summarization timed out"
+            ));
         }
-        if let Some(status) = child.try_wait()? {
-            break status.success();
+        if exit_status.is_none() {
+            match child.try_wait() {
+                Ok(status) => exit_status = status,
+                Err(error) => break Err(error.into()),
+            }
+        }
+        if let Some(status) = exit_status.as_ref()
+            && stdin_writer.is_finished()
+            && stdout_reader.is_finished()
+            && stderr_reader.is_finished()
+        {
+            break Ok(status.success());
         }
         std::thread::sleep(Duration::from_millis(50));
     };
+    if outcome.is_err() {
+        let _ = process_tree.terminate();
+        let _ = child.wait();
+    }
+    let stdin_result = stdin_writer
+        .join()
+        .map_err(|_| anyhow::anyhow!("Source Agent stdin writer panicked"))?;
     let stdout = stdout_reader
         .join()
         .map_err(|_| anyhow::anyhow!("Source Agent stdout reader panicked"))??;
     let _stderr = stderr_reader
         .join()
         .map_err(|_| anyhow::anyhow!("Source Agent stderr reader panicked"))??;
+    let success = outcome?;
+    stdin_result?;
     if !success {
         anyhow::bail!(
             "Source Agent handoff summarization failed; verify its login and configuration"
@@ -4427,6 +4460,7 @@ pub fn run() {
             get_workspace_session_status,
             prepare_session_handoff,
             summarize_session_handoff,
+            sanitize_session_handoff,
             plan_session_handoff,
             continue_session_handoff,
             launch_session_handoff,
@@ -4770,6 +4804,23 @@ mod tests {
         assert!(!lifecycle.tray_available());
         lifecycle.set_tray_available(true);
         assert!(lifecycle.tray_available());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn handoff_summary_timeout_includes_a_blocked_stdin_write() {
+        let lifecycle = LifecycleState::new(&DesktopPreferences::default());
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 10"]);
+        let input = "x".repeat(2 * 1024 * 1024);
+        let started = Instant::now();
+
+        let error =
+            run_handoff_summary_command(command, &input, &lifecycle, Duration::from_millis(100))
+                .unwrap_err();
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[test]
