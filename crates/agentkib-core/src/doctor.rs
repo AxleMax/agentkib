@@ -145,7 +145,7 @@ pub fn diagnose_workspace(
                 .skills
                 .iter()
                 .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
-                .filter(|skill| generated_skill_exists(project, agent, skill))
+                .filter(|skill| generated_skill_is_current(project, agent, skill))
                 .count();
         }
 
@@ -573,7 +573,7 @@ fn diagnose_exact_duplicates(
     }
 }
 
-fn generated_skill_exists(
+fn generated_skill_is_current(
     project: &Path,
     agent: AgentKind,
     skill: &crate::SkillDefinition,
@@ -591,12 +591,20 @@ fn generated_skill_exists(
         .then(|| source.file_name())
         .flatten()
         .unwrap_or_else(|| OsStr::new("SKILL.md"));
+    let source_entrypoint = if source.is_file() {
+        source.clone()
+    } else {
+        source.join(entrypoint)
+    };
+    let ManagedFileHash::Hashed(expected_hash) = hash_managed_file(&source_entrypoint) else {
+        return false;
+    };
     roots.iter().any(|root| {
-        project
-            .join(root)
-            .join(&skill.name)
-            .join(entrypoint)
-            .is_file()
+        let target = project.join(root).join(&skill.name).join(entrypoint);
+        matches!(
+            hash_managed_file(&target),
+            ManagedFileHash::Hashed(actual_hash) if actual_hash == expected_hash
+        )
     })
 }
 
@@ -927,6 +935,72 @@ mod tests {
             .matrix
             .iter()
             .find(|row| row.agent == AgentKind::ClaudeCode)
+            .unwrap();
+        assert_eq!(row.skills.actual, 1);
+    }
+
+    #[test]
+    fn stale_generated_skill_is_not_counted_without_a_recorded_hash() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: vec![AgentKind::Codex],
+        });
+        fs::create_dir_all(dir.path().join("skill-sources/reviewer")).unwrap();
+        fs::write(
+            dir.path().join("skill-sources/reviewer/SKILL.md"),
+            "# Current reviewer",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(".agents/skills/reviewer")).unwrap();
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/SKILL.md"),
+            "# Stale reviewer",
+        )
+        .unwrap();
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let stale = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = stale
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
+            .unwrap();
+        assert_eq!(row.skills.expected, 1);
+        assert_eq!(row.skills.actual, 0);
+        assert!(stale.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Codex) && issue.code == "skill.target-missing"
+        }));
+
+        fs::write(
+            dir.path().join(".agents/skills/reviewer/SKILL.md"),
+            "# Current reviewer",
+        )
+        .unwrap();
+        let current = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let row = current
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Codex)
             .unwrap();
         assert_eq!(row.skills.actual, 1);
     }
