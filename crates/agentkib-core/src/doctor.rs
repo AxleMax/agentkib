@@ -1034,6 +1034,7 @@ mod tests {
             .unwrap();
         assert_eq!(row.skills.actual, 1);
 
+        fs::create_dir_all(dir.path().join(".agents/skills/reviewer/scripts")).unwrap();
         fs::write(
             dir.path()
                 .join(".agents/skills/reviewer/scripts/removed.sh"),
