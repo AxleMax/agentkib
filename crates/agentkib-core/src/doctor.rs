@@ -20,6 +20,7 @@ use crate::{
 const MAX_MANAGED_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_MANAGED_SKILL_FILES: usize = 512;
 const MAX_MANAGED_SKILL_BYTES: u64 = 32 * 1024 * 1024;
+const MANAGED_MARKDOWN_START: &str = "<!-- agentkib:managed:start -->";
 
 pub fn diagnose_workspace(
     project: &Path,
@@ -92,6 +93,11 @@ pub fn diagnose_workspace(
             .iter()
             .find(|item| item.agent == agent)
             .is_some_and(|item| item.detected);
+        let native_configuration_valid = scan
+            .agents
+            .iter()
+            .find(|item| item.agent == agent)
+            .is_none_or(|item| item.warnings.is_empty());
         let installed = installed_agents.contains(&agent);
         let applicable = detected || installed;
         let writable = AgentKind::WRITABLE.contains(&agent);
@@ -217,6 +223,21 @@ pub fn diagnose_workspace(
                                 continue;
                             }
                             missing_instruction_reported |= missing_instruction;
+                            let repairable = missing_instruction
+                                && enabled
+                                && writable
+                                && expected_here.iter().all(
+                                    |(_, (expected_cwd, expected, scoped))| {
+                                        instruction_fragment_can_be_repaired(
+                                            project,
+                                            expected_cwd,
+                                            agent,
+                                            manifest,
+                                            expected,
+                                            *scoped,
+                                        )
+                                    },
+                                );
                             push_issue(
                                 &mut issues,
                                 if missing_instruction {
@@ -227,7 +248,7 @@ pub fn diagnose_workspace(
                                 DoctorSeverity::Warning,
                                 Some(agent),
                                 Some(AssetKind::Instruction),
-                                missing_instruction && enabled && writable,
+                                repairable,
                                 Some(cwd.clone()),
                                 warning,
                                 None,
@@ -267,18 +288,30 @@ pub fn diagnose_workspace(
             let native_section_refs = native_sections.iter().collect::<Vec<_>>();
             diagnose_exact_duplicates(agent, &native_section_refs, &mut issues);
             if instruction_actual < instruction_expected && !missing_instruction_reported {
-                let evidence_path = expected_instruction_fragments
+                let missing_fragments = expected_instruction_fragments
                     .iter()
                     .enumerate()
-                    .find(|(index, _)| !satisfied_fragments.contains(index))
+                    .filter(|(index, _)| !satisfied_fragments.contains(index))
+                    .collect::<Vec<_>>();
+                let evidence_path = missing_fragments
+                    .first()
                     .map(|(_, (cwd, _, _))| cwd.clone());
+                let repairable = enabled
+                    && writable
+                    && missing_fragments
+                        .iter()
+                        .all(|(_, (cwd, expected, scoped))| {
+                            instruction_fragment_can_be_repaired(
+                                project, cwd, agent, manifest, expected, *scoped,
+                            )
+                        });
                 push_issue(
                     &mut issues,
                     "instruction.expected-content-missing",
                     DoctorSeverity::Warning,
                     Some(agent),
                     Some(AssetKind::Instruction),
-                    enabled && writable,
+                    repairable,
                     evidence_path,
                     "Configured instructions are not present in native context sources".into(),
                     Some(instruction_expected.to_string()),
@@ -340,7 +373,10 @@ pub fn diagnose_workspace(
                 DoctorSeverity::Warning,
                 Some(agent),
                 Some(AssetKind::Connection),
-                enabled && writable,
+                enabled
+                    && writable
+                    && native_configuration_valid
+                    && mcp_target_can_be_repaired(project, agent),
                 None,
                 "Manifest MCP connections are not all visible to the target Agent".into(),
                 Some(
@@ -578,6 +614,107 @@ fn diagnose_exact_duplicates(
             );
         }
     }
+}
+
+fn instruction_fragment_can_be_repaired(
+    project: &Path,
+    cwd: &Path,
+    agent: AgentKind,
+    manifest: Option<&Manifest>,
+    expected: &str,
+    scoped: bool,
+) -> bool {
+    let platform_override = manifest
+        .and_then(|manifest| manifest.instructions.platform_overrides.get(&agent))
+        .filter(|content| !content.trim().is_empty());
+    let is_platform_override = !scoped
+        && equivalent(cwd, project)
+        && platform_override.is_some_and(|content| content.trim() == expected.trim());
+
+    let target = if is_platform_override {
+        match agent {
+            AgentKind::ClaudeCode => cwd.join("CLAUDE.md"),
+            AgentKind::Codex => cwd.join("AGENTS.override.md"),
+            AgentKind::Cursor => cwd.join(".cursor/rules/agentkib.mdc"),
+            AgentKind::OpenClaw => cwd.join("TOOLS.md"),
+            AgentKind::Hermes => cwd.join(".hermes.md"),
+            AgentKind::DeepSeekHarness => return false,
+        }
+    } else {
+        match agent {
+            AgentKind::ClaudeCode => cwd.join("CLAUDE.md"),
+            AgentKind::Codex => {
+                let override_path = cwd.join("AGENTS.override.md");
+                if override_path.is_file() {
+                    if !equivalent(cwd, project) {
+                        return false;
+                    }
+                    override_path
+                } else {
+                    cwd.join("AGENTS.md")
+                }
+            }
+            AgentKind::Cursor | AgentKind::OpenClaw => cwd.join("AGENTS.md"),
+            AgentKind::Hermes => {
+                let private = cwd.join(".hermes.md");
+                let legacy = cwd.join("HERMES.md");
+                if private.is_file() || legacy.is_file() {
+                    let planner_updates_private = equivalent(cwd, project)
+                        && (platform_override.is_some() || has_managed_markdown(&private));
+                    if !planner_updates_private {
+                        return false;
+                    }
+                    private
+                } else {
+                    cwd.join("AGENTS.md")
+                }
+            }
+            AgentKind::DeepSeekHarness => return false,
+        }
+    };
+
+    planned_instruction_file_is_safe(project, &target)
+}
+
+fn mcp_target_can_be_repaired(project: &Path, agent: AgentKind) -> bool {
+    let target = match agent {
+        AgentKind::Codex => project.join(".codex/config.toml"),
+        AgentKind::ClaudeCode => project.join(".mcp.json"),
+        AgentKind::Cursor => project.join(".cursor/mcp.json"),
+        AgentKind::OpenClaw | AgentKind::Hermes | AgentKind::DeepSeekHarness => return false,
+    };
+    planned_instruction_file_is_safe(project, &target)
+}
+
+fn planned_instruction_file_is_safe(project: &Path, target: &Path) -> bool {
+    if !target_has_safe_ancestors(project, target) {
+        return false;
+    }
+    match fs::symlink_metadata(target) {
+        Ok(metadata) => metadata.file_type().is_file() && read_bounded_text_file(target).is_some(),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+fn has_managed_markdown(path: &Path) -> bool {
+    read_bounded_text_file(path).is_some_and(|content| content.contains(MANAGED_MARKDOWN_START))
+}
+
+fn read_bounded_text_file(path: &Path) -> Option<String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => metadata,
+        _ => return None,
+    };
+    if metadata.len() > MAX_MANAGED_FILE_BYTES {
+        return None;
+    }
+    let file = fs::File::open(path).ok()?;
+    let mut content = String::new();
+    let read = file
+        .take(MAX_MANAGED_FILE_BYTES + 1)
+        .read_to_string(&mut content)
+        .ok()?;
+    (read as u64 <= MAX_MANAGED_FILE_BYTES).then_some(content)
 }
 
 fn generated_skill_is_current(
@@ -1655,6 +1792,92 @@ mod tests {
     }
 
     #[test]
+    fn hermes_shadowed_instructions_are_only_repairable_when_the_plan_updates_the_selected_source()
+    {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(dir.path().join("HERMES.md"), "Unmanaged Hermes rule").unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let shadowed = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Hermes]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(shadowed.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Hermes)
+                && issue.code == "instruction.expected-content-missing"
+                && !issue.repairable
+        }));
+
+        value
+            .instructions
+            .platform_overrides
+            .insert(AgentKind::Hermes, "Hermes-only rule".into());
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+        let repairable = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Hermes]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(repairable.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Hermes)
+                && issue.code == "instruction.expected-content-missing"
+                && issue.repairable
+        }));
+    }
+
+    #[test]
+    fn codex_scoped_override_that_the_plan_cannot_update_is_not_repairable() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.instructions.shared.clear();
+        value.instructions.scoped.push(crate::ScopedInstruction {
+            path: "packages/api".into(),
+            content: "API-only rule".into(),
+        });
+        fs::create_dir_all(dir.path().join(".agentkib")).unwrap();
+        fs::create_dir_all(dir.path().join("packages/api")).unwrap();
+        fs::write(
+            dir.path().join("packages/api/AGENTS.override.md"),
+            "Unmanaged scoped override",
+        )
+        .unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Codex]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(report.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Codex)
+                && issue.code == "instruction.expected-content-missing"
+                && !issue.repairable
+        }));
+    }
+
+    #[test]
     fn diagnoses_scoped_instructions_from_their_configured_directory() {
         let dir = tempdir().unwrap();
         let mut value = manifest(dir.path());
@@ -1739,12 +1962,11 @@ mod tests {
             &BTreeMap::new(),
         )
         .unwrap();
-        assert!(
-            missing
-                .issues
-                .iter()
-                .any(|issue| issue.code == "mcp.target-missing")
-        );
+        assert!(missing.issues.iter().any(|issue| {
+            issue.code == "mcp.target-missing"
+                && issue.agent == Some(AgentKind::Codex)
+                && issue.repairable
+        }));
         let row = missing
             .matrix
             .iter()
@@ -1775,6 +1997,27 @@ mod tests {
         assert_eq!(row.mcp.expected, 1);
         assert_eq!(row.mcp.actual, 1);
         assert_eq!(row.mcp.status, DoctorStatus::Healthy);
+
+        for agent in [AgentKind::OpenClaw, AgentKind::Hermes] {
+            value.connections[0].targets = vec![agent];
+            fs::write(
+                manifest_path(dir.path()),
+                serde_yaml::to_string(&value).unwrap(),
+            )
+            .unwrap();
+            let home_only = diagnose_workspace(
+                dir.path(),
+                "workspace",
+                &BTreeSet::from([agent]),
+                &BTreeMap::new(),
+            )
+            .unwrap();
+            assert!(home_only.issues.iter().any(|issue| {
+                issue.code == "mcp.target-missing"
+                    && issue.agent == Some(agent)
+                    && !issue.repairable
+            }));
+        }
     }
 
     #[test]

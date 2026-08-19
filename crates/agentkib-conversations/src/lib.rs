@@ -711,37 +711,18 @@ pub fn sanitize_handoff_export(
 }
 
 fn redact_sensitive_line(line: &str, redaction_count: &mut usize) -> String {
-    let lower = line.to_ascii_lowercase();
-    for marker in [
-        "authorization",
-        "cookie",
-        "set-cookie",
-        "api_key",
-        "apikey",
-        "api-key",
-        "access_key",
-        "private_key",
-        "token",
-        "secret",
-        "password",
-        "credential",
-        "database_url",
-        "dsn",
-    ] {
-        for (position, _) in lower.match_indices(marker) {
-            let tail = &line[position + marker.len()..];
-            if let Some(relative) = tail.find(['=', ':']) {
-                let between = tail[..relative].trim();
-                if between
-                    .chars()
-                    .all(|character| matches!(character, '"' | '\'' | '`'))
-                {
-                    let end = position + marker.len() + relative + 1;
-                    *redaction_count += 1;
-                    return format!("{} [REDACTED]", line[..end].trim_end());
-                }
-            }
-        }
+    if let Some(end) = line
+        .char_indices()
+        .find(|(_, character)| matches!(character, '=' | ':'))
+        .and_then(|(position, character)| {
+            let candidate = line[..position].trim().trim_matches(|character: char| {
+                !character.is_ascii_alphanumeric() && !matches!(character, '_' | '-' | ' ' | '\t')
+            });
+            is_sensitive_key(candidate).then_some(position + character.len_utf8())
+        })
+    {
+        *redaction_count += 1;
+        return format!("{} [REDACTED]", line[..end].trim_end());
     }
     let mut output = line.to_string();
     for prefix in ["sk-", "ghp_", "github_pat_", "xoxb-", "xoxp-"] {
@@ -793,26 +774,113 @@ fn sanitize_json_value(
 }
 
 fn is_sensitive_key(key: &str) -> bool {
-    let key = key
+    let normalized = key
         .chars()
         .filter(|character| character.is_ascii_alphanumeric())
         .map(|character| character.to_ascii_lowercase())
         .collect::<String>();
-    [
+    if [
         "authorization",
+        "proxyauthorization",
         "cookie",
+        "cookies",
+        "setcookie",
         "apikey",
+        "apikeys",
         "accesskey",
+        "accesskeys",
+        "accesskeyid",
         "privatekey",
+        "privatekeys",
         "token",
+        "tokens",
+        "accesstoken",
+        "refreshtoken",
+        "idtoken",
+        "authtoken",
+        "bearertoken",
+        "sessiontoken",
+        "tokenvalue",
         "secret",
+        "secrets",
+        "clientsecret",
+        "apisecret",
+        "webhooksecret",
         "password",
+        "passwords",
+        "passwordhash",
+        "passwd",
         "credential",
+        "credentials",
         "databaseurl",
         "dsn",
     ]
+    .contains(&normalized.as_str())
+    {
+        return true;
+    }
+
+    let words = key_words(key);
+    matches!(
+        words.last().map(String::as_str),
+        Some(
+            "authorization"
+                | "cookie"
+                | "cookies"
+                | "token"
+                | "tokens"
+                | "secret"
+                | "secrets"
+                | "password"
+                | "passwords"
+                | "passwd"
+                | "credential"
+                | "credentials"
+        )
+    ) || [
+        &["api", "key"][..],
+        &["access", "key"],
+        &["access", "key", "id"],
+        &["private", "key"],
+        &["database", "url"],
+        &["set", "cookie"],
+    ]
     .iter()
-    .any(|marker| key.contains(marker))
+    .any(|suffix| key_words_end_with(&words, suffix))
+}
+
+fn key_words_end_with(words: &[String], suffix: &[&str]) -> bool {
+    words.len() >= suffix.len()
+        && words[words.len() - suffix.len()..]
+            .iter()
+            .map(String::as_str)
+            .eq(suffix.iter().copied())
+}
+
+fn key_words(key: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut previous_was_lowercase_or_digit = false;
+    for character in key.chars() {
+        if !character.is_ascii_alphanumeric() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+            previous_was_lowercase_or_digit = false;
+            continue;
+        }
+        if character.is_ascii_uppercase() && previous_was_lowercase_or_digit && !current.is_empty()
+        {
+            words.push(std::mem::take(&mut current));
+        }
+        current.push(character.to_ascii_lowercase());
+        previous_was_lowercase_or_digit =
+            character.is_ascii_lowercase() || character.is_ascii_digit();
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }
 
 pub trait ConversationProvider {
@@ -2860,6 +2928,50 @@ mod tests {
         assert!(!json.contains("seventh-secret"));
         assert!(!json.contains("eighth-secret"));
         assert_eq!(redaction_count, 7);
+    }
+
+    #[test]
+    fn json_redaction_preserves_noncredential_key_names() {
+        let content = serde_json::json!({
+            "schema_version": 1,
+            "context": {"messages": []},
+            "token_budget": 4096,
+            "password_policy": "rotate quarterly",
+            "secretary": "Ada",
+            "github_token": "github-secret",
+            "authToken": "auth-secret",
+            "AWS_ACCESS_KEY_ID": "aws-secret"
+        })
+        .to_string();
+
+        let (json, redaction_count) =
+            sanitize_handoff_export(&content, HandoffFormat::Json, None).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["token_budget"], 4096);
+        assert_eq!(value["password_policy"], "rotate quarterly");
+        assert_eq!(value["secretary"], "Ada");
+        assert_eq!(value["github_token"], "[REDACTED]");
+        assert_eq!(value["authToken"], "[REDACTED]");
+        assert_eq!(value["AWS_ACCESS_KEY_ID"], "[REDACTED]");
+        assert_eq!(redaction_count, 3);
+    }
+
+    #[test]
+    fn line_redaction_uses_complete_assignment_keys() {
+        let mut redaction_count = 0;
+        let content = sanitize_handoff_content(
+            "token_budget: 4096\npassword_policy=quarterly\nsecretary: Ada\nGITHUB_TOKEN=private",
+            None,
+            &mut redaction_count,
+        );
+
+        assert!(content.contains("token_budget: 4096"));
+        assert!(content.contains("password_policy=quarterly"));
+        assert!(content.contains("secretary: Ada"));
+        assert!(content.contains("GITHUB_TOKEN= [REDACTED]"));
+        assert!(!content.contains("private"));
+        assert_eq!(redaction_count, 1);
     }
 
     #[test]
