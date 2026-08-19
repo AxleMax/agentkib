@@ -477,22 +477,32 @@ pub fn plan_workspace_changes(
     }
 
     for skill in &manifest.skills {
+        let shared_skill_enabled = [AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
+            .into_iter()
+            .any(|agent| {
+                adapter_enabled(manifest, agent)
+                    && (skill.targets.is_empty() || skill.targets.contains(&agent))
+            });
+        let cursor_private_enabled = adapter_enabled(manifest, AgentKind::Cursor)
+            && (skill.targets.is_empty() || skill.targets.contains(&AgentKind::Cursor))
+            && !shared_skill_enabled;
         for (relative_path, content) in skill_source_files(&root, skill)? {
-            if common_enabled
-                && (skill.targets.is_empty()
-                    || skill.targets.iter().any(|agent| {
-                        matches!(
-                            agent,
-                            AgentKind::Codex
-                                | AgentKind::Cursor
-                                | AgentKind::OpenClaw
-                                | AgentKind::Hermes
-                        )
-                    }))
-            {
+            if shared_skill_enabled {
                 push_change(
                     &mut changes,
                     root.join(".agents/skills")
+                        .join(&skill.name)
+                        .join(&relative_path),
+                    content.clone(),
+                    ChangeScope::Project,
+                    RiskLevel::Low,
+                    validator_for_skill_file(&relative_path),
+                )?;
+            }
+            if cursor_private_enabled {
+                push_change(
+                    &mut changes,
+                    root.join(".cursor/skills")
                         .join(&skill.name)
                         .join(&relative_path),
                     content.clone(),
@@ -1313,7 +1323,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_only_skill_is_written_to_the_shared_skill_directory() {
+    fn cursor_only_skill_is_written_to_the_private_skill_directory() {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join("skill-sources/reviewer")).unwrap();
         fs::write(
@@ -1333,7 +1343,26 @@ mod tests {
         assert!(
             plan.changes
                 .iter()
-                .any(|change| { change.target.ends_with(".agents/skills/reviewer/SKILL.md") })
+                .any(|change| { change.target.ends_with(".cursor/skills/reviewer/SKILL.md") })
+        );
+        assert!(
+            plan.changes
+                .iter()
+                .all(|change| { !change.target.ends_with(".agents/skills/reviewer/SKILL.md") })
+        );
+
+        manifest
+            .adapters
+            .get_mut(&AgentKind::Cursor)
+            .unwrap()
+            .enabled = false;
+        let disabled =
+            plan_workspace_changes(dir.path(), &manifest, &HomeTargets::default()).unwrap();
+        assert!(
+            disabled
+                .changes
+                .iter()
+                .all(|change| { !change.target.ends_with("skills/reviewer/SKILL.md") })
         );
     }
 
