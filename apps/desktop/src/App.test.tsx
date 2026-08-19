@@ -315,6 +315,47 @@ describe("AgentKib desktop", () => {
     expect(within(attention.closest("section")!).getByText("3 configuration warnings")).toBeInTheDocument();
   });
 
+  it("discards a Doctor repair plan after switching workspaces", async () => {
+    const firstWorkspace = {
+      id: "first", path: "/tmp/first", name: "First", status: "attention" as const,
+      asset_count: 0, warning_count: 1, sources: [],
+    };
+    const secondWorkspace = {
+      id: "second", path: "/tmp/second", name: "Second", status: "healthy" as const,
+      asset_count: 0, warning_count: 0, sources: [],
+    };
+    vi.mocked(api.workspaces).mockResolvedValue([firstWorkspace, secondWorkspace]);
+    vi.mocked(api.scan).mockImplementation(async (path) => ({
+      root: path, manifest_exists: true, agents: [], assets: [], warnings: [],
+    }));
+    vi.mocked(api.workspaceDoctorReport).mockResolvedValue({
+      summary: { workspace_id: "first", error_count: 0, warning_count: 1, info_count: 0, repairable_count: 1, checked_at: "2026-08-18T00:00:00Z" },
+      matrix: [],
+      issues: [{ id: "missing", code: "managed.missing", severity: "warning", agent: "codex", asset_kind: "instruction", repairable: true, evidence: [{ path: "/tmp/first/AGENTS.md", detail: "missing" }] }],
+    });
+    let finishPlan!: (value: Awaited<ReturnType<typeof api.plan>>) => void;
+    vi.mocked(api.plan).mockImplementation(() => new Promise((resolve) => { finishPlan = resolve; }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /First \/tmp\/first/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Doctor" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review repairs" }));
+    await waitFor(() => expect(api.plan).toHaveBeenCalledWith("/tmp/first", expect.anything(), false));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Workspaces" }).find((button) => button.classList.contains("breadcrumb"))!);
+    fireEvent.click(await screen.findByRole("button", { name: /Second.*\/tmp\/second/ }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Second" })).toBeInTheDocument());
+    await act(async () => finishPlan({
+      id: "stale-repair", project_root: "/tmp/first", created_at: "2026-08-18T00:00:00Z",
+      requires_home_approval: false,
+      changes: [{ target: "/tmp/first/AGENTS.md", scope: "project", before: "", after: "fixed", risk: "low", validator: "markdown" }],
+    }));
+
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Second" })).toBeInTheDocument();
+    expect(screen.queryByText("stale-repair")).not.toBeInTheDocument();
+  });
+
   it("hides the empty recent activity panel and links every Home metric", async () => {
     vi.mocked(api.workspaces).mockResolvedValue([{
       id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],

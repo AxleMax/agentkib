@@ -63,6 +63,8 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("agentkib.sidebar.collapsed") === "true");
   const [project, setProject] = useState(""); const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummary>();
+  const selectedWorkspaceRef = useRef<{ id: string; path: string } | undefined>(undefined);
+  selectedWorkspaceRef.current = selectedWorkspace ? { id: selectedWorkspace.id, path: selectedWorkspace.path } : undefined;
   const [scan, setScan] = useState<WorkspaceScan>();
   const [manifest, setManifest] = useState<Manifest>();
   const [changeSet, setChangeSet] = useState<ChangeSet>();
@@ -270,9 +272,15 @@ export function App() {
     finally { setBusy(false); }
   };
   const planDoctorRepairs = async () => {
-    if (!project) return;
-    const currentManifest = await api.manifest(project);
-    const changes = await api.plan(project, currentManifest, false);
+    const workspaceId = selectedWorkspace?.id;
+    const workspacePath = project;
+    if (!workspaceId || !workspacePath) return;
+    const isCurrentWorkspace = () => selectedWorkspaceRef.current?.id === workspaceId
+      && selectedWorkspaceRef.current.path === workspacePath;
+    const currentManifest = await api.manifest(workspacePath);
+    if (!isCurrentWorkspace()) return;
+    const changes = await api.plan(workspacePath, currentManifest, false);
+    if (!isCurrentWorkspace()) return;
     setChangeSet(changes);
     setChangeSetOrigin("doctor");
     setHandoffLaunchRequest(undefined);
