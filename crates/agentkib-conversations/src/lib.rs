@@ -1311,7 +1311,7 @@ fn claude_session_from_transcript(path: &Path) -> Result<Option<ClaudeNativeSess
     let mut created_at = None;
     let mut updated_at = metadata.modified().ok().map(DateTime::<Utc>::from);
     let mut git_branch = None;
-    let mut sidechain = false;
+    let mut sidechain_session = None;
     let mut buffer = Vec::new();
 
     for _ in 0..MAX_CLAUDE_HEADER_LINES {
@@ -1342,10 +1342,22 @@ fn claude_session_from_transcript(path: &Path) -> Result<Option<ClaudeNativeSess
                 .and_then(Value::as_str)
                 .map(str::to_owned);
         }
-        sidechain |= value
-            .get("isSidechain")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        if sidechain_session.is_none()
+            && matches!(
+                value.get("type").and_then(Value::as_str),
+                Some("user" | "assistant")
+            )
+        {
+            // Main transcripts can contain sidechain records. The first conversation record
+            // identifies the transcript itself; later record flags must not promote the whole
+            // main session to a sidechain and disable handoff filtering.
+            sidechain_session = Some(
+                value
+                    .get("isSidechain")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            );
+        }
         let timestamp = value.get("timestamp").and_then(parse_json_timestamp);
         created_at = earliest_time(created_at, timestamp);
         updated_at = latest_time(updated_at, timestamp);
@@ -1366,7 +1378,7 @@ fn claude_session_from_transcript(path: &Path) -> Result<Option<ClaudeNativeSess
         updated_at,
         message_count: None,
         git_branch,
-        sidechain,
+        sidechain: sidechain_session.unwrap_or(false),
     }))
 }
 
@@ -2251,6 +2263,60 @@ mod tests {
         assert_eq!(page.events.len(), 2);
         assert_eq!(page.events[0].content.as_deref(), Some("question"));
         assert_eq!(page.events[1].content.as_deref(), Some("answer"));
+    }
+
+    #[test]
+    fn claude_indexless_main_handoff_filters_mixed_sidechain_records() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let projects = dir.path().join("projects/project");
+        fs::create_dir_all(&projects).unwrap();
+        fs::create_dir_all(&workspace).unwrap();
+        let transcript = projects.join("mixed-session.jsonl");
+        let mut file = File::create(&transcript).unwrap();
+        for value in [
+            serde_json::json!({
+                "type":"user",
+                "sessionId":"mixed-session",
+                "cwd":workspace,
+                "message":{"role":"user","content":"main question"}
+            }),
+            serde_json::json!({
+                "type":"assistant",
+                "sessionId":"mixed-session",
+                "cwd":workspace,
+                "isSidechain":true,
+                "message":{"role":"assistant","content":"private sidechain"}
+            }),
+            serde_json::json!({
+                "type":"assistant",
+                "sessionId":"mixed-session",
+                "cwd":workspace,
+                "message":{"role":"assistant","content":"main answer"}
+            }),
+        ] {
+            writeln!(file, "{value}").unwrap();
+        }
+        drop(file);
+
+        let provider = ClaudeProvider::with_home(dir.path().to_path_buf());
+        let sessions = provider.list_sessions(&workspace).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(!sessions[0].sidechain);
+
+        let context = provider.read_handoff_context("mixed-session").unwrap();
+        assert_eq!(context.messages.len(), 2);
+        assert_eq!(
+            context.messages[0].content.as_deref(),
+            Some("main question")
+        );
+        assert_eq!(context.messages[1].content.as_deref(), Some("main answer"));
+        assert!(
+            context
+                .messages
+                .iter()
+                .all(|message| message.content.as_deref() != Some("private sidechain"))
+        );
     }
 
     #[test]
