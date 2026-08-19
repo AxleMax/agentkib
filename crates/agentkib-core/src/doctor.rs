@@ -612,14 +612,16 @@ fn managed_skill_files(source: &Path) -> Option<BTreeMap<PathBuf, String>> {
 
     let mut files = BTreeMap::new();
     let mut total_bytes = 0_u64;
-    for entry in WalkDir::new(source)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| is_safe_scan_entry(entry.path()))
-    {
+    for entry in WalkDir::new(source).follow_links(false) {
         let entry = entry.ok()?;
-        if !entry.file_type().is_file() {
+        if !is_safe_scan_entry(entry.path()) {
+            return None;
+        }
+        if entry.file_type().is_dir() {
             continue;
+        }
+        if !entry.file_type().is_file() {
+            return None;
         }
         if files.len() >= MAX_MANAGED_SKILL_FILES {
             return None;
@@ -1054,6 +1056,34 @@ mod tests {
             .find(|row| row.agent == AgentKind::Codex)
             .unwrap();
         assert_eq!(row.skills.actual, 0);
+
+        #[cfg(unix)]
+        {
+            fs::remove_file(
+                dir.path()
+                    .join(".agents/skills/reviewer/scripts/removed.sh"),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(
+                dir.path().join("skill-sources/reviewer/SKILL.md"),
+                dir.path()
+                    .join(".agents/skills/reviewer/scripts/removed.sh"),
+            )
+            .unwrap();
+            let symlink = diagnose_workspace(
+                dir.path(),
+                "workspace",
+                &BTreeSet::from([AgentKind::Codex]),
+                &BTreeMap::new(),
+            )
+            .unwrap();
+            let row = symlink
+                .matrix
+                .iter()
+                .find(|row| row.agent == AgentKind::Codex)
+                .unwrap();
+            assert_eq!(row.skills.actual, 0);
+        }
     }
 
     #[test]
