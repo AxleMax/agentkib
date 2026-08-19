@@ -164,13 +164,13 @@ pub fn diagnose_workspace(
                 .skills
                 .iter()
                 .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
-                .filter(|skill| generated_skill_is_current(project, agent, skill))
+                .filter(|skill| generated_skill_is_current(project, manifest, agent, skill))
                 .count();
             skill_repairable = manifest
                 .skills
                 .iter()
                 .filter(|skill| skill.targets.is_empty() || skill.targets.contains(&agent))
-                .filter(|skill| !generated_skill_is_current(project, agent, skill))
+                .filter(|skill| !generated_skill_is_current(project, manifest, agent, skill))
                 .all(|skill| generated_skill_can_be_repaired(project, manifest, agent, skill));
         }
 
@@ -631,6 +631,30 @@ fn instruction_fragment_can_be_repaired(
         && equivalent(cwd, project)
         && platform_override.is_some_and(|content| content.trim() == expected.trim());
 
+    if agent == AgentKind::ClaudeCode && !is_platform_override {
+        let Some(manifest) = manifest else {
+            return false;
+        };
+        let shared_instructions_are_planned = [
+            AgentKind::Codex,
+            AgentKind::Cursor,
+            AgentKind::OpenClaw,
+            AgentKind::Hermes,
+        ]
+        .into_iter()
+        .any(|agent| {
+            manifest
+                .adapters
+                .get(&agent)
+                .is_none_or(|state| state.enabled)
+        });
+        if !shared_instructions_are_planned
+            || !planned_instruction_file_is_safe(project, &cwd.join("AGENTS.md"))
+        {
+            return false;
+        }
+    }
+
     let target = if is_platform_override {
         match agent {
             AgentKind::ClaudeCode => cwd.join("CLAUDE.md"),
@@ -719,6 +743,7 @@ fn read_bounded_text_file(path: &Path) -> Option<String> {
 
 fn generated_skill_is_current(
     project: &Path,
+    manifest: &Manifest,
     agent: AgentKind,
     skill: &crate::SkillDefinition,
 ) -> bool {
@@ -733,11 +758,50 @@ fn generated_skill_is_current(
     let Some(source_files) = managed_skill_files(project, &source) else {
         return false;
     };
+    if agent == AgentKind::Cursor {
+        let expected_root = cursor_skill_root(manifest, skill);
+        let expected_target = project.join(expected_root).join(&skill.name);
+        if managed_skill_files(project, &expected_target)
+            .is_none_or(|target_files| target_files != source_files)
+        {
+            return false;
+        }
+        return roots
+            .iter()
+            .filter(|root| **root != expected_root)
+            .all(|root| {
+                let alternate = project.join(root).join(&skill.name);
+                match fs::symlink_metadata(&alternate) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                    Ok(_) => managed_skill_files(project, &alternate)
+                        .is_some_and(|target_files| target_files == source_files),
+                    Err(_) => false,
+                }
+            });
+    }
+
     roots.iter().any(|root| {
         let target = project.join(root).join(&skill.name);
         managed_skill_files(project, &target)
             .is_some_and(|target_files| target_files == source_files)
     })
+}
+
+fn cursor_skill_root(manifest: &Manifest, skill: &crate::SkillDefinition) -> &'static str {
+    let shared_skill_enabled = [AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
+        .into_iter()
+        .any(|shared_agent| {
+            manifest
+                .adapters
+                .get(&shared_agent)
+                .is_none_or(|state| state.enabled)
+                && (skill.targets.is_empty() || skill.targets.contains(&shared_agent))
+        });
+    if shared_skill_enabled {
+        ".agents/skills"
+    } else {
+        ".cursor/skills"
+    }
 }
 
 fn managed_skill_files(project: &Path, source: &Path) -> Option<BTreeMap<PathBuf, String>> {
@@ -827,26 +891,26 @@ fn generated_skill_can_be_repaired(
     };
     let relative_root = match agent {
         AgentKind::ClaudeCode => ".claude/skills",
-        AgentKind::Cursor => {
-            let shared_skill_enabled = [AgentKind::Codex, AgentKind::OpenClaw, AgentKind::Hermes]
-                .into_iter()
-                .any(|shared_agent| {
-                    manifest
-                        .adapters
-                        .get(&shared_agent)
-                        .is_none_or(|state| state.enabled)
-                        && (skill.targets.is_empty() || skill.targets.contains(&shared_agent))
-                });
-            if shared_skill_enabled {
-                ".agents/skills"
-            } else {
-                ".cursor/skills"
-            }
-        }
+        AgentKind::Cursor => cursor_skill_root(manifest, skill),
         AgentKind::Codex | AgentKind::OpenClaw | AgentKind::Hermes => ".agents/skills",
         AgentKind::DeepSeekHarness => return false,
     };
     let target = project.join(relative_root).join(&skill.name);
+    if agent == AgentKind::Cursor {
+        for root in [".cursor/skills", ".agents/skills"] {
+            if root == relative_root {
+                continue;
+            }
+            let alternate = project.join(root).join(&skill.name);
+            match fs::symlink_metadata(&alternate) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_)
+                    if managed_skill_files(project, &alternate)
+                        .is_some_and(|files| files == source_files) => {}
+                _ => return false,
+            }
+        }
+    }
     if !target_has_safe_ancestors(project, &target) {
         return false;
     }
@@ -1649,6 +1713,52 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn stale_private_cursor_skill_is_not_hidden_by_the_current_shared_copy() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        value.skills.push(SkillDefinition {
+            name: "reviewer".into(),
+            path: "skill-sources/reviewer".into(),
+            targets: Vec::new(),
+        });
+        for (path, content) in [
+            ("skill-sources/reviewer/SKILL.md", "# Current reviewer"),
+            (".agents/skills/reviewer/SKILL.md", "# Current reviewer"),
+            (".cursor/skills/reviewer/SKILL.md", "# Stale reviewer"),
+        ] {
+            let path = dir.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::Cursor]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        let row = report
+            .matrix
+            .iter()
+            .find(|row| row.agent == AgentKind::Cursor)
+            .unwrap();
+        assert_eq!(row.skills.actual, 0);
+        assert!(report.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::Cursor)
+                && issue.code == "skill.target-missing"
+                && !issue.repairable
+        }));
+    }
+
     #[cfg(unix)]
     #[test]
     fn missing_skill_through_symlinked_parent_is_not_repairable() {
@@ -1873,6 +1983,43 @@ mod tests {
         assert!(report.issues.iter().any(|issue| {
             issue.agent == Some(AgentKind::Codex)
                 && issue.code == "instruction.expected-content-missing"
+                && !issue.repairable
+        }));
+    }
+
+    #[test]
+    fn claude_only_shared_instruction_is_not_offered_an_ineffective_repair() {
+        let dir = tempdir().unwrap();
+        let mut value = manifest(dir.path());
+        for agent in [
+            AgentKind::Codex,
+            AgentKind::Cursor,
+            AgentKind::OpenClaw,
+            AgentKind::Hermes,
+        ] {
+            value.adapters.get_mut(&agent).unwrap().enabled = false;
+        }
+        fs::create_dir(dir.path().join(".agentkib")).unwrap();
+        fs::write(
+            manifest_path(dir.path()),
+            serde_yaml::to_string(&value).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_workspace(
+            dir.path(),
+            "workspace",
+            &BTreeSet::from([AgentKind::ClaudeCode]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(report.issues.iter().any(|issue| {
+            issue.agent == Some(AgentKind::ClaudeCode)
+                && matches!(
+                    issue.code.as_str(),
+                    "instruction.missing" | "instruction.expected-content-missing"
+                )
                 && !issue.repairable
         }));
     }
