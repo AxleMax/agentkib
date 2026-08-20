@@ -26,7 +26,7 @@ export function AppSidebar<T extends string>({
   return (
     <aside className="sidebar" aria-hidden={collapsed} inert={collapsed ? true : undefined}>
       <div className="brand">
-        <strong>AgentKib</strong>
+        <span className="brand-name">AgentKib</span>
       </div>
       <nav aria-label={tr("common.primaryNavigation")}>
         {entries.map(({ id, label, icon: Icon, badge }) => (

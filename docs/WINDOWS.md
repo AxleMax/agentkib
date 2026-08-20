@@ -141,10 +141,12 @@ target\release\bundle\nsis\*.exe
 应用数据默认存放在：
 
 ```text
-%LOCALAPPDATA%\com.agentkib.desktop
+%LOCALAPPDATA%\ai.agentkib
 ```
 
 其中包含 SQLite 数据库、MCP 包和本机设置。卸载前如需保留数据，请备份该目录。不要把这个目录、`node_modules`、`target` 或安装包提交到 Git。
+
+从旧预览版首次启动时，如果新目录尚不存在，AgentKib 会将旧数据目录一次性迁移到上述位置；已存在的新目录不会被覆盖。
 
 ## 七、常见问题
 
@@ -182,7 +184,7 @@ pnpm dev
 
 ### 窗口空白或 WebView2 报错
 
-更新、修复或重新安装 WebView2 Evergreen Runtime 111+，然后删除开发构建缓存并重新编译。不要删除 `%LOCALAPPDATA%\com.agentkib.desktop`，除非已经备份并确定要清空应用数据。
+更新、修复或重新安装 WebView2 Evergreen Runtime 111+，然后删除开发构建缓存并重新编译。不要删除 `%LOCALAPPDATA%\ai.agentkib`，除非已经备份并确定要清空应用数据。
 
 ### `localhost:1420` 端口被占用
 

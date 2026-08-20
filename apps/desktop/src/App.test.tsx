@@ -682,7 +682,7 @@ describe("AgentKib desktop", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Project" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(await screen.findByRole("heading", { name: "General" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back to AgentKib" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(await screen.findByRole("heading", { name: "Project" })).toBeInTheDocument();
   });
 

@@ -32,6 +32,10 @@ pub struct Store {
     connection: Connection,
 }
 
+const APP_DATA_DIRECTORY: &str = "ai.agentkib";
+// Remove after every supported preview build has migrated to `APP_DATA_DIRECTORY`.
+const LEGACY_APP_DATA_DIRECTORY: &str = "com.agentkib.desktop";
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -3047,7 +3051,34 @@ fn row_to_catalog_asset(row: &Row<'_>) -> rusqlite::Result<CatalogAsset> {
 pub fn default_data_dir() -> Result<PathBuf> {
     let base =
         dirs::data_local_dir().context("Could not determine the local app data directory")?;
-    Ok(base.join("com.agentkib.desktop"))
+    migrate_legacy_data_dir(&base)
+}
+
+fn migrate_legacy_data_dir(base: &Path) -> Result<PathBuf> {
+    let current = base.join(APP_DATA_DIRECTORY);
+    if current.exists() {
+        return Ok(current);
+    }
+
+    let legacy = base.join(LEGACY_APP_DATA_DIRECTORY);
+    if !legacy.exists() {
+        return Ok(current);
+    }
+
+    if let Err(error) = fs::rename(&legacy, &current) {
+        // Another startup path may have won the same one-time migration race.
+        if current.exists() && !legacy.exists() {
+            return Ok(current);
+        }
+        return Err(error).with_context(|| {
+            format!(
+                "Could not migrate AgentKib data from {} to {}",
+                legacy.display(),
+                current.display()
+            )
+        });
+    }
+    Ok(current)
 }
 
 pub fn default_database_path() -> Result<PathBuf> {
@@ -3144,6 +3175,41 @@ mod tests {
                 params![day, agent, workspace_id, sessions],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn legacy_app_data_is_moved_to_the_current_identifier() {
+        let base = tempdir().unwrap();
+        let legacy = base.path().join(LEGACY_APP_DATA_DIRECTORY);
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("agentkib.db"), b"preview data").unwrap();
+
+        let current = migrate_legacy_data_dir(base.path()).unwrap();
+
+        assert_eq!(current, base.path().join(APP_DATA_DIRECTORY));
+        assert_eq!(
+            fs::read(current.join("agentkib.db")).unwrap(),
+            b"preview data"
+        );
+        assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn legacy_app_data_never_overwrites_the_current_identifier() {
+        let base = tempdir().unwrap();
+        let current = base.path().join(APP_DATA_DIRECTORY);
+        let legacy = base.path().join(LEGACY_APP_DATA_DIRECTORY);
+        fs::create_dir_all(&current).unwrap();
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(current.join("preferences.json"), b"current").unwrap();
+        fs::write(legacy.join("preferences.json"), b"legacy").unwrap();
+
+        assert_eq!(migrate_legacy_data_dir(base.path()).unwrap(), current);
+        assert_eq!(
+            fs::read(current.join("preferences.json")).unwrap(),
+            b"current"
+        );
+        assert!(legacy.exists());
     }
 
     #[test]
