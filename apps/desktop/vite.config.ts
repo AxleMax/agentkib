@@ -1,17 +1,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import path from "node:path";
 
 const runtime = globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined> } };
 const env = runtime.process?.env ?? {};
 
-export default defineConfig({
-  plugins: [react()],
+const config = {
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src") } },
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   envPrefix: ["VITE_", "TAURI_ENV_"],
+  test: { setupFiles: ["./src/test-setup.ts"] },
   build: {
-    target: env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
-    minify: env.TAURI_ENV_DEBUG ? false : "esbuild",
+    target: env.TAURI_ENV_PLATFORM === "windows" ? "chrome111" : "safari16.4",
+    minify: env.TAURI_ENV_DEBUG ? false : "esbuild" as const,
     sourcemap: Boolean(env.TAURI_ENV_DEBUG),
     rollupOptions: {
       output: {
@@ -24,4 +28,6 @@ export default defineConfig({
       },
     },
   },
-});
+};
+
+export default defineConfig(config);

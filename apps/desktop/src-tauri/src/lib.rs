@@ -2820,19 +2820,23 @@ fn application_icon(preference: AppIconPreference) -> tauri::image::Image<'stati
 }
 
 #[cfg(target_os = "macos")]
+fn application_icon_png(preference: AppIconPreference) -> &'static [u8] {
+    match preference {
+        AppIconPreference::White => include_bytes!("../icons/app-icon-white-macos.png"),
+        AppIconPreference::Black => include_bytes!("../icons/app-icon-black-macos.png"),
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn apply_application_icon(app: &AppHandle, preference: AppIconPreference) -> tauri::Result<()> {
     use objc2::{AllocAnyThread, MainThreadMarker};
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSData;
 
-    let bytes: &'static [u8] = match preference {
-        AppIconPreference::White => include_bytes!("../icons/app-icon-white.png"),
-        AppIconPreference::Black => include_bytes!("../icons/app-icon-black.png"),
-    };
     app.run_on_main_thread(move || {
         let marker = unsafe { MainThreadMarker::new_unchecked() };
         let application = NSApplication::sharedApplication(marker);
-        let data = NSData::with_bytes(bytes);
+        let data = NSData::with_bytes(application_icon_png(preference));
         if let Some(icon) = NSImage::initWithData(NSImage::alloc(), &data) {
             unsafe { application.setApplicationIconImage(Some(&icon)) };
         }
@@ -4828,6 +4832,17 @@ mod tests {
         assert_eq!(ThemePreference::System.native(), None);
         assert_eq!(ThemePreference::Light.native(), Some(Theme::Light));
         assert_eq!(ThemePreference::Dark.native(), Some(Theme::Dark));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_app_icon_preferences_resolve_to_embedded_pngs() {
+        let white = application_icon_png(AppIconPreference::White);
+        let black = application_icon_png(AppIconPreference::Black);
+
+        assert!(white.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(black.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert_ne!(white, black);
     }
 
     #[test]

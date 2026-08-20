@@ -1,40 +1,41 @@
-# AgentKib UI QA
+# Design QA
 
-## Scope
+- References:
+  - `/var/folders/sn/js11_0t91mg_bf1m2fr_38780000gn/T/codex-clipboard-efe05524-5964-4f03-a2ce-ba2ecf470bd1.png`
+  - `/var/folders/sn/js11_0t91mg_bf1m2fr_38780000gn/T/codex-clipboard-69d7f413-a62a-4409-a94c-9f926f27bb3c.png`
+- Browser implementations:
+  - `/tmp/agentkib-ui-final-home.png`
+  - `/tmp/agentkib-ui-final-assets.png`
+- Comparisons:
+  - `/tmp/agentkib-ui-comparison-home.png`
+  - `/tmp/agentkib-ui-comparison-assets.png`
+- Native debug Bundle:
+  - `/tmp/agentkib-debug-home.png`
+  - `/tmp/agentkib-debug-assets-skills.png`
+  - `/tmp/agentkib-debug-assets-dark.png`
+- Viewport: 1360 × 860 CSS pixels for browser comparisons
+- State: light theme; native Bundle uses the real local workspace and asset data
 
-- Release bundle: `target/release/bundle/macos/AgentKib.app`
-- Runtime and viewport: macOS desktop, 1215–1216 × 768
-- Themes: light and dark
-- Locales exercised: Simplified Chinese UI with localized number and date formatting
-- Source audit screenshots: `outputs/agentkib-ui-audit-2026-08-14/`
-- Final implementation screenshots: `outputs/agentkib-ui-completion-2026-08-14/`
+## Findings
+
+- Home: the three-column summary strip is fully visible and recent workspace rows are content-sized; names, paths, metadata, and the final row are no longer clipped.
+- Activity: long audit detail is constrained to the activity column and exposed through the element title instead of expanding the card.
+- Assets: table entries are continuous rows without per-row rounded cards. Names, paths, workspace names, and Agent badges remain inside their columns.
+- Navigation tabs: exactly one tab owns `data-active`; the selected state is transparent with one 2px underline. Mouse focus no longer adds a second ring or border.
+- Segmented controls and provider cards keep their separate filled or bordered selected states.
+- Accessibility: current sidebar destinations expose `aria-current="page"`; asset filters and handoff selectors have accessible names.
+- Dark theme: the asset table, filters, badges, and single underline keep distinct contrast without reintroducing selected cards.
 
 ## Comparison history
 
-1. Home: removed the empty Recent Activity card, let the recent-workspace list use the available height, made all summary metrics navigable, and split Token/commit values into a stable two-level layout.
-2. Workspaces: changed rows into aligned Project, Source Agent, Assets, Last Active, Status, and overflow-action columns; added the filtered result count and retained the compact Home variant.
-3. Assets: added counts to all five tabs, grouped duplicate catalog records, removed the redundant type column in single-type views, and collapsed visible Agents to two labels plus `+N`.
-4. Agents: removed the duplicate installation status and fixed empty detail height; added recent workspaces and Home-asset type summaries.
-5. Achievements: replaced the broken cascading month labels with a shared month/grid column system; verified Overview and Token render separate, relevant panels.
-6. Settings: removed the duplicate section title and verified the light/dark/system selector remains a single horizontal segmented control.
-7. Workspace detail: moved path, discovery source, and last scan into Overview; renamed project configuration semantics and collapsed undetected Agents under Other Agents.
+1. The first implementation removed the selected tab card but a focused line tab still inherited Base UI's ring, which recreated a second selected layer.
+2. The line variant now suppresses that ring and uses its underline as the focus/selection indicator; keyboard selection continues to follow Base UI state.
+3. The browser comparison confirmed the structural fix at the reference viewport. The native debug Bundle then confirmed the same layout with real workspace, activity, and asset rows.
 
-## Visual checks
+## Environment note
 
-- Compared the original and final Home screenshots together at the same viewport; no empty right-hand activity panel remains and the achievement summary no longer truncates.
-- Compared the original and final Achievements screenshots together; each month appears once on a common row and contribution cells align directly below it.
-- Compared the original and final Agent screenshots together; the detail panel now grows naturally around real summary content.
-- Compared the reported light-mode Agent screenshot with the rebuilt Agent page; Cursor now retains its black brand tile, Hermes retains its dark green tile, and the remaining Agent icons use distinct light-theme brand surfaces instead of one low-contrast gray background.
-- Verified Workspaces, Assets, Agent, Achievements Overview, Achievements Token, Settings, Home, and Workspace Overview in the release app.
-- Verified light-mode metadata, paths, tabs, separators, and controls remain legible; verified the same hierarchy in dark mode.
-- Verified the title area, sidebar, tab roles, visible focus targets, 32px overflow buttons, and theme controls remain operable in the desktop accessibility tree.
+The browser-only preview uses AgentKib's Tauri-less empty-data fallback and reports the expected native bridge error. Native-data layout was therefore verified separately in the macOS debug Bundle.
 
-## Automated checks
+## Result
 
-- `pnpm test -- --reporter=dot`: 40 tests passed.
-- `pnpm typecheck`: passed.
-- `pnpm build`: passed.
-- `git diff --check`: passed.
-- `pnpm tauri build`: app and DMG bundles produced.
-
-final result: passed
+passed

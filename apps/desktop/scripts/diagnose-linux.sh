@@ -46,6 +46,20 @@ require_pkg_config() {
   fail "$label (pkg-config: $*)"
 }
 
+require_pkg_config_version() {
+  local label=$1 candidate=$2 minimum=$3 version
+  if ! pkg-config --exists "$candidate" 2>/dev/null; then
+    fail "$label (pkg-config: $candidate >= $minimum)"
+    return
+  fi
+  version=$(pkg-config --modversion "$candidate" 2>/dev/null || true)
+  if [[ -n "$version" ]] && [[ "$(printf '%s\n%s\n' "$minimum" "$version" | sort -V | head -n 1)" == "$minimum" ]]; then
+    pass "$label ($candidate $version)"
+  else
+    fail "$label requires $candidate >= $minimum; found ${version:-unknown}"
+  fi
+}
+
 require_header_and_library() {
   local label=$1 header=$2 library=$3
   if [[ -r "$header" ]] && {
@@ -85,7 +99,7 @@ if command -v pkg-config >/dev/null 2>&1; then
   echo
   echo "Tauri development libraries"
   require_pkg_config "GTK 3" "gtk+-3.0"
-  require_pkg_config "WebKitGTK 4.1" "webkit2gtk-4.1"
+  require_pkg_config_version "WebKitGTK 4.1" "webkit2gtk-4.1" "2.40"
   require_pkg_config "AppIndicator" "ayatana-appindicator3-0.1" "appindicator3-0.1"
   require_pkg_config "librsvg" "librsvg-2.0"
   if pkg-config --exists xdo 2>/dev/null; then

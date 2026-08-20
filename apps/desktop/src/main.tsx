@@ -1,11 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { AppDialogProvider } from "./components/AppDialogProvider";
 import { QuotaPopover } from "./components/QuotaPopover";
 import { api } from "./api";
 import { initializeI18n, normalizeLocale } from "./i18n";
 import { applyPlatformAttribute } from "./platform";
 import { applyTheme, systemTheme } from "./theme";
+import "./shadcn.css";
 import "./styles.css";
 
 applyPlatformAttribute(import.meta.env.TAURI_ENV_PLATFORM);
@@ -24,7 +26,7 @@ async function bootstrap() {
   await initializeI18n(locale);
   const surface = new URLSearchParams(window.location.search).get("surface");
   createRoot(document.getElementById("root")!).render(
-    <StrictMode>{surface === "quota-popover" ? <QuotaPopover /> : <App />}</StrictMode>,
+    <StrictMode><AppDialogProvider>{surface === "quota-popover" ? <QuotaPopover /> : <App />}</AppDialogProvider></StrictMode>,
   );
 }
 

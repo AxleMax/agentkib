@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { AppDialogProvider } from "./components/AppDialogProvider";
 import { api } from "./api";
 import { diffLines } from "./diff";
 import { initializeI18n } from "./i18n";
@@ -116,6 +118,7 @@ vi.mock("./api", () => ({
 }));
 
 const storage = new Map<string, string>();
+const renderApp = () => render(<AppDialogProvider><App /></AppDialogProvider>);
 beforeEach(async () => {
   storage.clear();
   tauriListeners.clear();
@@ -138,6 +141,8 @@ afterEach(() => {
   vi.mocked(api.agentInstallations).mockResolvedValue([]);
   vi.mocked(api.workspaceDoctorSummaries).mockResolvedValue([]);
   vi.mocked(api.runtime).mockResolvedValue(testRuntime(true));
+  vi.mocked(api.workspaceSessions).mockResolvedValue([]);
+  vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([]);
   vi.mocked(api.plan).mockReset();
   vi.mocked(api.apply).mockReset();
   vi.mocked(api.continueSessionHandoff).mockReset();
@@ -178,7 +183,7 @@ describe("AgentKib desktop", () => {
     let finishApply!: () => void;
     vi.mocked(api.apply).mockImplementation(() => new Promise<void>((resolve) => { finishApply = resolve; }));
 
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
     fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
     fireEvent.change(await screen.findByLabelText("Shared Project Instructions"), { target: { value: "updated" } });
@@ -197,7 +202,6 @@ describe("AgentKib desktop", () => {
   });
 
   it("ignores ChangeSet completion after leaving its workspace", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.mocked(api.workspaces).mockResolvedValue([{
       id: "project", path: "/tmp/project", name: "Project", status: "healthy",
       asset_count: 0, warning_count: 0, sources: [],
@@ -210,7 +214,7 @@ describe("AgentKib desktop", () => {
     let finishApply!: () => void;
     vi.mocked(api.apply).mockImplementation(() => new Promise<void>((resolve) => { finishApply = resolve; }));
 
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
     fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
     fireEvent.change(await screen.findByLabelText("Shared Project Instructions"), { target: { value: "updated" } });
@@ -219,12 +223,12 @@ describe("AgentKib desktop", () => {
     const scanCount = vi.mocked(api.scan).mock.calls.length;
 
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
     expect(await screen.findByRole("heading", { name: "Home" })).toBeInTheDocument();
     await act(async () => { finishApply(); });
 
     expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument();
     expect(api.scan).toHaveBeenCalledTimes(scanCount);
-    confirm.mockRestore();
   });
 
   it("renders structured ChangeSet errors instead of object coercion", async () => {
@@ -239,7 +243,7 @@ describe("AgentKib desktop", () => {
     });
     vi.mocked(api.apply).mockRejectedValue({ key: "errors.generic", detail: "file hash changed" });
 
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
     fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
     fireEvent.change(await screen.findByLabelText("Shared Project Instructions"), { target: { value: "updated" } });
@@ -266,7 +270,7 @@ describe("AgentKib desktop", () => {
     };
     vi.mocked(api.workspaces).mockResolvedValue([workspace]);
     vi.mocked(api.agentInstallations).mockResolvedValue([{ agent: "claude-code", installed: true, configured: true, warnings: [] }]);
-    vi.mocked(api.workspaceSessions).mockResolvedValue([{
+    vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([{
       id: "session", workspace_id: "project", agent: "codex", title: "Current task",
       archived: false, sidechain: false, availability: "readable",
     }]);
@@ -286,7 +290,7 @@ describe("AgentKib desktop", () => {
     vi.mocked(api.continueSessionHandoff).mockImplementation(() => new Promise((resolve) => { finishContinuation = resolve; }));
     vi.mocked(api.launchSessionHandoff).mockResolvedValue({ target_agent: "claude-code", terminal: "Terminal.app" });
 
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
     fireEvent.click(await screen.findByRole("tab", { name: "Sessions" }));
     expect(await screen.findByText("Current task")).toBeInTheDocument();
@@ -316,7 +320,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("opens the global asset center without forcing folder selection", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     expect(screen.getByText("No workspaces found")).toBeInTheDocument();
     expect(screen.queryByText("选择本地项目")).not.toBeInTheDocument();
@@ -327,7 +331,7 @@ describe("AgentKib desktop", () => {
       running: false,
       providers: [{ agent: "open-claw", available: false, quality: "incomplete", imported_events: 0, error: "gateway offline" }],
     });
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     expect(screen.getByText("Everything is in order")).toBeInTheDocument();
     expect(screen.queryByText("gateway offline")).not.toBeInTheDocument();
@@ -340,7 +344,7 @@ describe("AgentKib desktop", () => {
     vi.mocked(api.workspaceDoctorSummaries).mockResolvedValueOnce([{
       workspace_id: "project", error_count: 1, warning_count: 2, info_count: 9, repairable_count: 1, checked_at: "2026-08-18T00:00:00Z",
     }]);
-    render(<App />);
+    renderApp();
     const attention = await screen.findByText("Needs attention");
     expect(within(attention.closest("section")!).getByText("3")).toBeInTheDocument();
     expect(within(attention.closest("section")!).getByText("3 configuration warnings")).toBeInTheDocument();
@@ -367,7 +371,7 @@ describe("AgentKib desktop", () => {
     let finishPlan!: (value: Awaited<ReturnType<typeof api.plan>>) => void;
     vi.mocked(api.plan).mockImplementation(() => new Promise((resolve) => { finishPlan = resolve; }));
 
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /First \/tmp\/first/ }));
     fireEvent.click(await screen.findByRole("tab", { name: "Doctor" }));
     fireEvent.click(await screen.findByRole("button", { name: "Review repairs" }));
@@ -391,7 +395,7 @@ describe("AgentKib desktop", () => {
     vi.mocked(api.workspaces).mockResolvedValue([{
       id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],
     }]);
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     expect(screen.queryByText("Recent Activity")).not.toBeInTheDocument();
 
@@ -403,7 +407,7 @@ describe("AgentKib desktop", () => {
     vi.mocked(api.workspaces).mockResolvedValue([{
       id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],
     }]);
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*1/ }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Workspaces" })).toBeInTheDocument());
     vi.mocked(api.requestRefresh).mockClear();
@@ -415,6 +419,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("filters the workspace table and keeps row actions separate from navigation", async () => {
+    const user = userEvent.setup();
     vi.mocked(api.workspaces).mockResolvedValue([
       {
         id: "healthy-project", path: "/tmp/healthy", name: "Healthy Project", status: "healthy", asset_count: 0, warning_count: 0,
@@ -425,7 +430,7 @@ describe("AgentKib desktop", () => {
         last_active_at: "2026-08-13T11:00:00Z", sources: [{ agent: "claude-code", evidence: "session-cwd", session_count: 1 }],
       },
     ]);
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*2/ }));
 
     expect(await screen.findByText("2 workspaces")).toBeInTheDocument();
@@ -435,34 +440,36 @@ describe("AgentKib desktop", () => {
     expect(document.querySelector(".workspace-asset-count.is-zero")).toBeInTheDocument();
     expect(document.querySelector(".workspace-asset-count.empty")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("combobox", { name: "All Agents" }), { target: { value: "claude-code" } });
+    await user.click(screen.getByRole("combobox", { name: "All Agents" }));
+    await user.click(await screen.findByRole("option", { name: "Claude Code" }));
     expect(screen.getByText(/1 workspace/)).toBeInTheDocument();
     expect(screen.queryByText("Healthy Project")).not.toBeInTheDocument();
     expect(screen.getByText("Attention Project")).toBeInTheDocument();
 
     vi.mocked(api.scan).mockClear();
-    fireEvent.click(screen.getByLabelText("Attention Project · More actions"));
-    fireEvent.click(screen.getByRole("button", { name: "Scan" }));
+    await user.click(screen.getByLabelText("Attention Project · More actions"));
+    await user.click(await screen.findByRole("menuitem", { name: "Scan" }));
     await waitFor(() => expect(api.refreshWorkspace).toHaveBeenCalledWith("attention-project"));
     expect(api.scan).not.toHaveBeenCalled();
   });
 
   it("opens workspace storage from cache and only scans after confirmation", async () => {
+    const user = userEvent.setup();
     vi.mocked(api.workspaces).mockResolvedValue([{
       id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],
     }]);
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*1/ }));
-    fireEvent.click(await screen.findByRole("tab", { name: "Space" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Space" }));
 
     expect(await screen.findByText("Workspace space has not been scanned")).toBeInTheDocument();
     expect(api.requestRefresh).not.toHaveBeenCalledWith("storage", true);
-    fireEvent.click(screen.getByRole("button", { name: "Start Scan" }));
+    await user.click(screen.getByRole("button", { name: "Start Scan" }));
     await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledWith("storage", true));
   });
 
   it("defers discovery cache reads while the window is hidden", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(tauriListeners.has("agentkib:refresh-state")).toBe(true));
     vi.mocked(api.workspaces).mockClear();
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
@@ -477,7 +484,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("keeps low-frequency tasks out of the global navigation", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     const navigation = within(screen.getByRole("navigation", { name: "Primary navigation" }));
     expect(navigation.getAllByRole("button").map((button) => button.textContent)).toEqual([
@@ -500,7 +507,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("loads Agent and quota pages on demand", async () => {
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
 
@@ -510,7 +517,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("handles native menu navigation and Settings sections", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(tauriListeners.has("agentkib:navigate")).toBe(true));
 
     act(() => tauriListeners.get("agentkib:navigate")?.({ payload: { page: "agents" } }));
@@ -522,7 +529,7 @@ describe("AgentKib desktop", () => {
 
   it("reuses the existing workspace picker for native menu commands", async () => {
     vi.mocked(open).mockResolvedValueOnce(null);
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(tauriListeners.has("agentkib:app-command")).toBe(true));
 
     act(() => tauriListeners.get("agentkib:app-command")?.({ payload: { command: "add-workspace" } }));
@@ -531,7 +538,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("maps native refresh commands to the active page", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(tauriListeners.has("agentkib:navigate")).toBe(true));
     act(() => tauriListeners.get("agentkib:navigate")?.({ payload: { page: "quota" } }));
     expect(await screen.findByRole("heading", { name: "Quota" })).toBeInTheDocument();
@@ -543,19 +550,18 @@ describe("AgentKib desktop", () => {
   });
 
   it("confirms before refreshing every data source from the native menu", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(tauriListeners.has("agentkib:app-command")).toBe(true));
     vi.mocked(api.requestRefresh).mockClear();
 
     act(() => tauriListeners.get("agentkib:app-command")?.({ payload: { command: "refresh-all" } }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     await waitFor(() => expect(api.requestRefresh).toHaveBeenCalledTimes(4));
     expect(api.requestRefresh).toHaveBeenCalledWith("discovery", true);
     expect(api.requestRefresh).toHaveBeenCalledWith("insights", true);
     expect(api.requestRefresh).toHaveBeenCalledWith("gateways", true);
     expect(api.requestRefresh).toHaveBeenCalledWith("quota", true);
-    confirm.mockRestore();
   });
 
   it("does not count DeepSeek Harness residual data as an installation", async () => {
@@ -566,9 +572,9 @@ describe("AgentKib desktop", () => {
       home: "/tmp/.dsh",
       warnings: [],
     }]);
-    render(<App />);
+    renderApp();
 
-    expect(await screen.findByText("0 / 6")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Installed Agents 0" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Agents" }));
     expect(await screen.findByText("Local data found")).toBeInTheDocument();
     expect(screen.getAllByText("DeepSeek Harness").length).toBeGreaterThan(0);
@@ -585,7 +591,7 @@ describe("AgentKib desktop", () => {
       warning_count: 0,
       sources: [{ agent: "codex", evidence: "session-cwd", session_count: 1 }],
     }]);
-    render(<App />);
+    renderApp();
     const project = await screen.findByRole("button", { name: /Project \/tmp\/project/ });
     fireEvent.click(project);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Project" })).toBeInTheDocument());
@@ -611,7 +617,7 @@ describe("AgentKib desktop", () => {
     vi.mocked(api.gitCommitFiles).mockResolvedValue([]);
     vi.mocked(api.gitDiff).mockResolvedValue({ patch: "+change", binary: false, submodule: false, encoding_lossy: false, truncated: false });
 
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
     fireEvent.click(await screen.findByRole("tab", { name: "Git" }));
     fireEvent.click(await screen.findByRole("option", { name: /Commit subject Test/ }));
@@ -623,7 +629,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("treats the native quit request as a real app exit", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(tauriListeners.has("agentkib:quit-requested")).toBe(true));
 
     await act(async () => {
@@ -643,20 +649,22 @@ describe("AgentKib desktop", () => {
       warning_count: 0,
       sources: [{ agent: "codex", evidence: "session-cwd", session_count: 1 }],
     }]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
     fireEvent.click(await screen.findByRole("tab", { name: "Assets" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Shared Project Instructions" }), { target: { value: "Keep this draft" } });
     await waitFor(() => expect(tauriListeners.has("agentkib:quit-requested")).toBe(true));
 
+    let quitRequest: Promise<void> | void = undefined;
     await act(async () => {
-      await tauriListeners.get("agentkib:quit-requested")?.({ payload: undefined });
+      quitRequest = tauriListeners.get("agentkib:quit-requested")?.({ payload: undefined });
+      await Promise.resolve();
     });
+    expect(await screen.findByText("Discard unsaved workspace drafts and quit AgentKib?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await act(async () => { await quitRequest; });
 
-    expect(confirm).toHaveBeenCalledWith("Discard unsaved workspace drafts and quit AgentKib?");
-    expect(api.quitApp).not.toHaveBeenCalled();
-    confirm.mockRestore();
+    await waitFor(() => expect(api.quitApp).not.toHaveBeenCalled());
   });
 
   it("returns from the dedicated Settings shell to the active workspace", async () => {
@@ -669,7 +677,7 @@ describe("AgentKib desktop", () => {
       warning_count: 0,
       sources: [{ agent: "codex", evidence: "session-cwd", session_count: 1 }],
     }]);
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Project" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
@@ -679,7 +687,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("shows token and commit achievements without a cloud account", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByText(/120K Token/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Achievements" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument());
@@ -688,7 +696,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("renders only the panels for the selected achievement section", async () => {
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: "Achievements" }));
     expect(await screen.findByText("Activity Heatmap")).toBeInTheDocument();
     expect(screen.queryByText("Agent Usage")).not.toBeInTheDocument();
@@ -699,6 +707,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("renders a unified achievement wall and opens track and secret details", async () => {
+    const user = userEvent.setup();
     const view = await api.insightsView();
     vi.mocked(api.insightsView).mockResolvedValue({ ...view, achievements: [
       { code: "token-100000", category: "token", threshold: 100_000, progress: 120_000, unlocked_at: "2026-08-01T00:00:00Z" },
@@ -715,7 +724,7 @@ describe("AgentKib desktop", () => {
       { code: "special-night-owl", category: "special", threshold: 1, progress: 0 },
       { code: "special-comeback", category: "special", threshold: 1, progress: 1, unlocked_at: "2026-08-02T00:00:00Z" },
     ] });
-    render(<App />);
+    renderApp();
     fireEvent.click(await screen.findByRole("button", { name: "Achievements" }));
     fireEvent.click(screen.getByRole("tab", { name: "Achievement Wall" }));
 
@@ -736,22 +745,22 @@ describe("AgentKib desktop", () => {
     expect(within(trackDialog).getByRole("progressbar")).toBeInTheDocument();
     expect(within(trackDialog).getByText("Next target")).toBeInTheDocument();
     expect(within(trackDialog).getAllByText("Token Launch").length).toBeGreaterThan(0);
-    expect(within(trackDialog).getByRole("button", { name: "Close" })).toHaveFocus();
-    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
-    expect(within(trackDialog).getAllByRole("button").at(-1)).toHaveFocus();
+    await waitFor(() => expect(within(trackDialog).getByRole("button", { name: "Close" })).toHaveFocus());
+    await user.tab({ shift: true });
+    await waitFor(() => expect(within(trackDialog).getAllByRole("button")).toContain(document.activeElement));
     const nextMilestone = within(trackDialog).getByRole("button", { name: /Million Context/ });
     fireEvent.click(nextMilestone);
     expect(nextMilestone).toHaveAttribute("aria-pressed", "true");
-    fireEvent.keyDown(document, { key: "Escape" });
+    await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(tokenCard).toHaveFocus();
+    await waitFor(() => expect(tokenCard).toHaveFocus());
 
     fireEvent.click(screen.getByRole("button", { name: "View achievement details: Mystery Achievement" }));
     const secretDialog = screen.getByRole("dialog", { name: "Mystery Achievement" });
     expect(within(secretDialog).getByText("Unlock condition is secret")).toBeInTheDocument();
     expect(within(secretDialog).queryByText("Night Owl")).not.toBeInTheDocument();
-    fireEvent.mouseDown(secretDialog.parentElement!);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]')!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
   it.each([
@@ -761,22 +770,24 @@ describe("AgentKib desktop", () => {
     ["en-US", "Home", "No workspaces found"],
   ] as const)("renders the home empty state in %s", async (locale, heading, emptyText) => {
     await initializeI18n(locale);
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument());
     expect(screen.getByText(emptyText)).toBeInTheDocument();
   });
 
   it("switches language immediately from Settings", async () => {
-    render(<App />);
+    const user = userEvent.setup();
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Language" }), { target: { value: "zh-CN" } });
+    await user.click(screen.getByRole("combobox", { name: "Language" }));
+    await user.click(await screen.findByRole("option", { name: "简体中文" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "常规" })).toBeInTheDocument());
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
   it("switches appearance immediately without leaving Settings", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Light" }));
@@ -788,7 +799,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("uses the white app icon by default and switches it from Settings", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
@@ -800,17 +811,19 @@ describe("AgentKib desktop", () => {
   });
 
   it("disables background hiding when the system tray is unavailable", async () => {
+    const user = userEvent.setup();
     vi.mocked(api.runtime).mockResolvedValueOnce(testRuntime(false));
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(screen.getByText(/System tray unavailable/)).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Hide in (Menu Bar|System Tray)/ })).toBeDisabled();
+    await user.click(screen.getByRole("combobox", { name: /When Closing the Window/i }));
+    expect(await screen.findByRole("option", { name: /Hide in (Menu Bar|System Tray)/ })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("tracks macOS appearance changes only while following the system", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(tauriListeners.has("tauri://theme-changed")).toBe(true));
 
     act(() => tauriListeners.get("tauri://theme-changed")?.({ payload: "light" }));
@@ -819,7 +832,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("shows Obsidian as a neutral local integration in Settings", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
@@ -830,7 +843,7 @@ describe("AgentKib desktop", () => {
   });
 
   it.runIf(["darwin", "windows"].includes(import.meta.env.TAURI_ENV_PLATFORM))("opens system file access settings from Data & Privacy", async () => {
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Data & Privacy" }));
@@ -840,7 +853,7 @@ describe("AgentKib desktop", () => {
   });
 
   it("collapses the sidebar completely and restores the preference", async () => {
-    const first = render(<App />);
+    const first = renderApp();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toHaveAttribute("data-tauri-drag-region"));
     const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
     expect(collapse.closest(".window-toolbar")).toHaveAttribute("data-tauri-drag-region");
@@ -849,7 +862,7 @@ describe("AgentKib desktop", () => {
     expect(storage.get("agentkib.sidebar.collapsed")).toBe("true");
     expect(screen.getByRole("button", { name: "Expand sidebar" }).closest(".window-toolbar")).toBeInTheDocument();
     first.unmount();
-    render(<App />);
+    renderApp();
     await waitFor(() => expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument());
   });
 });

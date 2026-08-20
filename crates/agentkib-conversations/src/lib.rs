@@ -1116,25 +1116,11 @@ impl CodexProvider {
         let Some(home) = self.home() else {
             return Vec::new();
         };
-        let mut output = Vec::new();
-        for directory in [home.clone(), home.join("sqlite")] {
-            let Ok(entries) = fs::read_dir(directory) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|name| name.starts_with("state_") && name.ends_with(".sqlite"))
-                {
-                    output.push(path);
-                }
-            }
+        let current = codex_databases_in(&home);
+        if !current.is_empty() {
+            return current;
         }
-        output.sort();
-        output.dedup();
-        output
+        codex_databases_in(&home.join("sqlite"))
     }
 
     fn native_sessions(&self, workspace: Option<&Path>) -> Result<Vec<CodexNativeSession>> {
@@ -1203,6 +1189,26 @@ impl CodexProvider {
         }
         Ok(output.into_values().collect())
     }
+}
+
+fn codex_databases_in(directory: &Path) -> Vec<PathBuf> {
+    let mut output = Vec::new();
+    let Ok(entries) = fs::read_dir(directory) else {
+        return output;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|name| name.starts_with("state_") && name.ends_with(".sqlite"))
+        {
+            output.push(path);
+        }
+    }
+    output.sort();
+    output.dedup();
+    output
 }
 
 impl ConversationProvider for CodexProvider {
@@ -1425,16 +1431,6 @@ impl ClaudeProvider {
             match read_jsonl_snapshot(&history_path) {
                 Ok(snapshot) => {
                     for (_, item) in snapshot.records {
-                        let Some(project_path) = item
-                            .get("project")
-                            .and_then(Value::as_str)
-                            .map(PathBuf::from)
-                        else {
-                            continue;
-                        };
-                        if platform_path::is_known_agent_probe_workspace(&project_path) {
-                            continue;
-                        }
                         let Some(native_ref) = item.get("sessionId").and_then(Value::as_str) else {
                             continue;
                         };
@@ -1442,23 +1438,6 @@ impl ClaudeProvider {
                         if let Some(session) = output.get_mut(native_ref) {
                             session.created_at = earliest_time(session.created_at, timestamp);
                             session.updated_at = latest_time(session.updated_at, timestamp);
-                        } else {
-                            output.insert(
-                                native_ref.to_owned(),
-                                ClaudeNativeSession {
-                                    native_ref: native_ref.to_owned(),
-                                    transcript: PathBuf::new(),
-                                    project_path,
-                                    // history.jsonl `display` is a user message, not a title.
-                                    // Keeping it out of the index preserves the metadata-only boundary.
-                                    title: None,
-                                    created_at: timestamp,
-                                    updated_at: timestamp,
-                                    message_count: None,
-                                    git_branch: None,
-                                    sidechain: false,
-                                },
-                            );
                         }
                     }
                 }
@@ -1471,7 +1450,8 @@ impl ClaudeProvider {
         Ok(output
             .into_values()
             .filter(|session| {
-                !platform_path::is_known_agent_probe_workspace(&session.project_path)
+                session.transcript.is_file()
+                    && !platform_path::is_known_agent_probe_workspace(&session.project_path)
                     && workspace
                         .is_none_or(|workspace| workspace_matches(&session.project_path, workspace))
             })
@@ -2362,6 +2342,28 @@ mod tests {
 
     use super::*;
 
+    fn write_codex_database(path: &Path, rows: &[(&str, &Path, &Path, &str, bool)]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let database = Connection::open(path).unwrap();
+        database.execute_batch("CREATE TABLE threads(id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, created_at INTEGER, updated_at INTEGER, git_branch TEXT, archived INTEGER);").unwrap();
+        for (id, transcript, workspace, title, archived) in rows {
+            database
+                .execute(
+                    "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, 1, 2, 'main', ?5)",
+                    rusqlite::params![
+                        id,
+                        transcript.display().to_string(),
+                        workspace.display().to_string(),
+                        title,
+                        i64::from(*archived),
+                    ],
+                )
+                .unwrap();
+        }
+    }
+
     #[test]
     fn codex_lists_active_archived_and_missing_transcripts() {
         let dir = tempdir().unwrap();
@@ -2404,6 +2406,91 @@ mod tests {
         assert!(sessions.iter().any(|value| value.archived
             && value.availability == SessionAvailability::MetadataOnly
             && value.title.as_deref() == Some("Archived Title")));
+    }
+
+    #[test]
+    fn codex_prefers_all_current_databases_without_reviving_legacy_sessions() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let current_a = dir.path().join("current-a.jsonl");
+        let current_b = dir.path().join("current-b.jsonl");
+        let deleted = dir.path().join("deleted.jsonl");
+        fs::write(&current_a, "{}\n").unwrap();
+        fs::write(&current_b, "{}\n").unwrap();
+        write_codex_database(
+            &dir.path().join("state_1.sqlite"),
+            &[("current-a", &current_a, &workspace, "Current A", false)],
+        );
+        write_codex_database(
+            &dir.path().join("state_2.sqlite"),
+            &[("current-b", &current_b, &workspace, "Current B", true)],
+        );
+        write_codex_database(
+            &dir.path().join("sqlite/state_1.sqlite"),
+            &[("deleted", &deleted, &workspace, "Deleted", false)],
+        );
+
+        let sessions = CodexProvider::with_home(dir.path().to_path_buf())
+            .list_sessions(&workspace)
+            .unwrap();
+
+        assert_eq!(sessions.len(), 2);
+        assert!(
+            sessions
+                .iter()
+                .any(|session| session.native_ref == "current-a")
+        );
+        assert!(
+            sessions
+                .iter()
+                .any(|session| session.native_ref == "current-b" && session.archived)
+        );
+        assert!(
+            !sessions
+                .iter()
+                .any(|session| session.native_ref == "deleted")
+        );
+    }
+
+    #[test]
+    fn codex_uses_legacy_database_only_when_current_database_is_absent() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let transcript = dir.path().join("legacy.jsonl");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&transcript, "{}\n").unwrap();
+        write_codex_database(
+            &dir.path().join("sqlite/state_1.sqlite"),
+            &[("legacy", &transcript, &workspace, "Legacy", false)],
+        );
+
+        let sessions = CodexProvider::with_home(dir.path().to_path_buf())
+            .list_sessions(&workspace)
+            .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].native_ref, "legacy");
+    }
+
+    #[test]
+    fn codex_does_not_hide_an_unreadable_current_database_with_legacy_data() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let transcript = dir.path().join("legacy.jsonl");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&transcript, "{}\n").unwrap();
+        fs::write(dir.path().join("state_1.sqlite"), "not sqlite").unwrap();
+        write_codex_database(
+            &dir.path().join("sqlite/state_1.sqlite"),
+            &[("legacy", &transcript, &workspace, "Legacy", false)],
+        );
+
+        let error = CodexProvider::with_home(dir.path().to_path_buf())
+            .list_sessions(&workspace)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("database"));
     }
 
     #[test]
@@ -2509,6 +2596,19 @@ mod tests {
         )
         .unwrap();
         drop(file);
+        fs::write(
+            dir.path().join("history.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "project":workspace,
+                    "sessionId":"transcript-only",
+                    "timestamp":"2026-08-21T10:00:00Z",
+                    "display":"private prompt"
+                })
+            ),
+        )
+        .unwrap();
 
         let provider = ClaudeProvider::with_home(dir.path().to_path_buf());
         let sessions = provider.list_sessions(&workspace).unwrap();
@@ -2518,6 +2618,10 @@ mod tests {
         assert_eq!(
             sessions[0].git_branch.as_deref(),
             Some("feature/session-browser")
+        );
+        assert_eq!(
+            sessions[0].updated_at.unwrap().to_rfc3339(),
+            "2026-08-21T10:00:00+00:00"
         );
         let page = provider.read_events("transcript-only", None, 100).unwrap();
         assert_eq!(page.events.len(), 2);
@@ -2613,7 +2717,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_history_falls_back_to_metadata_without_caching_messages() {
+    fn claude_does_not_create_sessions_from_history_without_transcripts() {
         let dir = tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         fs::create_dir_all(&workspace).unwrap();
@@ -2630,21 +2734,23 @@ mod tests {
         let sessions = ClaudeProvider::with_home(dir.path().to_path_buf())
             .list_sessions(&workspace)
             .unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].native_ref, "private-session");
-        assert!(sessions[0].title.is_none());
-        assert_eq!(sessions[0].availability, SessionAvailability::MetadataOnly);
-        assert_eq!(sessions[0].created_at.unwrap().timestamp(), 1_700_000_001);
-        assert_eq!(sessions[0].updated_at.unwrap().timestamp(), 1_700_000_002);
-        let serialized = serde_json::to_string(&sessions[0]).unwrap();
-        for private in [
-            "private-session",
-            "private latest prompt",
-            "private first prompt",
-            "content",
-        ] {
-            assert!(!serialized.contains(private));
-        }
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn claude_does_not_create_sessions_from_an_index_with_a_missing_transcript() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let projects = dir.path().join("projects/project");
+        fs::create_dir_all(&projects).unwrap();
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(projects.join("sessions-index.json"), serde_json::to_vec(&serde_json::json!({"version":1,"entries":[{"sessionId":"deleted-session","fullPath":projects.join("deleted-session.jsonl"),"projectPath":workspace,"summary":"Deleted","created":1_700_000_000_000_i64,"modified":1_700_000_001_000_i64}]})).unwrap()).unwrap();
+
+        let sessions = ClaudeProvider::with_home(dir.path().to_path_buf())
+            .list_sessions(&workspace)
+            .unwrap();
+
+        assert!(sessions.is_empty());
     }
 
     #[test]

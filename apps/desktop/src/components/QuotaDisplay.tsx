@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { Gauge } from "lucide-react";
 import { tr } from "../i18n";
 import { quotaSeverity, type QuotaDisplayWindow } from "../quota";
@@ -18,7 +19,7 @@ export function QuotaWindowRow({ item, target = false, onOpen }: { item: QuotaDi
     <div className="quota-window-meta"><span>{tr("quota.remaining", { value: Math.round(remaining) })}</span><span>{item.window.reset_at ? tr("quota.resets", { time: relativeReset(item.window.reset_at) }) : tr("quota.noReset")}</span></div>
   </>;
   return onOpen
-    ? <button type="button" className={`quota-window-card ${severity}${target ? " target" : ""}`} data-quota-target={target || undefined} onClick={() => onOpen(item)}>{content}</button>
+    ? <Button variant="bare" size="content" type="button" className={`quota-window-card ${severity}${target ? " target" : ""}`} data-quota-target={target || undefined} onClick={() => onOpen(item)}>{content}</Button>
     : <article className={`quota-window-card ${severity}${target ? " target" : ""}`} data-quota-target={target || undefined}>{content}</article>;
 }
 

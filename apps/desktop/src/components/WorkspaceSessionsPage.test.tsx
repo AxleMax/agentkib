@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeI18n } from "../i18n";
 import { api } from "../api";
@@ -111,6 +112,26 @@ afterEach(() => {
 });
 
 describe("WorkspaceSessionsPage", () => {
+  it("forces a native refresh on entry without showing cached ghost sessions", async () => {
+    vi.mocked(api.workspaceSessions).mockResolvedValueOnce([{ ...sessions[0], id: "ghost", title: "Deleted ghost" }]);
+    render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
+
+    await waitFor(() => expect(api.refreshWorkspaceSessions).toHaveBeenCalledWith("workspace", true));
+    expect(api.workspaceSessions).not.toHaveBeenCalled();
+    expect(screen.queryByText("Deleted ghost")).not.toBeInTheDocument();
+    expect(await screen.findByText("Current task")).toBeInTheDocument();
+  });
+
+  it("uses the same forced refresh for the manual refresh action", async () => {
+    render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
+    expect(await screen.findByText("Current task")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
+
+    await waitFor(() => expect(api.refreshWorkspaceSessions).toHaveBeenCalledTimes(2));
+    expect(api.refreshWorkspaceSessions).toHaveBeenLastCalledWith("workspace", true);
+  });
+
   it("defaults to readable current sessions and reads the selected transcript on demand", async () => {
     render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
 
@@ -125,7 +146,7 @@ describe("WorkspaceSessionsPage", () => {
     render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
     await waitFor(() => expect(screen.getByText("Current task")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("tab", { name: /All/ }));
+    fireEvent.click(screen.getByRole("button", { name: /All/ }));
     fireEvent.click(await screen.findByText("Old task"));
 
     expect(await screen.findByText("The original transcript is no longer available.")).toBeInTheDocument();
@@ -138,10 +159,12 @@ describe("WorkspaceSessionsPage", () => {
 
     expect(screen.getByText("1 indexed · 1 readable")).toBeInTheDocument();
     expect(screen.getByText("1 indexed · 0 readable")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Agent filter"), { target: { value: "claude-code" } });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "Agent filter" }));
+    await user.click(await screen.findByRole("option", { name: "Claude Code" }));
 
-    expect(screen.getByRole("tab", { name: /Current 0/ })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Metadata only 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Current 0/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Metadata only 1/ })).toBeInTheDocument();
     expect(screen.getByText("Historical records found: 1. Original transcripts are unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "View metadata" }));
     expect(await screen.findByRole("button", { name: /Old task/ })).toBeInTheDocument();

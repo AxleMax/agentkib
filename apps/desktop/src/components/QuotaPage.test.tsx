@@ -176,7 +176,7 @@ describe("QuotaPage", () => {
 
   it("configures menu bar windows without hiding them from the dashboard", async () => {
     render(<QuotaPage configurePopoverRequest={1} popoverSupported />);
-    await waitFor(() => expect(screen.getByRole("dialog", { name: "Menu bar display" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("complementary", { name: "Menu bar display" })).toBeInTheDocument());
 
     const checkboxes = screen.getAllByRole("checkbox");
     fireEvent.click(checkboxes[1]);
@@ -190,7 +190,7 @@ describe("QuotaPage", () => {
 
     await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
     expect(screen.queryByRole("button", { name: "Menu bar display" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Menu bar display" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Menu bar display" })).not.toBeInTheDocument();
   });
 });
 

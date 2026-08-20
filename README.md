@@ -90,9 +90,9 @@ AgentKib 会区分“已安装”和“只发现了卸载后的本地数据”�
 
 | 平台 | 状态 |
 | --- | --- |
-| macOS 13+（Apple Silicon / Intel） | 主要开发与验收平台 |
-| Windows 11 x64 | PR 验证 Rust 平台代码；手动工作流构建并烟测 NSIS |
-| Ubuntu 22.04 x64 | 核心 CI 平台；手动工作流构建并验证 `.deb` 与 AppImage |
+| macOS 13.3+（Apple Silicon / Intel） | 主要开发与验收平台 |
+| Windows 11 x64（WebView2 111+） | PR 验证 Rust 平台代码；手动工作流构建并烟测 NSIS |
+| Ubuntu 22.04 x64（WebKitGTK 2.40+） | 核心 CI 平台；手动工作流构建并验证 `.deb` 与 AppImage |
 | Fedora x64 | PR 验证 Rust 平台代码；手动工作流构建并验证 `.rpm` |
 | Windows ARM64 / Linux ARM64 | Preview；PR 验证核心编译或测试，手动工作流生成预览包 |
 
@@ -100,7 +100,7 @@ Windows 11 x64 的完整环境安装、开发启动、NSIS 打包和使用步骤
 
 ### 从源码运行
 
-需要 Rust stable、Node.js 和 pnpm 10。桌面端还需要对应平台的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)：macOS 使用 Xcode Command Line Tools，Windows 使用 Visual Studio Build Tools 2022 与 Windows SDK，Linux 使用 GTK 3、WebKitGTK 4.1、AppIndicator、librsvg 和 libxdo。
+需要 Rust stable、Node.js 和 pnpm 10。桌面端还需要对应平台的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)：macOS 13.3+ 使用 Xcode Command Line Tools，Windows 11 使用 Visual Studio Build Tools 2022、Windows SDK 与 WebView2 111+，Linux 使用 GTK 3、WebKitGTK 4.1（运行时 2.40+）、AppIndicator、librsvg 和 libxdo。旧版 WebView 无法运行 Tailwind CSS v4 生成的界面。
 
 ```bash
 pnpm install

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useEffect, useState } from "react";
 import { ChevronDown, Code2, FolderOpen, SquareTerminal } from "lucide-react";
 import { api } from "../api";
 import { localizeMessage, tr } from "../i18n";
@@ -7,7 +9,6 @@ import type { WorkspaceOpener, WorkspaceSummary } from "../types";
 export function WorkspaceOpenWith({ workspace, onError }: { workspace: WorkspaceSummary; onError: (message: string) => void }) {
   const [openers, setOpeners] = useState<WorkspaceOpener[]>([]);
   const [opening, setOpening] = useState(false);
-  const menu = useRef<HTMLDetailsElement>(null);
 
   const load = () => api.workspaceOpeners(workspace.id).then(setOpeners).catch((reason) => onError(localizeMessage(reason)));
   useEffect(() => { void load(); }, [workspace.id]);
@@ -19,7 +20,6 @@ export function WorkspaceOpenWith({ workspace, onError }: { workspace: Workspace
     onError("");
     try {
       await api.openWorkspaceWithApp(workspace.id, openerId);
-      menu.current?.removeAttribute("open");
       if (openerId) await load();
     } catch (reason) {
       onError(localizeMessage(reason));
@@ -30,11 +30,11 @@ export function WorkspaceOpenWith({ workspace, onError }: { workspace: Workspace
 
   if (!preferred) return null;
   return <div className="workspace-open-with">
-    <button className="ghost opener-main" disabled={opening} onClick={() => void openWorkspace()} title={tr("workspaceOpener.openWith", { app: preferred.name })}><OpenerIcon category={preferred.category} />{preferred.name}</button>
-    <details ref={menu} className="opener-dropdown"><summary className="ghost" aria-label={tr("workspaceOpener.choose")} title={tr("workspaceOpener.choose")}><ChevronDown size={14} /></summary><div>{(["editor", "terminal", "file-manager"] as const).map((category) => {
+    <Button className="ghost opener-main" disabled={opening} onClick={() => void openWorkspace()} title={tr("workspaceOpener.openWith", { app: preferred.name })}><OpenerIcon category={preferred.category} />{preferred.name}</Button>
+    <DropdownMenu><DropdownMenuTrigger className="ghost opener-dropdown-trigger" aria-label={tr("workspaceOpener.choose")} title={tr("workspaceOpener.choose")}><ChevronDown size={14} /></DropdownMenuTrigger><DropdownMenuContent className="opener-dropdown" align="end">{(["editor", "terminal", "file-manager"] as const).map((category) => {
       const values = openers.filter((opener) => opener.category === category);
-      return values.length ? <section key={category}><span>{tr(`workspaceOpener.category.${category}`)}</span>{values.map((opener) => <button key={opener.id} onClick={() => void openWorkspace(opener.id)}><OpenerIcon category={opener.category} /><strong>{opener.name}</strong>{opener.preferred && <em>{tr("workspaceOpener.default")}</em>}</button>)}</section> : null;
-    })}</div></details>
+      return values.length ? <DropdownMenuGroup key={category}><DropdownMenuLabel>{tr(`workspaceOpener.category.${category}`)}</DropdownMenuLabel>{values.map((opener) => <DropdownMenuItem key={opener.id} onClick={() => void openWorkspace(opener.id)}><OpenerIcon category={opener.category} /><strong>{opener.name}</strong>{opener.preferred && <em>{tr("workspaceOpener.default")}</em>}</DropdownMenuItem>)}</DropdownMenuGroup> : null;
+    })}</DropdownMenuContent></DropdownMenu>
   </div>;
 }
 
