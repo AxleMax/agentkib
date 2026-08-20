@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use agentkib_platform::path::{canonicalize, equivalent, starts_with as path_starts_with};
@@ -9,6 +10,8 @@ use anyhow::{Context, Result, bail};
 use crate::{AgentKind, ContextPreview, ContextSection, Manifest, canonical_project};
 
 const MAX_CONTEXT_CHARS_PER_FILE: usize = 128 * 1024;
+const MAX_CONTEXT_BYTES_PER_FILE: u64 = MAX_CONTEXT_CHARS_PER_FILE as u64 * 4;
+const MAX_CONTEXT_CHARS_TOTAL: usize = 512 * 1024;
 const DSH_MAX_CONTEXT_BYTES: usize = 64 * 1024;
 const DSH_MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 
@@ -42,7 +45,7 @@ pub fn resolve_context(
         AgentKind::Codex => codex_sources(&dirs),
         AgentKind::ClaudeCode => claude_sources(&dirs),
         AgentKind::Cursor => cursor_sources(&dirs),
-        AgentKind::OpenClaw => openclaw_sources(&root),
+        AgentKind::OpenClaw => openclaw_sources(&dirs),
         AgentKind::Hermes => hermes_sources(&dirs),
         AgentKind::DeepSeekHarness => Vec::new(),
     };
@@ -50,8 +53,20 @@ pub fn resolve_context(
         deepseek_harness_sections(&context_root, &dirs, &mut warnings)
     } else {
         let mut sections = Vec::new();
+        let mut remaining_context_chars = MAX_CONTEXT_CHARS_TOTAL;
         for source in sources {
-            match load_with_imports(&source, &root, &mut HashSet::new(), 0, &mut warnings) {
+            if remaining_context_chars == 0 {
+                push_context_budget_warning(&mut warnings);
+                break;
+            }
+            match load_with_imports(
+                &source,
+                &root,
+                &mut HashSet::new(),
+                0,
+                &mut remaining_context_chars,
+                &mut warnings,
+            ) {
                 Ok(content) => sections.push(ContextSection {
                     scope: source
                         .parent()
@@ -219,7 +234,7 @@ fn deepseek_harness_sections(
                 ));
                 continue;
             }
-            let Ok(content) = fs::read_to_string(&path) else {
+            let Ok(content) = read_utf8_file_with_limit(&path, DSH_MAX_SOURCE_BYTES) else {
                 warnings.push(format!("Could not read {}", path.display()));
                 continue;
             };
@@ -266,10 +281,21 @@ fn push_deepseek_section(
         ));
         return;
     }
-    match fs::read_to_string(&path) {
+    match read_utf8_file_with_limit(&path, DSH_MAX_SOURCE_BYTES) {
         Ok(content) => push_deepseek_content(sections, path, scope, content, remaining, warnings),
         Err(error) => warnings.push(format!("Could not read {}: {error}", path.display())),
     }
+}
+
+fn read_utf8_file_with_limit(path: &Path, limit: u64) -> Result<String> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!("file exceeds the {limit}-byte read limit");
+    }
+    Ok(String::from_utf8(bytes)?)
 }
 
 fn push_deepseek_content(
@@ -316,7 +342,7 @@ fn deepseek_custom_loading_rules(home: &Path) -> bool {
         );
     }
     candidates.into_iter().any(|path| {
-        fs::read_to_string(path).is_ok_and(|content| {
+        read_context_file(&path).is_ok_and(|(content, _)| {
             content.contains("agent-instructions") || content.contains("skill-filesystem")
         })
     })
@@ -399,13 +425,11 @@ fn claude_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
 
 fn cursor_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    if let Some(root) = dirs.first() {
-        let agents = root.join("AGENTS.md");
+    for dir in dirs {
+        let agents = dir.join("AGENTS.md");
         if agents.is_file() {
             result.push(agents);
         }
-    }
-    for dir in dirs {
         let rules = dir.join(".cursor/rules");
         let Ok(entries) = fs::read_dir(rules) else {
             continue;
@@ -422,7 +446,7 @@ fn cursor_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 fn cursor_rule_is_always(path: &Path) -> bool {
-    fs::read_to_string(path).is_ok_and(|content| {
+    read_context_file(path).is_ok_and(|(content, _)| {
         let mut lines = content.lines();
         if lines.next().map(str::trim) != Some("---") {
             return false;
@@ -435,8 +459,11 @@ fn cursor_rule_is_always(path: &Path) -> bool {
     })
 }
 
-fn openclaw_sources(root: &Path) -> Vec<PathBuf> {
-    [
+fn openclaw_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let Some(root) = dirs.first() else {
+        return Vec::new();
+    };
+    let mut result = [
         "AGENTS.md",
         "SOUL.md",
         "IDENTITY.md",
@@ -447,7 +474,14 @@ fn openclaw_sources(root: &Path) -> Vec<PathBuf> {
     .into_iter()
     .map(|name| root.join(name))
     .filter(|path| path.is_file())
-    .collect()
+    .collect::<Vec<_>>();
+    result.extend(
+        dirs.iter()
+            .skip(1)
+            .map(|dir| dir.join("AGENTS.md"))
+            .filter(|path| path.is_file()),
+    );
+    result
 }
 
 fn hermes_sources(dirs: &[PathBuf]) -> Vec<PathBuf> {
@@ -479,6 +513,7 @@ fn load_with_imports(
     project: &Path,
     visited: &mut HashSet<PathBuf>,
     depth: usize,
+    remaining_context_chars: &mut usize,
     warnings: &mut Vec<String>,
 ) -> Result<String> {
     if depth > 5 {
@@ -494,22 +529,21 @@ fn load_with_imports(
     if !visited.insert(canonical.clone()) {
         bail!("Circular instruction import detected: {}", path.display());
     }
-    let raw = fs::read_to_string(&canonical)
+    let (content, truncated) = read_context_file(&canonical)
         .with_context(|| format!("Could not read {}", path.display()))?;
-    let content = if raw.chars().count() > MAX_CONTEXT_CHARS_PER_FILE {
+    if truncated {
         warnings.push(format!(
             "Instruction file exceeds {} characters and was truncated for preview: {}",
             MAX_CONTEXT_CHARS_PER_FILE,
             path.display()
         ));
-        raw.chars()
-            .take(MAX_CONTEXT_CHARS_PER_FILE)
-            .collect::<String>()
-    } else {
-        raw
-    };
+    }
     let mut output = String::new();
     for line in content.lines() {
+        if *remaining_context_chars == 0 {
+            push_context_budget_warning(warnings);
+            break;
+        }
         let trimmed = line.trim();
         if let Some(import_path) = trimmed
             .strip_prefix('@')
@@ -525,9 +559,10 @@ fn load_with_imports(
                     project,
                     visited,
                     depth + 1,
+                    remaining_context_chars,
                     warnings,
                 )?);
-                output.push('\n');
+                append_context_text(&mut output, "\n", remaining_context_chars, warnings);
                 continue;
             }
             warnings.push(format!(
@@ -536,11 +571,69 @@ fn load_with_imports(
                 canonical.display()
             ));
         }
-        output.push_str(line);
-        output.push('\n');
+        append_context_text(&mut output, line, remaining_context_chars, warnings);
+        append_context_text(&mut output, "\n", remaining_context_chars, warnings);
     }
     visited.remove(&canonical);
     Ok(output)
+}
+
+fn append_context_text(
+    output: &mut String,
+    value: &str,
+    remaining_context_chars: &mut usize,
+    warnings: &mut Vec<String>,
+) {
+    let mut chars = value.chars();
+    let chunk = chars
+        .by_ref()
+        .take(*remaining_context_chars)
+        .collect::<String>();
+    let used = chunk.chars().count();
+    output.push_str(&chunk);
+    *remaining_context_chars = remaining_context_chars.saturating_sub(used);
+    if chars.next().is_some() {
+        push_context_budget_warning(warnings);
+    }
+}
+
+fn push_context_budget_warning(warnings: &mut Vec<String>) {
+    let warning = format!(
+        "Resolved project instructions exceed {} characters and were truncated for preview",
+        MAX_CONTEXT_CHARS_TOTAL
+    );
+    if !warnings.contains(&warning) {
+        warnings.push(warning);
+    }
+}
+
+fn read_context_file(path: &Path) -> Result<(String, bool)> {
+    let file = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_CONTEXT_BYTES_PER_FILE + 1)
+        .read_to_end(&mut bytes)?;
+    let exceeded_byte_limit = bytes.len() as u64 > MAX_CONTEXT_BYTES_PER_FILE;
+    if exceeded_byte_limit {
+        bytes.truncate(MAX_CONTEXT_BYTES_PER_FILE as usize);
+    }
+
+    let raw = match String::from_utf8(bytes) {
+        Ok(value) => value,
+        Err(error) if exceeded_byte_limit && error.utf8_error().error_len().is_none() => {
+            let valid_up_to = error.utf8_error().valid_up_to();
+            let mut bytes = error.into_bytes();
+            bytes.truncate(valid_up_to);
+            String::from_utf8(bytes).expect("the validated UTF-8 prefix must remain valid")
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let exceeded_character_limit = raw.chars().count() > MAX_CONTEXT_CHARS_PER_FILE;
+    let content = if exceeded_character_limit {
+        raw.chars().take(MAX_CONTEXT_CHARS_PER_FILE).collect()
+    } else {
+        raw
+    };
+    Ok((content, exceeded_byte_limit || exceeded_character_limit))
 }
 
 #[cfg(test)]
@@ -577,10 +670,93 @@ mod tests {
     }
 
     #[test]
+    fn oversized_instruction_is_read_within_the_preview_bound() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("AGENTS.md");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_CONTEXT_BYTES_PER_FILE + 1).unwrap();
+
+        let (content, truncated) = read_context_file(&path).unwrap();
+
+        assert_eq!(content.chars().count(), MAX_CONTEXT_CHARS_PER_FILE);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn deepseek_source_read_keeps_the_one_mib_hard_limit() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("AGENTS.md");
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(DSH_MAX_SOURCE_BYTES + 1)
+            .unwrap();
+
+        let error = read_utf8_file_with_limit(&path, DSH_MAX_SOURCE_BYTES).unwrap_err();
+
+        assert!(error.to_string().contains("read limit"));
+    }
+
+    #[test]
+    fn bounded_instruction_read_keeps_complete_utf8_characters() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("AGENTS.md"),
+            "中".repeat(MAX_CONTEXT_BYTES_PER_FILE as usize / 3 + 2),
+        )
+        .unwrap();
+
+        let (content, truncated) = read_context_file(&dir.path().join("AGENTS.md")).unwrap();
+
+        assert_eq!(content.chars().count(), MAX_CONTEXT_CHARS_PER_FILE);
+        assert!(content.ends_with('中'));
+        assert!(truncated);
+    }
+
+    #[test]
+    fn repeated_imports_share_a_total_context_budget() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), "@part.md\n".repeat(8)).unwrap();
+        fs::write(
+            dir.path().join("part.md"),
+            "x".repeat(MAX_CONTEXT_CHARS_PER_FILE),
+        )
+        .unwrap();
+
+        let preview =
+            resolve_context(dir.path(), dir.path(), AgentKind::ClaudeCode, None, vec![]).unwrap();
+
+        assert!(preview.sections[0].content.chars().count() <= MAX_CONTEXT_CHARS_TOTAL);
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Resolved project instructions exceed"))
+        );
+    }
+
+    #[test]
+    fn cursor_rule_detection_does_not_read_an_oversized_file_in_full() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("always.mdc");
+        fs::write(&path, "---\nalwaysApply: true\n").unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(MAX_CONTEXT_BYTES_PER_FILE + 1)
+            .unwrap();
+
+        assert!(cursor_rule_is_always(&path));
+    }
+
+    #[test]
     fn cursor_context_uses_agents_and_only_always_rules() {
         let dir = tempdir().unwrap();
+        let nested = dir.path().join("src");
+        fs::create_dir(&nested).unwrap();
         fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
         fs::write(dir.path().join("AGENTS.md"), "shared").unwrap();
+        fs::write(nested.join("AGENTS.md"), "nested").unwrap();
         fs::write(
             dir.path().join(".cursor/rules/always.mdc"),
             "---\nalwaysApply: true\n---\ncursor override",
@@ -593,10 +769,28 @@ mod tests {
         .unwrap();
 
         let preview =
-            resolve_context(dir.path(), dir.path(), AgentKind::Cursor, None, vec![]).unwrap();
-        assert_eq!(preview.sections.len(), 2);
+            resolve_context(dir.path(), &nested, AgentKind::Cursor, None, vec![]).unwrap();
+        assert_eq!(preview.sections.len(), 3);
         assert_eq!(preview.sections[0].content.trim(), "shared");
         assert!(preview.sections[1].content.contains("cursor override"));
+        assert_eq!(preview.sections[2].content.trim(), "nested");
+    }
+
+    #[test]
+    fn openclaw_context_inherits_nested_agents_rules() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("src");
+        fs::create_dir(&nested).unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "shared").unwrap();
+        fs::write(dir.path().join("TOOLS.md"), "tools").unwrap();
+        fs::write(nested.join("AGENTS.md"), "nested").unwrap();
+
+        let preview =
+            resolve_context(dir.path(), &nested, AgentKind::OpenClaw, None, vec![]).unwrap();
+        assert_eq!(preview.sections.len(), 3);
+        assert_eq!(preview.sections[0].content.trim(), "shared");
+        assert_eq!(preview.sections[1].content.trim(), "tools");
+        assert_eq!(preview.sections[2].content.trim(), "nested");
     }
 
     #[test]

@@ -24,6 +24,7 @@
       "resources/licenses/Win-CodexBar-NOTICE.txt": "licenses/Win-CodexBar-NOTICE.txt"
     },
     "windows": {
+      "minimumWebview2Version": "111.0.1661.15",
       "nsis": {
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico"

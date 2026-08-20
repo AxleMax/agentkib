@@ -3403,6 +3403,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(raw_id_rows, 0);
+
+        store
+            .sync_conversation_sessions(&registered.id, AgentKind::Codex, &[])
+            .unwrap();
+        assert!(
+            store
+                .list_conversation_sessions(&registered.id)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import type { ComponentType } from "react";
 import { ArrowLeft, Database, FolderSearch, PlugZap, Settings2, Stethoscope } from "lucide-react";
 import { tr } from "../i18n";
@@ -26,15 +27,15 @@ export function SettingsSidebar({
   return (
     <aside className="sidebar settings-sidebar" aria-hidden={collapsed} inert={collapsed ? true : undefined}>
       <div className="settings-sidebar-head">
-        <button className="back-to-app" type="button" onClick={onBack}>
+        <Button variant="bare" size="content" className="back-to-app" type="button" onClick={onBack}>
           <ArrowLeft size={16} />{tr("settings.backToApp")}
-        </button>
+        </Button>
       </div>
       <nav aria-label={tr("settings.navigation")}>
         {sections.map(({ id, label, icon: Icon }) => (
-          <button key={id} className={active === id ? "active" : ""} onClick={() => onSelect(id)}>
+          <Button key={id} variant="bare" size="content" className={active === id ? "active" : ""} aria-current={active === id ? "page" : undefined} onClick={() => onSelect(id)}>
             <Icon size={17} />{tr(label)}
-          </button>
+          </Button>
         ))}
       </nav>
     </aside>

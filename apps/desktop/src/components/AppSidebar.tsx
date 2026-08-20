@@ -1,5 +1,6 @@
+import { Button } from "@/components/ui/button";
 import type { ComponentType } from "react";
-import { Settings, Sparkles } from "lucide-react";
+import { Settings } from "lucide-react";
 import { tr } from "../i18n";
 
 export interface SidebarEntry<T extends string> {
@@ -25,20 +26,19 @@ export function AppSidebar<T extends string>({
   return (
     <aside className="sidebar" aria-hidden={collapsed} inert={collapsed ? true : undefined}>
       <div className="brand">
-        <div className="brand-mark"><Sparkles size={17} /></div>
         <strong>AgentKib</strong>
       </div>
       <nav aria-label={tr("common.primaryNavigation")}>
         {entries.map(({ id, label, icon: Icon, badge }) => (
-          <button key={id} className={active === id ? "active" : ""} onClick={() => onNavigate(id)}>
+          <Button key={id} variant="bare" size="content" className={active === id ? "active" : ""} aria-current={active === id ? "page" : undefined} onClick={() => onNavigate(id)}>
             <Icon size={17} />{tr(label)}
             {badge ? <em>{badge}</em> : null}
-          </button>
+          </Button>
         ))}
       </nav>
-      <button className="sidebar-settings" type="button" onClick={onSettings}>
+      <Button variant="bare" size="content" className="sidebar-settings" type="button" onClick={onSettings}>
         <Settings size={17} />{tr("nav.settings")}
-      </button>
+      </Button>
     </aside>
   );
 }

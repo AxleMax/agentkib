@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Check, ChevronDown, CircleAlert, Gauge, RefreshCw, Search, Settings2, X } from "lucide-react";
 import { api } from "../api";
@@ -210,19 +217,21 @@ export function QuotaPage({
 
   return <div className="quota-page">
     {error && snapshot && <div className="alert"><CircleAlert size={16} />{error}</div>}
+    <Collapsible open={showPreferences} onOpenChange={setShowPreferences} className="quota-display-settings-controller">
     <div className="quota-toolbar">
-      <label className="search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("quota.search")} /></label>
-      <div className="quota-filter" role="group" aria-label={tr("quota.filterLabel")}>
-        {(["all", "healthy", "warning", "unavailable"] as QuotaFilter[]).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{tr(`quota.filter.${value}`)}</button>)}
-      </div>
-      {popoverSupported && <button className="ghost quota-display-settings-button" type="button" onClick={() => setShowPreferences((value) => !value)} aria-expanded={showPreferences}><Settings2 size={15} />{tr("quota.popoverSettings")}</button>}
+      <Label className="search"><Search size={14} /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("quota.search")} /></Label>
+      <ToggleGroup className="quota-filter" value={[filter]} onValueChange={(values) => { const value = values[0]; if (value) setFilter(value as QuotaFilter); }} aria-label={tr("quota.filterLabel")}>
+        {(["all", "healthy", "warning", "unavailable"] as QuotaFilter[]).map((value) => <ToggleGroupItem key={value} value={value} className={filter === value ? "active" : ""}>{tr(`quota.filter.${value}`)}</ToggleGroupItem>)}
+      </ToggleGroup>
+      {popoverSupported && <CollapsibleTrigger className="ghost quota-display-settings-button" type="button"><Settings2 size={15} />{tr("quota.popoverSettings")}</CollapsibleTrigger>}
       {snapshot && refreshLabel && <span className="badge">{refreshLabel}</span>}
-      <button className="ghost icon-only" onClick={() => void refresh()} disabled={busy} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></button>
+      <Button className="ghost icon-only" onClick={() => void refresh()} disabled={busy} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></Button>
     </div>
 
-    {popoverSupported && showPreferences && snapshot && <QuotaDisplaySettings snapshot={snapshot} preferences={preferences} onChange={setPreferences} onClose={() => setShowPreferences(false)} />}
+    {popoverSupported && snapshot && <CollapsibleContent><QuotaDisplaySettings snapshot={snapshot} preferences={preferences} onChange={setPreferences} onClose={() => setShowPreferences(false)} /></CollapsibleContent>}
+    </Collapsible>
 
-    {!snapshot && <div className="quota-empty compact"><Gauge size={26} /><strong>{emptyLabel}</strong>{emptyDetail && <small>{emptyDetail}</small>}<button className="primary" onClick={() => void refresh()} disabled={busy}>{tr("quota.refresh")}</button></div>}
+    {!snapshot && <div className="quota-empty compact"><Gauge size={26} /><strong>{emptyLabel}</strong>{emptyDetail && <small>{emptyDetail}</small>}<Button className="primary" onClick={() => void refresh()} disabled={busy}>{tr("quota.refresh")}</Button></div>}
     {snapshot && <>
       <ProviderTabs providers={providers} selectedId={selectedId} onSelect={setSelectedId} />
       {!providers.length && <div className="quota-list-empty">{tr("quota.noMatch")}</div>}
@@ -232,25 +241,17 @@ export function QuotaPage({
 }
 
 function ProviderTabs({ providers, selectedId, onSelect }: { providers: QuotaProvider[]; selectedId: string; onSelect: (id: string) => void }) {
-  const handleKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || !providers.length) return;
-    event.preventDefault();
-    const current = Math.max(0, providers.findIndex((provider) => provider.id === selectedId));
-    const index = event.key === "Home" ? 0 : event.key === "End" ? providers.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + providers.length) % providers.length;
-    onSelect(providers[index].id);
-    event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[index]?.focus();
-  };
-  return <div className="quota-provider-tabs" role="tablist" aria-label={tr("quota.providers")} onKeyDown={handleKey}>
+  return <Tabs value={selectedId} onValueChange={onSelect}><TabsList className="quota-provider-tabs" variant="line" aria-label={tr("quota.providers")}>
     {providers.map((provider) => {
       const remaining = lowestRemaining(provider);
       const unavailable = remaining === undefined;
-      return <button key={provider.id} role="tab" tabIndex={selectedId === provider.id ? 0 : -1} aria-selected={selectedId === provider.id} className={`${selectedId === provider.id ? "active" : ""}${unavailable ? " unavailable" : ""}`} onClick={() => onSelect(provider.id)}>
+      return <TabsTrigger key={provider.id} value={provider.id} className={unavailable ? "unavailable" : undefined}>
         <ProviderIcon provider={provider} />
         <span><strong>{provider.name}</strong><small>{provider.identity?.account_email ?? provider.identity?.plan ?? tr(unavailable ? "quota.unavailable" : "quota.available")}</small></span>
         {remaining === undefined ? <em>—</em> : <><em className={quotaSeverity(remaining)}>{Math.round(remaining)}%</em><i className="quota-tab-progress"><b className={quotaSeverity(remaining)} style={{ width: `${remaining}%` }} /></i></>}
-      </button>;
+      </TabsTrigger>;
     })}
-  </div>;
+  </TabsList></Tabs>;
 }
 
 function QuotaProviderDetail({ provider, snapshot, targetWindow }: { provider: QuotaProvider; snapshot: QuotaSnapshot; targetWindow?: QuotaWindowSelector }) {
@@ -271,11 +272,11 @@ function QuotaProviderDetail({ provider, snapshot, targetWindow }: { provider: Q
     {accountGroups.map(({ account, windows: accountWindows }) => accountWindows.length > 0 && <section className="quota-account-group" key={account.id}>
       <header><div><strong>{account.identity?.account_email ?? account.label}</strong><span>{[account.identity?.plan, account.active ? tr("quota.activeAccount") : undefined].filter(Boolean).join(" · ")}</span></div>{account.updated_at && <time>{formatRelativeTime(account.updated_at)}</time>}</header>
       <div className="quota-window-stack">{accountWindows.map((item) => <QuotaWindowRow key={item.key} item={item} target={item.key === targetKey} />)}</div>
-      {account.error && <details className="quota-inline-diagnostic"><summary>{tr("quota.partialData")}</summary><pre>{account.error}</pre></details>}
+      {account.error && <Collapsible className="quota-inline-diagnostic"><CollapsibleTrigger>{tr("quota.partialData")}</CollapsibleTrigger><CollapsibleContent><pre>{account.error}</pre></CollapsibleContent></Collapsible>}
     </section>)}
 
     {unavailable && <div className="quota-provider-empty"><Gauge size={24} /><strong>{tr("quota.providerUnavailable")}</strong><span>{tr("quota.noWindows")}</span></div>}
-    {provider.error && <details className={`quota-inline-diagnostic${providerHasPartialData(provider) ? " partial" : ""}`}><summary>{tr(providerHasPartialData(provider) ? "quota.partialData" : "common.details")}</summary><pre>{provider.error}</pre></details>}
+    {provider.error && <Collapsible className={`quota-inline-diagnostic${providerHasPartialData(provider) ? " partial" : ""}`}><CollapsibleTrigger>{tr(providerHasPartialData(provider) ? "quota.partialData" : "common.details")}</CollapsibleTrigger><CollapsibleContent><pre>{provider.error}</pre></CollapsibleContent></Collapsible>}
   </section>;
 }
 
@@ -315,8 +316,8 @@ function QuotaDisplaySettings({ snapshot, preferences, onChange, onClose }: { sn
     const hidden = current.hidden_windows.some((item) => quotaWindowKey(item) === key);
     void persist({ ...current, hidden_windows: hidden ? current.hidden_windows.filter((item) => quotaWindowKey(item) !== key) : [...current.hidden_windows, selector] });
   };
-  return <aside className="quota-display-settings" role="dialog" aria-modal="false" aria-label={tr("quota.popoverSettings")}>
-    <header><div><strong>{tr("quota.popoverSettings")}</strong><span>{tr("quota.popoverSettingsHint")}</span></div><button className="ghost icon-only" type="button" onClick={onClose} aria-label={tr("common.close")}><X size={15} /></button></header>
+  return <aside className="quota-display-settings" aria-label={tr("quota.popoverSettings")}>
+    <header><div><strong>{tr("quota.popoverSettings")}</strong><span>{tr("quota.popoverSettingsHint")}</span></div><Button className="ghost icon-only" type="button" onClick={onClose} aria-label={tr("common.close")}><X size={15} /></Button></header>
     <div className="quota-display-options">
       {snapshot.providers.filter(isQuotaProviderSupported).map((provider) => <QuotaDisplayProviderOption
         key={provider.id}
@@ -327,7 +328,7 @@ function QuotaDisplaySettings({ snapshot, preferences, onChange, onClose }: { sn
       />)}
     </div>
     {saveError && <div className="setting-detail error" role="alert">{saveError}</div>}
-    <footer><button className="ghost" type="button" onClick={() => void persist({ hidden_providers: [], hidden_windows: [] })}><Check size={14} />{tr("quota.restorePopoverDefaults")}</button></footer>
+    <footer><Button className="ghost" type="button" onClick={() => void persist({ hidden_providers: [], hidden_windows: [] })}><Check size={14} />{tr("quota.restorePopoverDefaults")}</Button></footer>
   </aside>;
 }
 
@@ -340,10 +341,10 @@ function QuotaDisplayProviderOption({ provider, preferences, onToggleProvider, o
   const windows = flattenQuotaWindows(provider);
   const providerVisible = !preferences.hidden_providers.includes(provider.id);
   const [expanded, setExpanded] = useState(providerVisible && windows.length > 0);
-  return <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-    <summary><label onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={providerVisible} disabled={!windows.length} onChange={() => onToggleProvider(provider.id)} /><ProviderIcon provider={provider} /><span><strong>{provider.name}</strong><small>{windows.length ? tr("quota.windowCount", { count: windows.length }) : tr("quota.noWindows")}</small></span></label><ChevronDown size={14} /></summary>
-    {windows.length > 0 && <div>{windows.map((item) => <label key={item.key}><input type="checkbox" checked={providerVisible && !preferences.hidden_windows.some((hidden) => quotaWindowKey(hidden) === item.key)} disabled={!providerVisible} onChange={() => onToggleWindow(item.selector)} /><span><strong>{item.window.label || tr(`quota.window.${item.window.kind}`)}</strong><small>{item.accountLabel ?? provider.identity?.account_email ?? provider.identity?.plan ?? provider.name}</small></span></label>)}</div>}
-  </details>;
+  return <Collapsible open={expanded} onOpenChange={setExpanded}>
+    <div className="quota-provider-option-head"><Label><Checkbox checked={providerVisible} disabled={!windows.length} onCheckedChange={() => onToggleProvider(provider.id)} /><ProviderIcon provider={provider} /><span><strong>{provider.name}</strong><small>{windows.length ? tr("quota.windowCount", { count: windows.length }) : tr("quota.noWindows")}</small></span></Label><CollapsibleTrigger aria-label={tr("common.details")}><ChevronDown size={14} /></CollapsibleTrigger></div>
+    {windows.length > 0 && <CollapsibleContent>{windows.map((item) => <Label key={item.key}><Checkbox checked={providerVisible && !preferences.hidden_windows.some((hidden) => quotaWindowKey(hidden) === item.key)} disabled={!providerVisible} onCheckedChange={() => onToggleWindow(item.selector)} /><span><strong>{item.window.label || tr(`quota.window.${item.window.kind}`)}</strong><small>{item.accountLabel ?? provider.identity?.account_email ?? provider.identity?.plan ?? provider.name}</small></span></Label>)}</CollapsibleContent>}
+  </Collapsible>;
 }
 
 function matchesFilter(provider: QuotaProvider, filter: QuotaFilter) {

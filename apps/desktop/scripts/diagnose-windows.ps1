@@ -130,10 +130,14 @@ $webView = @(
     Get-ItemProperty $_.PSPath
   }
 } | Where-Object { $_.name -match "WebView2" } | Select-Object -First 1
-if ($webView) {
-  Add-Result "WebView2 Runtime" "PASS" "$($webView.name) $($webView.pv)"
+$webViewVersion = $null
+$hasWebViewVersion = $webView -and $webView.pv -and [version]::TryParse([string] $webView.pv, [ref] $webViewVersion)
+if ($hasWebViewVersion -and $webViewVersion -ge [version] "111.0.1661.15") {
+  Add-Result "WebView2 Runtime 111+" "PASS" "$($webView.name) $($webView.pv)"
+} elseif ($webView) {
+  Add-Result "WebView2 Runtime 111+" "FAIL" "WebView2 111.0.1661.15 or newer is required; found $($webView.pv)."
 } else {
-  Add-Result "WebView2 Runtime" "FAIL" "WebView2 Evergreen Runtime was not found."
+  Add-Result "WebView2 Runtime 111+" "FAIL" "WebView2 Evergreen Runtime 111.0.1661.15 or newer was not found."
 }
 
 if ($gitVersion) {

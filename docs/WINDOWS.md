@@ -75,7 +75,7 @@ winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --source wing
 
 ### 4. WebView2 Runtime
 
-Windows 11 和 Microsoft Edge 通常已包含 WebView2 Evergreen Runtime。若诊断提示缺失，请安装微软官方 WebView2 Evergreen Runtime 后重开终端。
+Windows 11 和 Microsoft Edge 通常已包含 WebView2 Evergreen Runtime。AgentKib 要求 **111.0.1661.15 或更高版本**；若诊断提示缺失或版本过低，请安装微软官方 WebView2 Evergreen Runtime 后重开终端。
 
 ### 5. 一键诊断
 
@@ -182,7 +182,7 @@ pnpm dev
 
 ### 窗口空白或 WebView2 报错
 
-修复或重新安装 WebView2 Evergreen Runtime，然后删除开发构建缓存并重新编译。不要删除 `%LOCALAPPDATA%\com.agentkib.desktop`，除非已经备份并确定要清空应用数据。
+更新、修复或重新安装 WebView2 Evergreen Runtime 111+，然后删除开发构建缓存并重新编译。不要删除 `%LOCALAPPDATA%\com.agentkib.desktop`，除非已经备份并确定要清空应用数据。
 
 ### `localhost:1420` 端口被占用
 

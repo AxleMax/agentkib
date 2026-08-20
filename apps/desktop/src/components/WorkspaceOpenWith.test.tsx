@@ -42,7 +42,8 @@ describe("WorkspaceOpenWith", () => {
 
   it("remembers a selected installed application", async () => {
     render(<WorkspaceOpenWith workspace={workspace} onError={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "PyCharm" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Choose application" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "PyCharm" }));
     await waitFor(() => expect(api.openWorkspaceWithApp).toHaveBeenCalledWith("workspace", "pycharm"));
     expect(api.workspaceOpeners).toHaveBeenCalledTimes(2);
   });

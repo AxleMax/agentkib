@@ -6,4 +6,5 @@ pub mod fs;
 pub mod network;
 pub mod path;
 pub mod process;
+pub mod terminal;
 pub mod xdg;

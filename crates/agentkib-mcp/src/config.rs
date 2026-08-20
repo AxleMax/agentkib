@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use agentkib_core::{AgentKind, McpConfigDocument, McpServerConfig};
@@ -9,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 pub const GLOBAL_CONFIG_NAME: &str = "mcp.json";
 pub const LOCAL_CONFIG_NAME: &str = "mcp.local.json";
+const MAX_MCP_CONFIG_BYTES: u64 = 1024 * 1024;
 
 pub fn global_config_dir() -> Result<PathBuf> {
     Ok(dirs::home_dir()
@@ -76,11 +78,37 @@ pub fn load_visible_servers(
 }
 
 pub fn read_document(path: &Path) -> Result<McpConfigDocument> {
-    if !path.is_file() {
-        return Ok(McpConfigDocument::default());
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(McpConfigDocument::default());
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Unable to inspect MCP config {}", path.display()));
+        }
+    };
+    if !metadata.is_file() {
+        bail!("MCP config must be a regular file: {}", path.display());
     }
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Unable to read MCP config {}", path.display()))?;
+    if metadata.len() > MAX_MCP_CONFIG_BYTES {
+        bail!(
+            "MCP config exceeds the 1 MiB read limit: {}",
+            path.display()
+        );
+    }
+    let mut content = String::new();
+    fs::File::open(path)
+        .with_context(|| format!("Unable to read MCP config {}", path.display()))?
+        .take(MAX_MCP_CONFIG_BYTES + 1)
+        .read_to_string(&mut content)
+        .with_context(|| format!("MCP config must be UTF-8: {}", path.display()))?;
+    if content.len() as u64 > MAX_MCP_CONFIG_BYTES {
+        bail!(
+            "MCP config exceeds the 1 MiB read limit: {}",
+            path.display()
+        );
+    }
     let value: McpConfigDocument = serde_json::from_str(&content)
         .with_context(|| format!("Invalid MCP JSON config {}", path.display()))?;
     validate_document_with_secrets(
@@ -386,5 +414,36 @@ mod tests {
         let serialized = serde_json::to_string(&masked).unwrap();
         assert!(!serialized.contains("do-not-return"));
         assert!(serialized.contains("configured"));
+    }
+
+    #[test]
+    fn oversized_config_is_rejected_before_parsing() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(MAX_MCP_CONFIG_BYTES + 1)
+            .unwrap();
+
+        let error = read_document(&path).unwrap_err();
+
+        assert!(error.to_string().contains("exceeds the 1 MiB read limit"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oversized_symlinked_config_is_rejected_before_parsing() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("oversized.json");
+        fs::File::create(&target)
+            .unwrap()
+            .set_len(MAX_MCP_CONFIG_BYTES + 1)
+            .unwrap();
+        let path = dir.path().join("mcp.json");
+        std::os::unix::fs::symlink(target, &path).unwrap();
+
+        let error = read_document(&path).unwrap_err();
+
+        assert!(error.to_string().contains("exceeds the 1 MiB read limit"));
     }
 }

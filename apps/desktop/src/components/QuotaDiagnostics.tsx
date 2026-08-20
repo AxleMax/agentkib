@@ -1,3 +1,4 @@
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { tr } from "../i18n";
 import type { QuotaCollectorStatus, QuotaSnapshot } from "../types";
 import "./quota.css";
@@ -9,7 +10,7 @@ export function QuotaDiagnostics({ status }: { status?: QuotaCollectorStatus }) 
     <DiagnosticRow label={tr("quota.sidecar")} value={tr(status.sidecar_available ? "quota.available" : "quota.unavailable")} />
     <DiagnosticRow label={tr("quota.configSource")} value={tr(`quota.config.${status.config_source}`)} />
     <DiagnosticRow label={tr("quota.lastSuccess")} value={status.last_success_at ? formatDateTime(status.last_success_at) : "—"} />
-    {status.error_key && <div className="quota-diagnostic-error"><strong>{tr(status.error_key)}</strong>{status.error_detail && <details><summary>{tr("common.details")}</summary><pre>{status.error_detail}</pre></details>}</div>}
+    {status.error_key && <div className="quota-diagnostic-error"><strong>{tr(status.error_key)}</strong>{status.error_detail && <Collapsible><CollapsibleTrigger>{tr("common.details")}</CollapsibleTrigger><CollapsibleContent><pre>{status.error_detail}</pre></CollapsibleContent></Collapsible>}</div>}
   </div>;
 }
 

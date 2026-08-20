@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Input } from "@/components/ui/input";
+import { SelectControl } from "@/components/ui/select-control";
+import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Archive,
   ArrowLeft,
   Bot,
   CircleAlert,
+  FileOutput,
   GitBranch,
   MessageSquareText,
   RefreshCw,
@@ -16,11 +21,14 @@ import { api } from "../api";
 import { AgentIcon } from "./AgentIcon";
 import { formatDateTime, formatRelativeTime, localizeMessage, tr } from "../i18n";
 import type {
+  AgentKind,
   ConversationEvent,
   ConversationIndexStatus,
   ConversationSessionSummary,
+  PlannedSessionHandoff,
   WorkspaceSummary,
 } from "../types";
+import { SessionHandoffDialog } from "./SessionHandoffDialog";
 
 type SessionFilter = "current" | "archived" | "metadata" | "all";
 type AgentFilter = "all" | ConversationSessionSummary["agent"];
@@ -36,10 +44,14 @@ export function WorkspaceSessionsPage({
   workspace,
   enabled,
   onRuntimeChanged,
+  onHandoffPlanned,
+  targetAgents,
 }: {
   workspace: WorkspaceSummary;
   enabled: boolean;
   onRuntimeChanged: (enabled: boolean) => Promise<void>;
+  onHandoffPlanned: (handoff: PlannedSessionHandoff) => void;
+  targetAgents: AgentKind[];
 }) {
   const [sessions, setSessions] = useState<ConversationSessionSummary[]>([]);
   const [statuses, setStatuses] = useState<ConversationIndexStatus[]>([]);
@@ -55,6 +67,7 @@ export function WorkspaceSessionsPage({
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [error, setError] = useState("");
   const [showDetail, setShowDetail] = useState(false);
+  const [showHandoff, setShowHandoff] = useState(false);
   const readSequence = useRef(0);
 
   const reloadCache = async () => {
@@ -88,19 +101,26 @@ export function WorkspaceSessionsPage({
       setStatuses([]);
       return;
     }
+    setSessions([]);
+    setStatuses([]);
+    setSelectedId(undefined);
+    setRefreshing(true);
+    setError("");
     void (async () => {
       unlisten = await listen<string>("agentkib:conversations-updated", (event) => {
         if (event.payload === workspace.id) void reloadCache();
       });
       try {
-        await reloadCache();
+        const nextSessions = await api.refreshWorkspaceSessions(workspace.id, true);
         if (disposed) return;
-        const currentStatus = await api.workspaceSessionStatus(workspace.id);
-        if (currentStatus.length < 2 || currentStatus.some((item) => item.freshness !== "fresh")) {
-          await refresh(false);
-        }
+        const nextStatuses = await api.workspaceSessionStatus(workspace.id);
+        if (disposed) return;
+        setSessions(nextSessions);
+        setStatuses(nextStatuses);
       } catch (reason) {
         if (!disposed) setError(localizeMessage(reason));
+      } finally {
+        if (!disposed) setRefreshing(false);
       }
     })();
     return () => {
@@ -178,35 +198,24 @@ export function WorkspaceSessionsPage({
     return <div className="conversation-disabled compact-state">
       <MessageSquareText size={20} />
       <span>{tr("conversations.indexDisabled")}</span>
-      <button className="primary" onClick={() => void onRuntimeChanged(true)}>{tr("conversations.enable")}</button>
+      <Button className="primary" onClick={() => void onRuntimeChanged(true)}>{tr("conversations.enable")}</Button>
     </div>;
   }
 
-  const handleFilterKeys = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-    const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    if (index < 0) return;
-    event.preventDefault();
-    const next = (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
-    buttons[next].focus();
-    buttons[next].click();
-  };
-
-  return <div className={`conversation-layout${showDetail ? " show-detail" : ""}`}>
+  return <><div className={`conversation-layout${showDetail ? " show-detail" : ""}`}>
     <aside className="panel conversation-master">
       <div className="conversation-toolbar">
-        <div className="search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("conversations.searchPlaceholder")} /></div>
-        <select value={agent} onChange={(event) => setAgent(event.target.value as AgentFilter)} aria-label={tr("conversations.agentFilter")}>
+        <div className="search"><Search size={15} /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("conversations.searchPlaceholder")} /></div>
+        <SelectControl value={agent} onChange={(event) => setAgent(event.target.value as AgentFilter)} aria-label={tr("conversations.agentFilter")}>
           <option value="all">{tr("conversations.allAgents")}</option>
           <option value="codex">Codex</option>
           <option value="claude-code">Claude Code</option>
-        </select>
-        <button className="ghost icon-only" onClick={() => void refresh(true)} disabled={refreshing} aria-label={tr("conversations.refresh")} title={tr("conversations.refresh")}><RefreshCw size={15} className={refreshing ? "spin" : ""} /></button>
+        </SelectControl>
+        <Button className="ghost icon-only" onClick={() => void refresh(true)} disabled={refreshing} aria-label={tr("conversations.refresh")} title={tr("conversations.refresh")}><RefreshCw size={15} className={refreshing ? "spin" : ""} /></Button>
       </div>
-      <div className="conversation-filters" role="tablist" aria-label={tr("conversations.filterLabel")} onKeyDown={handleFilterKeys}>
-        {(["current", "archived", "metadata", "all"] as SessionFilter[]).map((value) => <button key={value} role="tab" aria-selected={filter === value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}><span>{tr(`conversations.filter.${value}`)}</span><em>{filterCounts[value]}</em></button>)}
-      </div>
+      <ToggleGroup className="conversation-filters" value={[filter]} onValueChange={(values) => { const value = values[0]; if (value) setFilter(value as SessionFilter); }} aria-label={tr("conversations.filterLabel")}>
+        {(["current", "archived", "metadata", "all"] as SessionFilter[]).map((value) => <ToggleGroupItem key={value} value={value} className={filter === value ? "active" : ""}><span>{tr(`conversations.filter.${value}`)}</span><em>{filterCounts[value]}</em></ToggleGroupItem>)}
+      </ToggleGroup>
       {statuses.length > 0 && <div className="conversation-source-summary">{statuses.map((status) => {
         const sourceSessions = sessions.filter((session) => session.agent === status.agent);
         const readable = sourceSessions.filter((session) => session.availability === "readable").length;
@@ -214,34 +223,34 @@ export function WorkspaceSessionsPage({
       })}</div>}
       {statuses.some((status) => status.freshness !== "fresh") && <div className="conversation-source-status"><CircleAlert size={14} /><span>{tr("conversations.partialIndex")}</span></div>}
       <div className="conversation-list">
-        {filtered.map((session) => <button key={session.id} className={selected?.id === session.id ? "active" : ""} onClick={() => { setSelectedId(session.id); setShowDetail(true); }}>
+        {filtered.map((session) => <Button variant="bare" size="content" key={session.id} className={selected?.id === session.id ? "active" : ""} onClick={() => { setSelectedId(session.id); setShowDetail(true); }}>
           <AgentIcon agent={session.agent} />
           <span>
             <strong>{session.title || tr("conversations.untitled")}</strong>
             <small>{session.updated_at ? formatRelativeTime(session.updated_at) : tr("conversations.unknownTime")}{session.message_count !== undefined ? ` · ${tr("conversations.messageCount", { count: session.message_count })}` : ""}</small>
             <em>{session.git_branch && <span><GitBranch size={11} />{session.git_branch}</span>}{session.archived && <span><Archive size={11} />{tr("conversations.archived")}</span>}{session.sidechain && <span>{tr("conversations.sidechain")}</span>}{session.availability === "metadata-only" && <span>{tr("conversations.metadataOnly")}</span>}</em>
           </span>
-        </button>)}
-        {!filtered.length && <div className="conversation-empty"><MessageSquareText size={21} /><strong>{tr(filter === "current" && filterCounts.metadata > 0 ? "conversations.metadataAvailable" : "conversations.empty", { count: filterCounts.metadata })}</strong>{filter === "current" && filterCounts.metadata > 0 && <button className="ghost" onClick={() => setFilter("metadata")}>{tr("conversations.viewMetadata")}</button>}</div>}
+        </Button>)}
+        {!filtered.length && <div className="conversation-empty"><MessageSquareText size={21} /><strong>{tr(filter === "current" && filterCounts.metadata > 0 ? "conversations.metadataAvailable" : "conversations.empty", { count: filterCounts.metadata })}</strong>{filter === "current" && filterCounts.metadata > 0 && <Button className="ghost" onClick={() => setFilter("metadata")}>{tr("conversations.viewMetadata")}</Button>}</div>}
       </div>
     </aside>
     <section className="panel conversation-detail">
       <header>
-        <button className="ghost conversation-back" onClick={() => setShowDetail(false)}><ArrowLeft size={15} />{tr("conversations.back")}</button>
-        {selected ? <div><span><AgentIcon agent={selected.agent} /><strong>{selected.title || tr("conversations.untitled")}</strong></span><small>{selected.updated_at ? formatDateTime(selected.updated_at) : tr("conversations.unknownTime")}{selected.git_branch ? ` · ${selected.git_branch}` : ""}</small></div> : <strong>{tr("conversations.selectSession")}</strong>}
+        <Button className="ghost conversation-back" onClick={() => setShowDetail(false)}><ArrowLeft size={15} />{tr("conversations.back")}</Button>
+        {selected ? <><div><span><AgentIcon agent={selected.agent} /><strong>{selected.title || tr("conversations.untitled")}</strong></span><small>{selected.updated_at ? formatDateTime(selected.updated_at) : tr("conversations.unknownTime")}{selected.git_branch ? ` · ${selected.git_branch}` : ""}</small></div>{selected.availability === "readable" && events.length > 0 && <Button className="ghost conversation-handoff" onClick={() => setShowHandoff(true)}><FileOutput size={14} />{tr("handoff.create")}</Button>}</> : <strong>{tr("conversations.selectSession")}</strong>}
       </header>
       {error && <div className="alert"><CircleAlert size={15} />{error}</div>}
       {warnings.map((warning) => <div className="warning" key={warning}><CircleAlert size={14} />{tr("conversations.damagedLines")}</div>)}
       {!selected && <div className="conversation-empty"><MessageSquareText size={26} /><strong>{tr("conversations.selectSession")}</strong></div>}
       {selected?.availability === "metadata-only" && <div className="conversation-empty"><Archive size={24} /><strong>{tr("conversations.metadataOnly")}</strong><span>{tr("conversations.metadataOnlyDetail")}</span></div>}
       {selected?.availability === "readable" && <div className="conversation-thread">
-        {nextCursor && <button className="ghost load-earlier" disabled={loadingEarlier} onClick={() => void loadEarlier()}>{tr(loadingEarlier ? "common.loading" : "conversations.loadEarlier")}</button>}
+        {nextCursor && <Button className="ghost load-earlier" disabled={loadingEarlier} onClick={() => void loadEarlier()}>{tr(loadingEarlier ? "common.loading" : "conversations.loadEarlier")}</Button>}
         {reading && <div className="conversation-empty compact"><RefreshCw className="spin" size={18} /><span>{tr("conversations.reading")}</span></div>}
         {!reading && !events.length && !error && <div className="conversation-empty"><MessageSquareText size={24} /><strong>{tr("conversations.noReadableEvents")}</strong></div>}
         {events.map((event) => <ConversationEventRow key={event.id} event={event} />)}
       </div>}
     </section>
-  </div>;
+  </div>{showHandoff && selected && <SessionHandoffDialog workspace={workspace} session={selected} targetAgents={targetAgents} onClose={() => setShowHandoff(false)} onPlanned={(changeSet) => { setShowHandoff(false); onHandoffPlanned(changeSet); }} />}</>;
 }
 
 function ConversationEventRow({ event }: { event: ConversationEvent }) {

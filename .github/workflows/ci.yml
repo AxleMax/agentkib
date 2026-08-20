@@ -20,6 +20,7 @@ jobs:
   quality:
     name: Test, lint and build
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,6 +57,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Diagnose Linux build environment
+        run: apps/desktop/scripts/diagnose-linux.sh --strict
 
       - name: Check formatting
         run: cargo fmt --all -- --check
