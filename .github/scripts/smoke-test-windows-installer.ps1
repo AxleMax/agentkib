@@ -72,7 +72,7 @@ if (-not $SkipLaunch) {
   $app.WaitForExit()
 }
 
-$dataDirectory = Join-Path $env:LOCALAPPDATA "com.agentkib.desktop"
+$dataDirectory = Join-Path $env:LOCALAPPDATA "ai.agentkib"
 $sentinel = Join-Path $dataDirectory "ci-upgrade-sentinel"
 New-Item -ItemType Directory -Force -Path $dataDirectory | Out-Null
 Set-Content -LiteralPath $sentinel -Value "preserve"
