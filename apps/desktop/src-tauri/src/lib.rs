@@ -43,6 +43,8 @@ use agentkib_platform::applications::{
     WorkspaceApplication, WorkspaceApplicationCategory, detect_workspace_applications,
     open_workspace as open_workspace_application,
 };
+#[cfg(target_os = "windows")]
+use agentkib_platform::network::system_proxy_url;
 use agentkib_platform::process::{ProcessTree, configure_process_group};
 use agentkib_platform::terminal::{
     InteractiveCommand, launch_interactive_command, preflight_system_terminal,
@@ -3294,6 +3296,28 @@ fn quota_sidecar_path(_app: &AppHandle) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn supplement_system_proxy_environment(
+    process_environment: &BTreeMap<String, String>,
+    environment: &mut BTreeMap<String, String>,
+    proxy: &str,
+) {
+    let contains = |name: &str| {
+        process_environment
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case(name))
+    };
+    if contains("ALL_PROXY") {
+        return;
+    }
+    if !contains("HTTP_PROXY") {
+        environment.insert("HTTP_PROXY".to_string(), proxy.to_string());
+    }
+    if !contains("HTTPS_PROXY") {
+        environment.insert("HTTPS_PROXY".to_string(), proxy.to_string());
+    }
+}
+
 fn quota_collection_context(app: &AppHandle) -> anyhow::Result<QuotaCollectionContext> {
     let process_environment = std::env::vars().collect::<BTreeMap<_, _>>();
     #[cfg(not(target_os = "windows"))]
@@ -3303,6 +3327,10 @@ fn quota_collection_context(app: &AppHandle) -> anyhow::Result<QuotaCollectionCo
     let config_source = resolve_win_codexbar_config(&process_environment)
         .map(|_| "win-codexbar".to_string())
         .unwrap_or_else(|| "automatic".to_string());
+    #[cfg(target_os = "windows")]
+    if let Some(proxy) = system_proxy_url() {
+        supplement_system_proxy_environment(&process_environment, &mut environment, &proxy);
+    }
     #[cfg(not(target_os = "windows"))]
     let (config_path, config_source) =
         if let Some(path) = resolve_codexbar_config(&home, &process_environment) {
@@ -4809,6 +4837,47 @@ mod tests {
 
         assert_eq!(preferences.hidden_providers, ["codex"]);
         assert_eq!(preferences.hidden_windows, [valid]);
+    }
+
+    #[test]
+    fn system_proxy_supplements_each_missing_protocol() {
+        let proxy = "http://127.0.0.1:33210";
+        let http_environment = BTreeMap::from([(
+            "http_proxy".to_string(),
+            "http://existing.example:80".to_string(),
+        )]);
+        let mut supplemented = BTreeMap::new();
+        supplement_system_proxy_environment(&http_environment, &mut supplemented, proxy);
+        assert_eq!(
+            supplemented,
+            BTreeMap::from([("HTTPS_PROXY".to_string(), proxy.to_string())])
+        );
+
+        let https_environment = BTreeMap::from([(
+            "HTTPS_PROXY".to_string(),
+            "http://existing.example:443".to_string(),
+        )]);
+        let mut supplemented = BTreeMap::new();
+        supplement_system_proxy_environment(&https_environment, &mut supplemented, proxy);
+        assert_eq!(
+            supplemented,
+            BTreeMap::from([("HTTP_PROXY".to_string(), proxy.to_string())])
+        );
+    }
+
+    #[test]
+    fn all_proxy_prevents_system_proxy_supplementation() {
+        let process_environment = BTreeMap::from([(
+            "all_proxy".to_string(),
+            "socks5://127.0.0.1:1080".to_string(),
+        )]);
+        let mut supplemented = BTreeMap::new();
+        supplement_system_proxy_environment(
+            &process_environment,
+            &mut supplemented,
+            "http://127.0.0.1:33210",
+        );
+        assert!(supplemented.is_empty());
     }
 
     #[cfg(target_os = "macos")]

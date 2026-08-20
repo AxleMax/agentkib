@@ -200,12 +200,19 @@ impl<R: QuotaCommandRunner> QuotaCollector for DashboardCliCollector<R> {
         if !self.capabilities.sidecar_available {
             bail!("quota collector sidecar is unavailable");
         }
+        let provider_timeout_seconds = match self.backend {
+            // Win-CodexBar enables Codex and Claude by default. Keep a missing
+            // provider from consuming nearly the complete outer collection timeout,
+            // while still returning successful providers as partial dashboard data.
+            QuotaBackend::WinCodexBar => 12,
+            QuotaBackend::CodexBarCli => 25,
+        };
         let args = vec![
             "dashboard".to_string(),
             "--identity".to_string(),
             "full".to_string(),
             "--timeout".to_string(),
-            "25".to_string(),
+            provider_timeout_seconds.to_string(),
         ];
         let output = self.runner.run(&args, &self.environment, timeout)?;
         if !output.success {
@@ -630,6 +637,36 @@ mod tests {
         assert_eq!(
             *collector.runner.args.lock().unwrap(),
             ["dashboard", "--identity", "full", "--timeout", "25"]
+        );
+    }
+
+    #[test]
+    fn windows_collector_limits_each_provider_timeout() {
+        let runner = FixtureRunner {
+            output: QuotaCommandOutput {
+                stdout: FIXTURE.as_bytes().to_vec(),
+                stderr: Vec::new(),
+                success: true,
+            },
+            args: Mutex::new(Vec::new()),
+        };
+        let collector = DashboardCliCollector::new(
+            QuotaBackend::WinCodexBar,
+            runner,
+            BTreeMap::new(),
+            CollectorCapabilities {
+                platform_supported: true,
+                sidecar_available: true,
+                multi_account: true,
+                credits: true,
+            },
+        );
+
+        collector.collect(Duration::from_secs(35)).unwrap();
+
+        assert_eq!(
+            *collector.runner.args.lock().unwrap(),
+            ["dashboard", "--identity", "full", "--timeout", "12"]
         );
     }
 
