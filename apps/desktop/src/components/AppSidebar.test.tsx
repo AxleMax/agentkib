@@ -23,5 +23,6 @@ describe("AppSidebar", () => {
     const [home, assets] = screen.getAllByRole("button");
     expect(home).toHaveAttribute("aria-current", "page");
     expect(assets).not.toHaveAttribute("aria-current");
+    expect(screen.getByText("AgentKib").tagName).toBe("SPAN");
   });
 });
