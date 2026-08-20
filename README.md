@@ -113,9 +113,9 @@ AgentKib 会区分“已安装”和“只发现了卸载后留下的本地数�
 
 | 平台 | 状态 |
 | --- | --- |
-| macOS 13+（Apple Silicon / Intel） | 主要开发与验收平台 |
-| Windows 11 x64 | PR 验证平台代码；手动工作流构建并烟测 NSIS |
-| Ubuntu 22.04 x64 | 核心 CI 平台；手动工作流构建并验证 `.deb` 与 AppImage |
+| macOS 13.3+（Apple Silicon / Intel） | 主要开发与验收平台 |
+| Windows 11 x64（WebView2 111+） | PR 验证平台代码；手动工作流构建并烟测 NSIS |
+| Ubuntu 22.04 x64（WebKitGTK 2.40+） | 核心 CI 平台；手动工作流构建并验证 `.deb` 与 AppImage |
 | Fedora x64 | PR 验证平台代码；手动工作流构建并验证 `.rpm` |
 | Windows ARM64 / Linux ARM64 | Preview；验证核心编译或测试，并生成预览包 |
 
@@ -160,7 +160,7 @@ Browsing, previewing, and diagnosing do not create a manifest or modify agent co
 
 ### Quick start — development preview
 
-Install Rust stable, Node.js, pnpm 10, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+Install Rust stable, Node.js, pnpm 10, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform. The desktop runtime requires macOS 13.3+, WebView2 111+ on Windows 11, or WebKitGTK 2.40+ on Linux.
 
 ```bash
 pnpm install
@@ -216,9 +216,9 @@ Optional Obsidian and OpenClaw/Hermes Remote Gateway integrations must be config
 
 | Platform | Status |
 | --- | --- |
-| macOS 13+ (Apple Silicon / Intel) | Primary development and acceptance platform |
-| Windows 11 x64 | Platform code checked on PRs; NSIS built and smoke-tested manually |
-| Ubuntu 22.04 x64 | Core CI platform; `.deb` and AppImage built and verified manually |
+| macOS 13.3+ (Apple Silicon / Intel) | Primary development and acceptance platform |
+| Windows 11 x64 (WebView2 111+) | Platform code checked on PRs; NSIS built and smoke-tested manually |
+| Ubuntu 22.04 x64 (WebKitGTK 2.40+) | Core CI platform; `.deb` and AppImage built and verified manually |
 | Fedora x64 | Platform code checked on PRs; `.rpm` built and verified manually |
 | Windows ARM64 / Linux ARM64 | Preview; core compilation or tests plus preview packages |
 

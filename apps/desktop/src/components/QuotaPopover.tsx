@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { ExternalLink, Gauge, RefreshCw, Settings2 } from "lucide-react";
@@ -131,14 +134,6 @@ export function QuotaPopover() {
   const selected = providers.find((provider) => provider.id === selectedId);
   const windows = selected ? visibleQuotaWindows(selected, preferences) : [];
   const busy = refreshActive;
-  const handleProviderKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || !providers.length) return;
-    event.preventDefault();
-    const current = Math.max(0, providers.findIndex((provider) => provider.id === selectedId));
-    const index = event.key === "Home" ? 0 : event.key === "End" ? providers.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + providers.length) % providers.length;
-    setSelectedId(providers[index].id);
-    event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[index]?.focus();
-  };
   const refresh = async () => {
     setError("");
     try {
@@ -157,17 +152,17 @@ export function QuotaPopover() {
     <header className="quota-popover-head" data-tauri-drag-region>
       <strong>{tr("nav.quota")}</strong>
       {snapshot && <span className={snapshot.freshness}>{snapshot.freshness === "stale" ? tr("quota.freshness.stale") : tr("quota.updated", { time: formatRelativeTime(snapshot.fetched_at) })}</span>}
-      <button className="ghost icon-only" type="button" onClick={() => void refresh()} disabled={busy} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></button>
+      <Button className="ghost icon-only" type="button" onClick={() => void refresh()} disabled={busy} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></Button>
     </header>
 
-    {providers.length > 0 && <div className="quota-popover-tabs" role="tablist" aria-label={tr("quota.providers")} onKeyDown={handleProviderKey}>
+    {providers.length > 0 && <Tabs value={selectedId} onValueChange={setSelectedId}><TabsList className="quota-popover-tabs" variant="line" aria-label={tr("quota.providers")}>
       {providers.map((provider) => {
         const remaining = lowestRemaining(provider);
-        return <button key={provider.id} role="tab" tabIndex={provider.id === selectedId ? 0 : -1} aria-selected={provider.id === selectedId} className={provider.id === selectedId ? "active" : ""} onClick={() => setSelectedId(provider.id)}>
+        return <TabsTrigger key={provider.id} value={provider.id}>
           <ProviderIcon provider={provider} /><span>{provider.name}</span><i><b style={{ width: `${remaining ?? 0}%` }} /></i>
-        </button>;
+        </TabsTrigger>;
       })}
-    </div>}
+    </TabsList></Tabs>}
 
     <section className="quota-popover-content">
       {!snapshot && <div className="quota-popover-empty"><Gauge size={25} /><strong>{busy ? tr("quota.refreshRunning") : tr("quota.empty")}</strong>{error && <small>{error}</small>}</div>}
@@ -175,13 +170,13 @@ export function QuotaPopover() {
       {selected && <>
         <div className="quota-popover-provider"><ProviderIcon provider={selected} /><div><h1>{selected.name}</h1><span>{selected.identity?.account_email ?? selected.identity?.plan ?? "—"}</span></div></div>
         <div className="quota-popover-windows">{windows.map((item, index) => <div key={item.key}>{item.accountLabel && <small className="quota-popover-account">{item.accountLabel}</small>}<QuotaWindowRow item={item} onOpen={() => void openDashboard(selected, false, index)} /></div>)}</div>
-        {selected.error && <details className="quota-inline-diagnostic partial"><summary>{tr("quota.partialData")}</summary><pre>{selected.error}</pre></details>}
+        {selected.error && <Collapsible className="quota-inline-diagnostic partial"><CollapsibleTrigger>{tr("quota.partialData")}</CollapsibleTrigger><CollapsibleContent><pre>{selected.error}</pre></CollapsibleContent></Collapsible>}
       </>}
     </section>
 
     <footer className="quota-popover-footer">
-      <button type="button" onClick={() => void openDashboard(selected)}><ExternalLink size={15} />{tr("quota.openDashboard")}</button>
-      <button type="button" onClick={() => void openDashboard(selected, true)}><Settings2 size={15} />{tr("quota.popoverSettings")}</button>
+      <Button type="button" onClick={() => void openDashboard(selected)}><ExternalLink size={15} />{tr("quota.openDashboard")}</Button>
+      <Button type="button" onClick={() => void openDashboard(selected, true)}><Settings2 size={15} />{tr("quota.popoverSettings")}</Button>
     </footer>
   </main>;
 }

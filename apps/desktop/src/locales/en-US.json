@@ -132,7 +132,7 @@
   "common.add": "Add",
   "common.approve": "Approve",
   "common.assets": "assets",
-  "common.cancel": "Cancel",
+  "common.cancel": "Cancel", "common.confirm": "Confirm", "common.ok": "OK", "dialog.confirmTitle": "Confirm action", "dialog.noticeTitle": "Notice", "mcp.secretDialogTitle": "Enter required secrets", "mcp.secretDialogDescription": "These values are used only for this installation and saved through the existing local security flow.",
   "common.clear": "Clear",
   "common.days": "days",
   "common.disabled": "Disabled",

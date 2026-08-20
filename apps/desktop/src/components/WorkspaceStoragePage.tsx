@@ -1,3 +1,7 @@
+import { Input } from "@/components/ui/input";
+import { SelectControl } from "@/components/ui/select-control";
+import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { CircleAlert, ExternalLink, HardDrive, Pause, RefreshCw, Search, X } from "lucide-react";
@@ -120,10 +124,10 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
 
   return <div className="stack storage-page">
     {hasCache && <div className="storage-toolbar toolbar">
-      <div className="search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("storage.searchPlaceholder")} /></div>
-      <select className="setting-select" value={agent} onChange={(event) => { setAgent(event.target.value as typeof agent); setTrail([]); setSelected(undefined); }}><option value="all">{tr("workspace.allAgents")}</option>{Object.entries(agentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <div className="segmented storage-metrics" role="tablist" aria-label={tr("storage.metricLabel")}>{(["allocated", "regenerable", "agent-assets"] as StorageMetric[]).map((value) => <button key={value} role="tab" aria-selected={metric === value} className={metric === value ? "active" : ""} onClick={() => { setMetric(value); setSelected(undefined); }}>{tr(`storage.metric.${value}`)}</button>)}</div>
-      {active ? <button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</button> : <button className="primary" onClick={() => void start()}><RefreshCw size={14} />{tr("storage.scanAgain")}</button>}
+      <div className="search"><Search size={16} /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("storage.searchPlaceholder")} /></div>
+      <SelectControl aria-label={tr("workspace.allAgents")} className="setting-select" value={agent} onChange={(event) => { setAgent(event.target.value as typeof agent); setTrail([]); setSelected(undefined); }}><option value="all">{tr("workspace.allAgents")}</option>{Object.entries(agentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectControl>
+      <ToggleGroup className="segmented storage-metrics" value={[metric]} onValueChange={(values) => { const value = values[0]; if (value) { setMetric(value as StorageMetric); setSelected(undefined); } }} aria-label={tr("storage.metricLabel")}>{(["allocated", "regenerable", "agent-assets"] as StorageMetric[]).map((value) => <ToggleGroupItem key={value} value={value} className={metric === value ? "active" : ""}>{tr(`storage.metric.${value}`)}</ToggleGroupItem>)}</ToggleGroup>
+      {active ? <Button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</Button> : <Button className="primary" onClick={() => void start()}><RefreshCw size={14} />{tr("storage.scanAgain")}</Button>}
     </div>}
     {error && <div className="alert"><CircleAlert size={16} />{error}</div>}
     {hasCache && <div className="storage-summary">
@@ -138,8 +142,8 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
       <section className="panel storage-map-panel">
         <div className="panel-head storage-map-head">
           <nav className="storage-breadcrumbs" aria-label={tr("storage.location")}>
-            <button onClick={() => { setTrail([]); setSelected(undefined); }}>{tr("storage.allWorkspaces")}</button>
-            {trail.map((item, index) => <span key={`${item.workspaceId}:${item.node.id}`}><b>/</b><button aria-current={index === trail.length - 1 ? "page" : undefined} onClick={() => { setTrail((value) => value.slice(0, index + 1)); setSelected(undefined); }}>{nodeLabel(item.node)}</button></span>)}
+            <Button variant="bare" size="content" onClick={() => { setTrail([]); setSelected(undefined); }}>{tr("storage.allWorkspaces")}</Button>
+            {trail.map((item, index) => <span key={`${item.workspaceId}:${item.node.id}`}><b>/</b><Button variant="bare" size="content" aria-current={index === trail.length - 1 ? "page" : undefined} onClick={() => { setTrail((value) => value.slice(0, index + 1)); setSelected(undefined); }}>{nodeLabel(item.node)}</Button></span>)}
           </nav>
           <span>{expanding ? tr("storage.loadingDirectory") : overview?.last_scanned_at ? tr("storage.scannedAt", { time: formatDateTime(overview.last_scanned_at) }) : ""}</span>
         </div>
@@ -152,11 +156,11 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
             const match = matchesNode(location.node, query);
             const hasDescendantMatch = containsMatch(location.node, query);
             const detail = area >= 500 ? "rich" : area >= 150 ? "medium" : area >= 42 ? "name" : "tiny";
-            return <button key={rect.id} role="treeitem" aria-label={`${nodeLabel(location.node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`} className={`storage-tile semantic-${semanticKind(location.node)} detail-${detail}${query.trim() && !hasDescendantMatch ? " search-dim" : ""}${query.trim() && match ? " search-match" : ""}${location.node.partial ? " partial" : ""}`} style={{ left: `${rect.x}%`, top: `${rect.y}%`, width: `${rect.width}%`, height: `${rect.height}%` }} title={`${nodeLabel(location.node)} · ${formatBytes(bytes)} · ${formatPercent(ratio)}`} onClick={() => select(location)} onDoubleClick={() => void enter(location)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void enter(location); } }}>
+            return <Button variant="bare" size="content" key={rect.id} role="treeitem" aria-label={`${nodeLabel(location.node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`} className={`storage-tile semantic-${semanticKind(location.node)} detail-${detail}${query.trim() && !hasDescendantMatch ? " search-dim" : ""}${query.trim() && match ? " search-match" : ""}${location.node.partial ? " partial" : ""}`} style={{ left: `${rect.x}%`, top: `${rect.y}%`, width: `${rect.width}%`, height: `${rect.height}%` }} title={`${nodeLabel(location.node)} · ${formatBytes(bytes)} · ${formatPercent(ratio)}`} onClick={() => select(location)} onDoubleClick={() => void enter(location)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void enter(location); } }}>
               {detail !== "tiny" && <strong>{nodeLabel(location.node)}</strong>}
               {(detail === "medium" || detail === "rich") && <span>{formatBytes(bytes)}</span>}
               {detail === "rich" && <small>{formatPercent(ratio)} · {tr(`storage.type.${semanticKind(location.node)}`)}</small>}
-            </button>;
+            </Button>;
           })}
         </div> : <div className="storage-map-empty"><HardDrive size={26} /><span>{tr("storage.noItemsForMetric")}</span></div>}
       </section>
@@ -166,7 +170,7 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
 }
 
 function EmptyState({ active, overview, start, stop }: { active: boolean; overview?: StorageOverview; start: () => Promise<void>; stop: () => Promise<void> }) {
-  return <div className="panel storage-empty"><HardDrive size={32} /><h2>{active ? tr("storage.scanning") : tr("storage.emptyTitle")}</h2>{!active && <p>{tr("storage.emptyText")}</p>}{overview?.workspaces.map((item) => <span className="storage-unavailable" key={item.workspace_id}><CircleAlert size={13} />{item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}</span>)}{active ? <button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</button> : <button className="primary" onClick={() => void start()}>{tr("storage.startScan")}</button>}</div>;
+  return <div className="panel storage-empty"><HardDrive size={32} /><h2>{active ? tr("storage.scanning") : tr("storage.emptyTitle")}</h2>{!active && <p>{tr("storage.emptyText")}</p>}{overview?.workspaces.map((item) => <span className="storage-unavailable" key={item.workspace_id}><CircleAlert size={13} />{item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}</span>)}{active ? <Button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</Button> : <Button className="primary" onClick={() => void start()}>{tr("storage.startScan")}</Button>}</div>;
 }
 
 function Metric({ label, value, meta }: { label: string; value: string; meta?: string }) { return <div><span>{label}</span><strong>{value}</strong>{meta && <small>{meta}</small>}</div>; }
@@ -180,7 +184,7 @@ function StorageInspector({ selection, storage, workspace, metric, onClose, onEr
     catch (reason) { onError(reason); }
   };
   return <aside className="panel storage-inspector">
-    <div className="panel-head"><div><h2>{nodeLabel(node)}</h2>{node.partial && <span className="quality-badge partial">{tr("storage.partialNode")}</span>}</div><button className="icon-button" aria-label={tr("common.close")} onClick={onClose}><X size={16} /></button></div>
+    <div className="panel-head"><div><h2>{nodeLabel(node)}</h2>{node.partial && <span className="quality-badge partial">{tr("storage.partialNode")}</span>}</div><Button className="icon-button" aria-label={tr("common.close")} onClick={onClose}><X size={16} /></Button></div>
     <dl className="storage-facts">
       <Fact label={tr("storage.allocated")} value={formatBytes(node.allocated_bytes)} />
       <Fact label={tr("storage.logical")} value={formatBytes(node.logical_bytes)} />
@@ -195,7 +199,7 @@ function StorageInspector({ selection, storage, workspace, metric, onClose, onEr
     </dl>
     {fullPath && <code className="storage-path" title={fullPath}>{fullPath}</code>}
     {storage?.error_key && <div className="storage-warning"><CircleAlert size={14} /><span>{tr(storage.error_key)}{storage.error_detail && <small>{storage.error_detail}</small>}</span></div>}
-    {node.kind !== "aggregate" && <div className="storage-inspector-actions"><button className="ghost" onClick={() => void open()}><ExternalLink size={14} />{tr("storage.openLocation")}</button></div>}
+    {node.kind !== "aggregate" && <div className="storage-inspector-actions"><Button className="ghost" onClick={() => void open()}><ExternalLink size={14} />{tr("storage.openLocation")}</Button></div>}
   </aside>;
 }
 

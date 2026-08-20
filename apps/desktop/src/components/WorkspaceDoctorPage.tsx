@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Minus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { api } from "../api";
@@ -71,8 +72,8 @@ export function WorkspaceDoctorPage({
         <span><strong>{activeReport?.summary.repairable_count ?? 0}</strong>{tr("doctor.repairable")}</span>
       </div>
       <div className="doctor-actions">
-        <button className="ghost" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={14} />{tr("common.refresh")}</button>
-        <button className="primary" onClick={() => void repair()} disabled={loading || repairing || !activeReport?.summary.repairable_count}><Wrench size={14} />{tr(repairing ? "doctor.planning" : "doctor.reviewRepair")}</button>
+        <Button className="ghost" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={14} />{tr("common.refresh")}</Button>
+        <Button className="primary" onClick={() => void repair()} disabled={loading || repairing || !activeReport?.summary.repairable_count}><Wrench size={14} />{tr(repairing ? "doctor.planning" : "doctor.reviewRepair")}</Button>
       </div>
     </section>
     {error && <div className="alert"><CircleAlert size={16} />{error}</div>}

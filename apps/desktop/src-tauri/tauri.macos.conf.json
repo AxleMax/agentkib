@@ -18,6 +18,9 @@
   },
   "bundle": {
     "icon": ["icons/icon.icns"],
+    "macOS": {
+      "minimumSystemVersion": "13.3"
+    },
     "externalBin": ["binaries/agentkib-quota-sidecar"],
     "resources": {
       "resources/CodexBar_CodexBarCore.bundle/": "CodexBar_CodexBarCore.bundle/",

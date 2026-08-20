@@ -1,3 +1,7 @@
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { SelectControl } from "@/components/ui/select-control";
+import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ExternalLink, FolderOpen, Link2, Unlink } from "lucide-react";
@@ -61,8 +65,8 @@ export function ObsidianSettingsCard() {
           <h2>{tr("obsidian.title")}</h2>
         </div>
         <div className="header-actions">
-          {integration?.installation.installed && <button className="ghost" onClick={() => void openApp()}><ExternalLink size={15} />{tr("obsidian.open")}</button>}
-          <button className="primary" onClick={() => void addVault()}><FolderOpen size={15} />{tr("obsidian.addVault")}</button>
+          {integration?.installation.installed && <Button className="ghost" onClick={() => void openApp()}><ExternalLink size={15} />{tr("obsidian.open")}</Button>}
+          <Button className="primary" onClick={() => void addVault()}><FolderOpen size={15} />{tr("obsidian.addVault")}</Button>
         </div>
       </div>
       {integration ? <InstallationStatus integration={integration} /> : <p>{tr("common.loading")}</p>}
@@ -139,7 +143,7 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
     <div className="panel obsidian-card workspace-obsidian-card">
       <div className="panel-head">
         <h2>{tr("obsidian.workspaceTitle")}</h2>
-        {link && <button className="ghost" onClick={() => void openLinkedTarget()}><ExternalLink size={15} />{tr("obsidian.open")}</button>}
+        {link && <Button className="ghost" onClick={() => void openLinkedTarget()}><ExternalLink size={15} />{tr("obsidian.open")}</Button>}
       </div>
       {error && <div className="alert">{error}</div>}
       {!integration && <p>{tr("common.loading")}</p>}
@@ -148,14 +152,14 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
         <div className="obsidian-linked-row">
           <Link2 size={17} />
           <span><strong>{tr("obsidian.linked")}</strong><small>{link.target_path}</small></span>
-          <button className="ghost" onClick={() => void unlinkWorkspace()}><Unlink size={15} />{tr("obsidian.unlink")}</button>
+          <Button className="ghost" onClick={() => void unlinkWorkspace()}><Unlink size={15} />{tr("obsidian.unlink")}</Button>
         </div>
       )}
       {integration?.installation.installed && !link && integration.vaults.length > 0 && (
         <div className="obsidian-link-form">
-          <label>{tr("obsidian.chooseVault")}<select value={vaultPath} onChange={(event) => setVaultPath(event.target.value)}>{integration.vaults.map((vault) => <option key={vault.path} value={vault.path}>{vault.name}</option>)}</select></label>
-          <label>{tr("obsidian.relativeTarget")}<input value={relativeTarget} onChange={(event) => setRelativeTarget(event.target.value)} placeholder={tr("obsidian.relativeTargetHint")} /></label>
-          <button className="primary" disabled={!vaultPath} onClick={() => void linkWorkspace()}><Link2 size={15} />{tr("obsidian.link")}</button>
+          <Label>{tr("obsidian.chooseVault")}<SelectControl aria-label={tr("obsidian.chooseVault")} value={vaultPath} onChange={(event) => setVaultPath(event.target.value)}>{integration.vaults.map((vault) => <option key={vault.path} value={vault.path}>{vault.name}</option>)}</SelectControl></Label>
+          <Label>{tr("obsidian.relativeTarget")}<Input value={relativeTarget} onChange={(event) => setRelativeTarget(event.target.value)} placeholder={tr("obsidian.relativeTargetHint")} /></Label>
+          <Button className="primary" disabled={!vaultPath} onClick={() => void linkWorkspace()}><Link2 size={15} />{tr("obsidian.link")}</Button>
         </div>
       )}
       {integration?.installation.installed && !link && !integration.vaults.length && <p className="muted">{tr("obsidian.addVaultFirst")}</p>}
