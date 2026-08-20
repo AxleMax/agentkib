@@ -1,24 +1,60 @@
-# Desktop package workflow
+# Desktop release workflow
 
-AgentKib desktop packages are generated only by the manually triggered
-`Desktop Package Artifacts` GitHub Actions workflow. Pull requests and pushes
-run platform checks, but they do not create installers.
+AgentKib desktop releases are built, verified, and published by the
+`Desktop Package Artifacts` GitHub Actions workflow. Pull requests and normal
+branch pushes run platform checks but do not publish installers.
 
-## Build packages
+## Publish a release
 
-1. Open **Actions** in the GitHub repository.
-2. Select **Desktop Package Artifacts**.
-3. Choose **Run workflow** and select the branch to build. To build a tag, run
-   `gh workflow run release-desktop.yml --ref <tag>` instead.
-4. Wait for the preflight and every platform job to pass.
-5. Download the artifact for the target platform from the completed run.
+1. Update the desktop version in the workspace `Cargo.toml`,
+   `apps/desktop/package.json`, and
+   `apps/desktop/src-tauri/tauri.conf.json`.
+2. Merge the version change into `main` and make sure the required checks pass.
+3. Create an annotated version tag on that `main` commit and push only the tag:
 
-The workflow locks every job to the selected revision's commit. Before
-packaging, it verifies that the versions in the Tauri configuration, desktop
-package, and Cargo workspace match, then runs the full Rust and frontend check
-suite.
+   ```bash
+   git switch main
+   git pull --ff-only origin main
+   git tag -a v0.1.0 -m "AgentKib v0.1.0"
+   git push origin v0.1.0
+   ```
 
-## Artifacts
+4. Wait for every job in **Desktop Package Artifacts** to pass. The workflow
+   creates a draft GitHub Release only after all platform builds complete. It
+   verifies the complete asset manifest and every SHA-256 checksum, uploads the
+   files, checks their remote names and sizes, and then publishes the release.
+
+Do not create an empty GitHub Release before pushing the tag. Stable SemVer
+tags such as `v0.1.0` become the latest release. Tags containing a prerelease
+suffix, such as `v0.2.0-beta.1`, are published as prereleases.
+
+The workflow refuses to publish when the tag does not exactly match the
+desktop version, the three version sources differ, or the tagged commit is not
+contained in `origin/main`. Every build job checks out the same resolved commit.
+
+## Retry a failed release
+
+If a run fails because of a transient runner, network, repository setting, or
+workflow problem after creating the draft, fix the underlying problem without
+publishing the incomplete draft, then run the workflow against the existing
+tag:
+
+```bash
+gh workflow run release-desktop.yml --ref main -f release_tag=v0.1.0
+```
+
+The retry rebuilds every platform, resumes an existing draft, and replaces
+same-named draft assets. It refuses to overwrite a release that is already
+public. A product-code fix requires a new version and tag rather than moving an
+existing tag. Workflow artifacts remain available for diagnosing failed builds.
+
+## Build artifacts without publishing
+
+To create packages for a branch without creating a GitHub Release, open
+**Actions**, select **Desktop Package Artifacts**, choose **Run workflow**, pick
+the branch, and leave `release_tag` empty.
+
+The run produces these downloadable workflow artifacts:
 
 - `agentkib-desktop-macos-arm64`: zipped `.app`, DMG, and checksums.
 - `agentkib-desktop-macos-x64`: zipped `.app`, DMG, and checksums.
@@ -29,7 +65,7 @@ suite.
 - `agentkib-desktop-linux-fedora-x64`: RPM and checksum.
 
 Each checksum file is named after its package with the `.sha256` suffix. Verify
-the downloaded package before installing it, for example:
+a downloaded package before installing it, for example:
 
 ```bash
 shasum -a 256 -c AgentKib_0.1.0_macos-arm64.dmg.sha256
@@ -40,11 +76,10 @@ file with `Get-FileHash <installer> -Algorithm SHA256`.
 
 ## Preview limitations
 
-These workflow artifacts are unsigned development previews. They are not
-attached to a GitHub Release and do not include macOS notarization, Windows
-code signing, MSI packages, a macOS universal binary, or automatic updates.
-macOS Gatekeeper and Windows SmartScreen may therefore display warnings.
+Release packages are unsigned development previews. They do not include macOS
+notarization, Windows code signing, MSI packages, a macOS universal binary, or
+automatic updates. macOS Gatekeeper and Windows SmartScreen may therefore
+display warnings.
 
-Before sharing a build, confirm that all platform jobs passed and test the
-downloaded package on the intended operating system. ARM64 packages remain
-preview-only until they have been verified on representative hardware.
+ARM64 Windows and Linux packages remain preview-only until they have been
+verified on representative hardware.

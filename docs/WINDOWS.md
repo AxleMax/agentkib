@@ -196,11 +196,12 @@ Get-NetTCPConnection -LocalPort 1420 -ErrorAction SilentlyContinue
 
 ### SmartScreen 阻止安装
 
-第一阶段安装包未签名，可能触发 SmartScreen。只对自己刚构建且路径、时间和文件名均确认无误的安装包选择“更多信息”并继续；正式分发前应增加代码签名。
+当前安装包未签名，可能触发 SmartScreen。只对从 AgentKib GitHub Releases 下载且 SHA-256 校验一致，或自己刚构建并确认路径、时间和文件名无误的安装包选择“更多信息”并继续；后续正式签名版本应移除这项限制。
 
 ## 当前阶段限制
 
 - 已验收目标仅为 Windows 11 x64 的编译、开发启动、NSIS 安装和启动。
-- Windows ARM64、代码签名、自动更新和正式发布不在本阶段范围内。
+- Windows ARM64 仅提供 Preview 安装包，尚未完成与 x64 等价的原生回归。
+- GitHub Release 已由版本标签自动发布；Windows 代码签名和自动更新仍不在本阶段范围内。
 - macOS/Linux 行为通过平台隔离和现有 CI 保持，本机无法替代对应平台的原生回归。
 - 完整 Windows 功能等价测试仍需后续阶段逐项完成。

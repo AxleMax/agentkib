@@ -19,8 +19,8 @@
 </p>
 
 > [!WARNING]
-> AgentKib 仍处于开发预览阶段，尚未提供签名并正式发布的安装包。本地数据格式和部分功能可能继续调整；目前请从源码运行。
-> AgentKib is a development preview without signed official installers. Local data formats and some features may still change; run it from source for now.
+> AgentKib 仍处于开发预览阶段，[Releases](https://github.com/starroyhq/agentkib/releases) 提供的安装包尚未签名。本地数据格式和部分功能可能继续调整；macOS Gatekeeper 和 Windows SmartScreen 可能显示安全提醒。
+> AgentKib is a development preview. Installers on [Releases](https://github.com/starroyhq/agentkib/releases) are currently unsigned, and local data formats and some features may still change. macOS Gatekeeper and Windows SmartScreen may show warnings.
 
 ## 简体中文
 
@@ -114,14 +114,14 @@ AgentKib 会区分“已安装”和“只发现了卸载后留下的本地数�
 | 平台 | 状态 |
 | --- | --- |
 | macOS 13.3+（Apple Silicon / Intel） | 主要开发与验收平台 |
-| Windows 11 x64（WebView2 111+） | PR 验证平台代码；手动工作流构建并烟测 NSIS |
-| Ubuntu 22.04 x64（WebKitGTK 2.40+） | 核心 CI 平台；手动工作流构建并验证 `.deb` 与 AppImage |
-| Fedora x64 | PR 验证平台代码；手动工作流构建并验证 `.rpm` |
-| Windows ARM64 / Linux ARM64 | Preview；验证核心编译或测试，并生成预览包 |
+| Windows 11 x64（WebView2 111+） | PR 验证平台代码；发布工作流构建并烟测 NSIS |
+| Ubuntu 22.04 x64（WebKitGTK 2.40+） | 核心 CI 平台；发布工作流构建并验证 `.deb` 与 AppImage |
+| Fedora x64 | PR 验证平台代码；发布工作流构建并验证 `.rpm` |
+| Windows ARM64 / Linux ARM64 | Preview；发布工作流生成并验证预览包 |
 
-Windows 的完整环境、启动、打包和安装说明见 [Windows 指南](docs/WINDOWS.md)。维护者可按 [桌面打包流程](docs/RELEASE.md) 手动生成未签名的多平台预览包；PR 和普通 push 只运行检查，不生成安装包。开发和验证命令见文末的[开发说明](#development)。
+Windows 的完整环境、启动、打包和安装说明见 [Windows 指南](docs/WINDOWS.md)。维护者按 [桌面发布流程](docs/RELEASE.md) 推送版本标签后，CI 会构建、校验并发布未签名的多平台预览包；PR 和普通分支 push 只运行检查，不发布安装包。开发和验证命令见文末的[开发说明](#development)。
 
-问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。未来的正式预览版本将发布在 [Releases](https://github.com/starroyhq/agentkib/releases)。
+安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。
 
 ---
 
@@ -252,4 +252,4 @@ pnpm typecheck
 pnpm build
 ```
 
-AgentKib is a development preview. There are no signed official downloads yet; future preview releases will be published on [Releases](https://github.com/starroyhq/agentkib/releases). For feedback, use [GitHub Issues](https://github.com/starroyhq/agentkib/issues).
+AgentKib is a development preview. Unsigned preview installers and checksums are published on [Releases](https://github.com/starroyhq/agentkib/releases); macOS Gatekeeper and Windows SmartScreen may show warnings. For feedback, use [GitHub Issues](https://github.com/starroyhq/agentkib/issues).

@@ -1,13 +1,21 @@
 name: Desktop Package Artifacts
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing version tag to build and publish; leave empty for artifact-only builds"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-packages-${{ github.ref }}
+  group: desktop-packages-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -16,13 +24,17 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       app_version: ${{ steps.version.outputs.app_version }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_sha: ${{ steps.release.outputs.release_sha }}
+      should_publish: ${{ steps.release.outputs.should_publish }}
     env:
       CARGO_TERM_COLOR: always
     steps:
       - name: Checkout selected revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.release_tag || github.sha }}
+          fetch-depth: 0
 
       - name: Install Linux desktop dependencies
         run: |
@@ -86,6 +98,55 @@ jobs:
 
           echo "Validated AgentKib desktop version $tauri_version"
           echo "app_version=$tauri_version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release ref
+        id: release
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.version.outputs.app_version }}
+          PUSHED_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          REQUESTED_TAG: ${{ inputs.release_tag || '' }}
+        run: |
+          set -euo pipefail
+
+          release_tag="$PUSHED_TAG"
+          if [[ -n "$REQUESTED_TAG" ]]; then
+            if [[ -n "$release_tag" && "$release_tag" != "$REQUESTED_TAG" ]]; then
+              echo "Selected ref tag $release_tag does not match requested tag $REQUESTED_TAG" >&2
+              exit 1
+            fi
+            release_tag="$REQUESTED_TAG"
+          fi
+
+          release_sha=$(git rev-parse 'HEAD^{commit}')
+          should_publish=false
+
+          if [[ -n "$release_tag" ]]; then
+            expected_tag="v$APP_VERSION"
+            if [[ "$release_tag" != "$expected_tag" ]]; then
+              echo "Release tag $release_tag does not match desktop version $APP_VERSION; expected $expected_tag" >&2
+              exit 1
+            fi
+
+            tag_sha=$(git rev-list -n 1 "$release_tag")
+            if [[ "$tag_sha" != "$release_sha" ]]; then
+              echo "Release tag $release_tag resolves to $tag_sha, but checkout resolved to $release_sha" >&2
+              exit 1
+            fi
+
+            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+            if ! git merge-base --is-ancestor "$release_sha" origin/main; then
+              echo "Release commit $release_sha is not contained in origin/main" >&2
+              exit 1
+            fi
+
+            should_publish=true
+          fi
+
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
+          echo "Selected release revision: sha=$release_sha tag=${release_tag:-none} publish=$should_publish"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -159,7 +220,7 @@ jobs:
       - name: Checkout selected revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.preflight.outputs.release_sha }}
 
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
@@ -312,7 +373,7 @@ jobs:
       - name: Checkout selected revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.preflight.outputs.release_sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -367,7 +428,11 @@ jobs:
           test -n "$source"
           destination="$DESKTOP_RELEASE_DIR/AgentKib_${APP_VERSION}_linux-x64.rpm"
           cp "$source" "$destination"
-          sha256sum "$destination" > "$destination.sha256"
+          (
+            cd "$DESKTOP_RELEASE_DIR"
+            artifact=$(basename "$destination")
+            sha256sum "$artifact" > "$artifact.sha256"
+          )
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -375,3 +440,194 @@ jobs:
           name: agentkib-desktop-linux-fedora-x64
           path: ${{ env.DESKTOP_RELEASE_DIR }}/*
           if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - preflight
+      - desktop
+      - fedora-x64
+    if: needs.preflight.outputs.should_publish == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      APP_VERSION: ${{ needs.preflight.outputs.app_version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_ASSETS_DIR: dist/github-release
+      RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+      WORKFLOW_ARTIFACTS_DIR: dist/workflow-artifacts
+
+    steps:
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agentkib-desktop-*
+          path: ${{ env.WORKFLOW_ARTIFACTS_DIR }}
+
+      - name: Validate release assets and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="AgentKib_${APP_VERSION}"
+          mkdir -p "$RELEASE_ASSETS_DIR"
+
+          while IFS= read -r -d '' source; do
+            destination="$RELEASE_ASSETS_DIR/$(basename "$source")"
+            if [[ -e "$destination" ]]; then
+              echo "Duplicate release artifact name: $(basename "$source")" >&2
+              exit 1
+            fi
+            cp "$source" "$destination"
+          done < <(find "$WORKFLOW_ARTIFACTS_DIR" -type f -print0)
+
+          cat > "$RUNNER_TEMP/expected-release-assets.txt" <<EOF
+          ${prefix}_linux-arm64-preview.AppImage
+          ${prefix}_linux-arm64-preview.AppImage.sha256
+          ${prefix}_linux-arm64-preview.deb
+          ${prefix}_linux-arm64-preview.deb.sha256
+          ${prefix}_linux-x64.AppImage
+          ${prefix}_linux-x64.AppImage.sha256
+          ${prefix}_linux-x64.deb
+          ${prefix}_linux-x64.deb.sha256
+          ${prefix}_linux-x64.rpm
+          ${prefix}_linux-x64.rpm.sha256
+          ${prefix}_macos-arm64.app.zip
+          ${prefix}_macos-arm64.app.zip.sha256
+          ${prefix}_macos-arm64.dmg
+          ${prefix}_macos-arm64.dmg.sha256
+          ${prefix}_macos-x64.app.zip
+          ${prefix}_macos-x64.app.zip.sha256
+          ${prefix}_macos-x64.dmg
+          ${prefix}_macos-x64.dmg.sha256
+          ${prefix}_windows-arm64-preview.exe
+          ${prefix}_windows-arm64-preview.exe.sha256
+          ${prefix}_windows-x64.exe
+          ${prefix}_windows-x64.exe.sha256
+          EOF
+
+          find "$RELEASE_ASSETS_DIR" -maxdepth 1 -type f -exec basename {} \; \
+            | LC_ALL=C sort > "$RUNNER_TEMP/actual-release-assets.txt"
+          LC_ALL=C sort -o "$RUNNER_TEMP/expected-release-assets.txt" \
+            "$RUNNER_TEMP/expected-release-assets.txt"
+
+          if ! diff -u "$RUNNER_TEMP/expected-release-assets.txt" \
+            "$RUNNER_TEMP/actual-release-assets.txt"; then
+            echo "Release artifact set does not match the expected manifest" >&2
+            exit 1
+          fi
+
+          while IFS= read -r artifact; do
+            test -s "$artifact"
+          done < <(find "$RELEASE_ASSETS_DIR" -maxdepth 1 -type f | LC_ALL=C sort)
+
+          while IFS= read -r checksum; do
+            (
+              cd "$RELEASE_ASSETS_DIR"
+              sha256sum -c "$(basename "$checksum")"
+            )
+          done < <(find "$RELEASE_ASSETS_DIR" -maxdepth 1 -type f -name '*.sha256' | LC_ALL=C sort)
+
+      - name: Prepare draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          query_error="$RUNNER_TEMP/release-query-error.txt"
+
+          remote_tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')
+          if [[ "$remote_tag_sha" != "$RELEASE_SHA" ]]; then
+            echo "Remote tag $RELEASE_TAG resolves to $remote_tag_sha, expected $RELEASE_SHA" >&2
+            exit 1
+          fi
+
+          set +e
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>"$query_error")
+          query_status=$?
+          set -e
+
+          if [[ "$query_status" -eq 0 ]]; then
+            if [[ "$(jq -r '.draft' <<<"$release_json")" != true ]]; then
+              echo "Release $RELEASE_TAG is already public; refusing to overwrite it" >&2
+              exit 1
+            fi
+            echo "Resuming existing draft release $RELEASE_TAG"
+          elif grep -q 'HTTP 404' "$query_error"; then
+            create_args=(
+              release create "$RELEASE_TAG"
+              --repo "$GITHUB_REPOSITORY"
+              --target "$RELEASE_SHA"
+              --title "AgentKib $RELEASE_TAG"
+              --generate-notes
+              --verify-tag
+              --draft
+            )
+            if [[ "$APP_VERSION" == *-* ]]; then
+              create_args+=(--prerelease)
+            fi
+            gh "${create_args[@]}"
+          else
+            cat "$query_error" >&2
+            exit "$query_status"
+          fi
+
+      - name: Upload release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" "$RELEASE_ASSETS_DIR"/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Verify uploaded release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_manifest="$RUNNER_TEMP/local-release-assets.txt"
+          remote_manifest="$RUNNER_TEMP/remote-release-assets.txt"
+
+          for artifact in "$RELEASE_ASSETS_DIR"/*; do
+            printf '%s\t%s\n' "$(basename "$artifact")" "$(stat -c '%s' "$artifact")"
+          done | LC_ALL=C sort > "$local_manifest"
+
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            --jq '.assets[] | [.name, .size] | @tsv' \
+            | LC_ALL=C sort > "$remote_manifest"
+
+          if ! diff -u "$local_manifest" "$remote_manifest"; then
+            echo "Uploaded release assets do not match local artifacts" >&2
+            exit 1
+          fi
+
+      - name: Publish verified release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$APP_VERSION" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --prerelease
+          else
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --latest
+          fi
+
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          if [[ "$(jq -r '.draft' <<<"$release_json")" != false ]]; then
+            echo "Release $RELEASE_TAG remained a draft after publication" >&2
+            exit 1
+          fi
+
+          expected_prerelease=false
+          if [[ "$APP_VERSION" == *-* ]]; then
+            expected_prerelease=true
+          fi
+          if [[ "$(jq -r '.prerelease' <<<"$release_json")" != "$expected_prerelease" ]]; then
+            echo "Release $RELEASE_TAG has an unexpected prerelease state" >&2
+            exit 1
+          fi
+
+          echo "Published $(jq -r '.html_url' <<<"$release_json")"
