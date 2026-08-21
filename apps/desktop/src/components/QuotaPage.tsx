@@ -12,6 +12,7 @@ import { Check, ChevronDown, CircleAlert, Gauge, RefreshCw, Search, Settings2, X
 import { api } from "../api";
 import { formatRelativeTime, localizeMessage, tr } from "../i18n";
 import { normalizePlatform } from "../platform";
+import { cn } from "@/lib/utils";
 import {
   compareQuotaProviders,
   flattenQuotaWindows,
@@ -243,14 +244,15 @@ export function QuotaPage({
 }
 
 function ProviderTabs({ providers, selectedId, onSelect }: { providers: QuotaProvider[]; selectedId: string; onSelect: (id: string) => void }) {
-  return <Tabs value={selectedId} onValueChange={onSelect}><TabsList className="quota-provider-tabs product-tabs" variant="line" aria-label={tr("quota.providers")}>
+  return <Tabs value={selectedId} onValueChange={onSelect}><TabsList className="h-auto w-full items-stretch justify-start gap-2 overflow-x-auto rounded-none border-b border-border bg-transparent p-0" variant="line" aria-label={tr("quota.providers")}>
     {providers.map((provider) => {
       const remaining = lowestRemaining(provider);
       const unavailable = remaining === undefined;
-      return <TabsTrigger key={provider.id} value={provider.id} className={unavailable ? "unavailable" : undefined}>
+      const severity = remaining === undefined ? undefined : quotaSeverity(remaining);
+      return <TabsTrigger key={provider.id} value={provider.id} className={cn("relative grid h-auto min-h-[84px] min-w-[188px] flex-none grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-2.5 gap-y-0.5 justify-start rounded-lg border border-border bg-card px-3 py-3 text-left", unavailable && "opacity-60")}>
         <ProviderIcon provider={provider} />
-        <span><strong>{provider.name}</strong><small>{provider.identity?.account_email ?? provider.identity?.plan ?? tr(unavailable ? "quota.unavailable" : "quota.available")}</small></span>
-        {remaining === undefined ? <em>—</em> : <><em className={quotaSeverity(remaining)}>{Math.round(remaining)}%</em><i className="quota-tab-progress"><b className={quotaSeverity(remaining)} style={{ width: `${remaining}%` }} /></i></>}
+        <span className="min-w-0 grid gap-0.5"><strong className="truncate text-[13px]">{provider.name}</strong><small className="truncate text-[11px] text-muted-foreground">{provider.identity?.account_email ?? provider.identity?.plan ?? tr(unavailable ? "quota.unavailable" : "quota.available")}</small></span>
+        {remaining === undefined ? <em className="text-[13px] font-bold not-italic">—</em> : <><em className={cn("text-[13px] font-bold not-italic", severity === "healthy" && "text-green-600", severity === "warning" && "text-amber-600", severity === "danger" && "text-red-600")}>{Math.round(remaining)}%</em><i className="absolute inset-x-3 bottom-2 h-1 overflow-hidden rounded-full bg-muted"><b className={cn("block h-full rounded-full bg-primary", severity === "warning" && "bg-amber-500", severity === "danger" && "bg-red-500")} style={{ width: `${remaining}%` }} /></i></>}
       </TabsTrigger>;
     })}
   </TabsList></Tabs>;

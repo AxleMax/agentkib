@@ -366,9 +366,9 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
 
   return <div className="workspace-git">
     <div className="git-toolbar">
-      <Tabs value={section} onValueChange={(value) => value === "history" ? showHistory() : showWorktree()}><TabsList className="section-tabs git-section-tabs" variant="line" aria-label={tr("git.sectionLabel")}>
-        <TabsTrigger value="history"><History size={14} />{tr("git.history")}</TabsTrigger>
-        <TabsTrigger value="worktree"><FileCode2 size={14} />{tr("git.worktree")} {summary?.changes.length ? <em>{summary.changes.length}</em> : null}</TabsTrigger>
+      <Tabs value={section} onValueChange={(value) => value === "history" ? showHistory() : showWorktree()}><TabsList className="w-fit justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent" variant="line" aria-label={tr("git.sectionLabel")}>
+        <TabsTrigger className="flex-none rounded-none px-3" value="history"><History size={14} />{tr("git.history")}</TabsTrigger>
+        <TabsTrigger className="flex-none rounded-none px-3" value="worktree"><FileCode2 size={14} />{tr("git.worktree")} {summary?.changes.length ? <em>{summary.changes.length}</em> : null}</TabsTrigger>
       </TabsList></Tabs>
       {summary && <div className="git-head-meta"><GitBranch size={14} /><strong>{summary.head ?? tr("git.detached")}</strong>{summary.upstream && <span>{summary.upstream}</span>}{(summary.ahead > 0 || summary.behind > 0) && <span>↑{summary.ahead} ↓{summary.behind}</span>}{summary.stash_count > 0 && <span>{tr("git.stashes", { count: summary.stash_count })}</span>}</div>}
       <Button className="ghost icon-only" onClick={() => void load()} disabled={loading} aria-label={tr("common.refresh")} title={tr("common.refresh")}><RefreshCw size={15} className={loading ? "spin" : ""} /></Button>

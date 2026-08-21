@@ -11,6 +11,7 @@ import { compareQuotaProviders, isQuotaProviderSupported, lowestRemaining, visib
 import { applyTheme } from "../theme";
 import type { EffectiveTheme, QuotaPopoverPreferences, QuotaProvider, QuotaSnapshot, RefreshJobStatus } from "../types";
 import { ProviderIcon, QuotaWindowRow } from "./QuotaDisplay";
+import { cn } from "@/lib/utils";
 
 export function QuotaPopover() {
   const [snapshot, setSnapshot] = useState<QuotaSnapshot>();
@@ -154,11 +155,11 @@ export function QuotaPopover() {
       <Button className="ghost icon-only" type="button" onClick={() => void refresh()} disabled={busy} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></Button>
     </header>
 
-    {providers.length > 0 && <Tabs value={selectedId} onValueChange={setSelectedId}><TabsList className="quota-popover-tabs" variant="line" aria-label={tr("quota.providers")}>
+    {providers.length > 0 && <Tabs value={selectedId} onValueChange={setSelectedId}><TabsList className="h-auto w-full gap-1 overflow-x-auto border-b border-border bg-transparent p-2" variant="line" aria-label={tr("quota.providers")}>
       {providers.map((provider) => {
         const remaining = lowestRemaining(provider);
-        return <TabsTrigger key={provider.id} value={provider.id}>
-          <ProviderIcon provider={provider} /><span>{provider.name}</span><i><b style={{ width: `${remaining ?? 0}%` }} /></i>
+        return <TabsTrigger className="h-auto min-w-[72px] flex-none flex-col gap-1 rounded-md px-1 py-2 text-xs" key={provider.id} value={provider.id}>
+          <ProviderIcon provider={provider} /><span className="max-w-[68px] truncate">{provider.name}</span><i className="h-0.5 w-10 overflow-hidden rounded-full bg-muted"><b className={cn("block h-full bg-primary", remaining !== undefined && remaining < 30 && "bg-amber-500")} style={{ width: `${remaining ?? 0}%` }} /></i>
         </TabsTrigger>;
       })}
     </TabsList></Tabs>}

@@ -3,6 +3,7 @@ import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { LoadingState } from "@/components/ui/loading-state";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -122,7 +123,7 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
     setSelected({ ...location, parentBytes, workspaceBytes: storage ? metricStorageBytes(storage, metric) : metricBytes(location.node, metric) });
   };
 
-  if (!loaded) return <Card className="panel storage-empty"><p>{tr("common.loading")}</p></Card>;
+  if (!loaded) return <LoadingState label={tr("common.loading")} />;
 
   return <div className="stack storage-page">
     {hasCache && <div className="storage-toolbar toolbar">
