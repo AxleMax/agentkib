@@ -2,6 +2,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { useAppDialogs } from "./AppDialogProvider";
 import { useState } from "react";
 import { Pencil, Plus, RefreshCw, Server, Trash2, X } from "lucide-react";
@@ -82,7 +84,7 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
   };
 
   return (
-    <section className="panel settings-section remote-gateways">
+    <Card className="panel settings-section remote-gateways">
       <div className="panel-head">
         <h2>{tr("gateway.title")}</h2>
         <Button className="primary" onClick={() => edit()}><Plus size={14} />{tr("gateway.add")}</Button>
@@ -104,7 +106,7 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
           <article key={gateway.id}>
             <Server size={17} />
             <div className="remote-gateway-main">
-              <div><strong>{gateway.name}</strong><span className={`status gateway-${gateway.state}`}>{tr(`gateway.state.${gateway.state}`)}</span></div>
+              <div><strong>{gateway.name}</strong><Badge variant={gateway.state === "connected" ? "secondary" : "outline"}>{tr(`gateway.state.${gateway.state}`)}</Badge></div>
               <code>{gateway.url}</code>
               <small>{tr("gateway.workspaceCount", { count: gateway.workspaces.length })} · {tr("gateway.sessionCount", { count: gateway.session_count })} · {tr("gateway.assetCount", { count: gateway.assets.length })}{gateway.last_connected_at ? ` · ${formatDateTime(gateway.last_connected_at)}` : ""}</small>
               {gateway.kind === "hermes" && gateway.state === "connected" && <small className="gateway-partial">{tr("gateway.hermesPartial")}</small>}
@@ -120,6 +122,6 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
         ))}
         {!gateways.length && !draft && <div className="setting-empty">{tr("gateway.empty")}</div>}
       </div>
-    </section>
+    </Card>
   );
 }

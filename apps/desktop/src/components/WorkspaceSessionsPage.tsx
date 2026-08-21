@@ -1,6 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -203,7 +204,7 @@ export function WorkspaceSessionsPage({
   }
 
   return <><div className={`conversation-layout${showDetail ? " show-detail" : ""}`}>
-    <aside className="panel conversation-master">
+    <Card className="panel conversation-master">
       <div className="conversation-toolbar">
         <div className="search"><Search size={15} /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("conversations.searchPlaceholder")} /></div>
         <SelectControl value={agent} onChange={(event) => setAgent(event.target.value as AgentFilter)} aria-label={tr("conversations.agentFilter")}>
@@ -233,8 +234,8 @@ export function WorkspaceSessionsPage({
         </Button>)}
         {!filtered.length && <div className="conversation-empty"><MessageSquareText size={21} /><strong>{tr(filter === "current" && filterCounts.metadata > 0 ? "conversations.metadataAvailable" : "conversations.empty", { count: filterCounts.metadata })}</strong>{filter === "current" && filterCounts.metadata > 0 && <Button className="ghost" onClick={() => setFilter("metadata")}>{tr("conversations.viewMetadata")}</Button>}</div>}
       </div>
-    </aside>
-    <section className="panel conversation-detail">
+    </Card>
+    <Card className="panel conversation-detail">
       <header>
         <Button className="ghost conversation-back" onClick={() => setShowDetail(false)}><ArrowLeft size={15} />{tr("conversations.back")}</Button>
         {selected ? <><div><span><AgentIcon agent={selected.agent} /><strong>{selected.title || tr("conversations.untitled")}</strong></span><small>{selected.updated_at ? formatDateTime(selected.updated_at) : tr("conversations.unknownTime")}{selected.git_branch ? ` · ${selected.git_branch}` : ""}</small></div>{selected.availability === "readable" && events.length > 0 && <Button className="ghost conversation-handoff" onClick={() => setShowHandoff(true)}><FileOutput size={14} />{tr("handoff.create")}</Button>}</> : <strong>{tr("conversations.selectSession")}</strong>}
@@ -249,7 +250,7 @@ export function WorkspaceSessionsPage({
         {!reading && !events.length && !error && <div className="conversation-empty"><MessageSquareText size={24} /><strong>{tr("conversations.noReadableEvents")}</strong></div>}
         {events.map((event) => <ConversationEventRow key={event.id} event={event} />)}
       </div>}
-    </section>
+    </Card>
   </div>{showHandoff && selected && <SessionHandoffDialog workspace={workspace} session={selected} targetAgents={targetAgents} onClose={() => setShowHandoff(false)} onPlanned={(changeSet) => { setShowHandoff(false); onHandoffPlanned(changeSet); }} />}</>;
 }
 

@@ -1,11 +1,13 @@
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Activity, Award, Brain, CalendarCheck2, CalendarDays, Check, ChevronRight, CircleAlert, Flame, FolderGit2, GitCommitHorizontal, LockKeyhole, MessageSquareText, Moon, Network, PlugZap, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Workflow, X } from "lucide-react";
+import { Activity, Award, Brain, CalendarCheck2, CalendarDays, Check, ChevronRight, CircleAlert, Flame, FolderGit2, GitCommitHorizontal, LockKeyhole, MessageSquareText, Moon, Network, PlugZap, RotateCcw, ShieldCheck, Sparkles, Workflow, X } from "lucide-react";
 import { api } from "../api";
 import { achievementReached, buildAchievementWallItems, selectDefaultTrackMilestone, type AchievementCategory, type AchievementTrack, type AchievementWallItem } from "../achievements";
 import { formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "../i18n";
@@ -78,7 +80,6 @@ export function InsightsPage({ section, workspaces, onSummary }: { section: Insi
     window.addEventListener("focus", refreshVisibleInsights);
     return () => window.removeEventListener("focus", refreshVisibleInsights);
   }, [query]);
-  const refresh = async () => { setError(""); try { setBusy(true); await api.requestRefresh("insights", true); } catch (reason) { setBusy(false); setError(localizeMessage(reason)); } };
   const metricLabels: Record<HeatmapMetric, string> = { tokens: "Token", my_commits: tr("insights.myCommits"), all_commits: tr("insights.allCommits"), attributed_commits: tr("insights.attributedCommits"), sessions: tr("common.sessions") };
   const max = Math.max(1, ...points.map((point) => point[metric]));
   const padding = points.length ? new Date(`${points[0].date}T00:00:00`).getDay() : 0;
@@ -93,10 +94,9 @@ export function InsightsPage({ section, workspaces, onSummary }: { section: Insi
       {showTokenFilters && <SelectControl aria-label={tr("workspace.all")} value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="all">{tr("workspace.all")}</option>{workspaces.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</SelectControl>}
       {showCommitFilters && <SelectControl aria-label={tr("insights.allRepositories")} value={repository} onChange={(event) => setRepository(event.target.value)}><option value="all">{tr("insights.allRepositories")}</option>{repositoryOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</SelectControl>}
       {showRange && <SelectControl aria-label={tr("insights.range52w")} value={range} onChange={(event) => setRange(event.target.value as typeof range)}><option value="52w">{tr("insights.range52w")}</option><option value="year">{tr("insights.rangeYear")}</option></SelectControl>}
-      {busy && <span className="badge">{tr("tray.refreshInsights")}</span>}
-      <Button className="ghost icon-only" aria-label={tr("insights.refresh")} title={tr("insights.refresh")} onClick={() => void refresh()} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""} /></Button>
+      {busy && <Badge variant="secondary">{tr("tray.refreshInsights")}</Badge>}
     </div>
-    {!summary && <div className="panel"><Empty icon={Award} title={tr("insights.preparing")} text={tr("insights.preparingText")} /></div>}
+    {!summary && <Card className="panel"><Empty icon={Award} title={tr("insights.preparing")} text={tr("insights.preparingText")} /></Card>}
     {summary && section === "overview" && <>
       <div className="achievement-metrics">
         <AchievementMetric icon={Sparkles} label={tr("insights.totalToken")} value={formatCompact(summary.total_tokens)} detail={summary.coverage_from ? `${summary.coverage_from} — ${summary.coverage_to}` : ""} />
@@ -104,12 +104,12 @@ export function InsightsPage({ section, workspaces, onSummary }: { section: Insi
         <AchievementMetric icon={CalendarDays} label={tr("insights.activeDays")} value={`${summary.active_days} ${tr("common.days")}`} detail={tr("insights.recordedSessions", { count: formatCompact(summary.session_count) })} />
         <AchievementMetric icon={Flame} label={tr("insights.currentStreak")} value={`${summary.current_streak} ${tr("common.days")}`} detail={tr("insights.longestStreak", { count: summary.longest_streak })} />
       </div>
-      <div className="panel heatmap-panel"><div className="panel-head"><h2>{tr("insights.heatmap")}</h2></div><div className="heatmap-tabs">{(Object.keys(metricLabels) as HeatmapMetric[]).map((value) => <Button key={value} className={metric === value ? "active" : ""} onClick={() => setMetric(value)}>{metricLabels[value]}</Button>)}</div><div className="heatmap-scroll"><HeatmapMonths points={points} padding={padding} /><div className="heatmap-grid">{Array.from({ length: padding }, (_, index) => <span className="heatmap-cell empty-cell" key={`padding-${index}`} />)}{points.map((point) => { const value = point[metric]; const level = value ? Math.max(1, Math.ceil(value / max * 4)) : 0; return <span key={point.date} className={`heatmap-cell level-${level}`} title={`${point.date} · ${metricLabels[metric]} ${formatCompact(value)}`} />; })}</div></div><div className="heatmap-legend"><span>{tr("insights.less")}</span>{[0,1,2,3,4].map((level) => <i key={level} className={`heatmap-cell level-${level}`} />)}<span>{tr("insights.more")}</span></div></div>
+      <Card className="panel heatmap-panel"><CardHeader className="panel-head"><h2>{tr("insights.heatmap")}</h2></CardHeader><CardContent className="p-0"><div className="heatmap-tabs">{(Object.keys(metricLabels) as HeatmapMetric[]).map((value) => <Button key={value} className={metric === value ? "active" : ""} onClick={() => setMetric(value)}>{metricLabels[value]}</Button>)}</div><div className="heatmap-scroll"><HeatmapMonths points={points} padding={padding} /><div className="heatmap-grid">{Array.from({ length: padding }, (_, index) => <span className="heatmap-cell empty-cell" key={`padding-${index}`} />)}{points.map((point) => { const value = point[metric]; const level = value ? Math.max(1, Math.ceil(value / max * 4)) : 0; return <span key={point.date} className={`heatmap-cell level-${level}`} title={`${point.date} · ${metricLabels[metric]} ${formatCompact(value)}`} />; })}</div></div><div className="heatmap-legend"><span>{tr("insights.less")}</span>{[0,1,2,3,4].map((level) => <i key={level} className={`heatmap-cell level-${level}`} />)}<span>{tr("insights.more")}</span></div></CardContent></Card>
     </>}
-    {summary && section === "tokens" && <><div className="panel"><div className="panel-head"><h2>{tr("insights.agentUsage")}</h2></div><div className="agent-usage-list">{agents.map((value) => <div key={value.agent}><AgentIcon agent={value.agent} /><span><strong>{agentLabels[value.agent]}</strong><small>{value.session_count} {tr("common.sessions")}</small></span><div><strong>{formatCompact(value.total_tokens)}</strong><small>Token</small></div></div>)}{!agents.length && <p>{tr("insights.noToken")}</p>}</div></div><div className="two-col insight-columns"><BreakdownPanel title={tr("insights.modelUsage")} values={models.map((value) => ({ key: value.model, label: value.model, detail: `${value.session_count} ${tr("common.sessions")}`, value: value.total_tokens }))} /><BreakdownPanel title={tr("insights.workspaceUsage")} values={workspaceUsage.map((value) => ({ key: value.workspace_id ?? "unlinked", label: value.name, detail: `${value.session_count} ${tr("common.sessions")}`, value: value.total_tokens }))} /></div></>}
-    {summary && section === "commits" && <div className="panel"><div className="panel-head"><h2>{tr("insights.repositoryCommits")}</h2></div><div className="repository-usage-list">{repositories.slice(0, 20).map((value) => <div key={value.repository_group_id}><span><strong>{value.name}</strong><small>{tr("insights.repositoryDetail", { all: value.all_commits, attributed: value.attributed_commits })}</small></span><strong>{value.my_commits}</strong></div>)}{!repositories.length && <p>{tr("insights.noCommits")}</p>}</div></div>}
+    {summary && section === "tokens" && <><Card className="panel"><CardHeader className="panel-head"><h2>{tr("insights.agentUsage")}</h2></CardHeader><CardContent className="p-0"><div className="agent-usage-list">{agents.map((value) => <div key={value.agent}><AgentIcon agent={value.agent} /><span><strong>{agentLabels[value.agent]}</strong><small>{value.session_count} {tr("common.sessions")}</small></span><div><strong>{formatCompact(value.total_tokens)}</strong><small>Token</small></div></div>)}{!agents.length && <p>{tr("insights.noToken")}</p>}</div></CardContent></Card><div className="two-col insight-columns"><BreakdownPanel title={tr("insights.modelUsage")} values={models.map((value) => ({ key: value.model, label: value.model, detail: `${value.session_count} ${tr("common.sessions")}`, value: value.total_tokens }))} /><BreakdownPanel title={tr("insights.workspaceUsage")} values={workspaceUsage.map((value) => ({ key: value.workspace_id ?? "unlinked", label: value.name, detail: `${value.session_count} ${tr("common.sessions")}`, value: value.total_tokens }))} /></div></>}
+    {summary && section === "commits" && <Card className="panel"><CardHeader className="panel-head"><h2>{tr("insights.repositoryCommits")}</h2></CardHeader><CardContent className="p-0"><div className="repository-usage-list">{repositories.slice(0, 20).map((value) => <div key={value.repository_group_id}><span><strong>{value.name}</strong><small>{tr("insights.repositoryDetail", { all: value.all_commits, attributed: value.attributed_commits })}</small></span><strong>{value.my_commits}</strong></div>)}{!repositories.length && <p>{tr("insights.noCommits")}</p>}</div></CardContent></Card>}
     {section === "milestones" && <AchievementWall achievements={achievements} />}
-    {section === "sources" && <div className="panel provider-panel"><div className="panel-head"><h2>{tr("insights.providers")}</h2><span className="badge">{status?.refreshed_at ? tr("home.updated", { time: formatRelativeTime(status.refreshed_at) }) : tr("insights.notRefreshed")}</span></div><div className="provider-grid">{status?.providers.map((provider) => <ProviderRow key={provider.agent} provider={provider} />)}</div></div>}
+    {section === "sources" && <Card className="panel provider-panel"><CardHeader className="panel-head"><h2>{tr("insights.providers")}</h2><Badge variant="outline">{status?.refreshed_at ? tr("home.updated", { time: formatRelativeTime(status.refreshed_at) }) : tr("insights.notRefreshed")}</Badge></CardHeader><CardContent className="p-0"><div className="provider-grid">{status?.providers.map((provider) => <ProviderRow key={provider.agent} provider={provider} />)}</div></CardContent></Card>}
   </div>;
 }
 
@@ -124,14 +124,14 @@ const specialAchievementIcons: Record<string, typeof Activity> = { "special-firs
 
 function AchievementWall({ achievements }: { achievements: Achievement[] }) {
   const [selected, setSelected] = useState<AchievementWallItem>();
-  if (!achievements.length) return <div className="panel"><Empty icon={Award} title={tr("insights.preparing")} /></div>;
+  if (!achievements.length) return <Card className="panel"><Empty icon={Award} title={tr("insights.preparing")} /></Card>;
   const items = buildAchievementWallItems(achievements);
   const tracks = items.filter((item) => item.kind === "track");
   const specials = items.filter((item) => item.kind === "special");
   const completedMilestones = tracks.reduce((count, item) => count + item.track.completed, 0);
   const milestoneCount = tracks.reduce((count, item) => count + item.track.milestones.length, 0);
   const completedSpecials = specials.filter((item) => item.unlocked).length;
-  return <section className="panel achievement-wall-panel"><div className="panel-head"><h2>{tr("insights.milestones")}</h2><div className="achievement-wall-counts"><span className="badge">{tr("achievementWall.milestones", { completed: completedMilestones, total: milestoneCount })}</span><span className="badge">{tr("achievementWall.specials", { completed: completedSpecials, total: specials.length })}</span></div></div><div className="achievement-wall-grid">{items.map((item) => <AchievementWallCard key={item.id} item={item} onOpen={() => setSelected(item)} />)}</div>{selected && <AchievementDetailDialog key={selected.id} item={selected} onClose={() => setSelected(undefined)} />}</section>;
+  return <Card className="panel achievement-wall-panel"><CardHeader className="panel-head"><h2>{tr("insights.milestones")}</h2><div className="achievement-wall-counts"><Badge variant="outline">{tr("achievementWall.milestones", { completed: completedMilestones, total: milestoneCount })}</Badge><Badge variant="outline">{tr("achievementWall.specials", { completed: completedSpecials, total: specials.length })}</Badge></div></CardHeader><CardContent className="p-0"><div className="achievement-wall-grid">{items.map((item) => <AchievementWallCard key={item.id} item={item} onOpen={() => setSelected(item)} />)}</div></CardContent>{selected && <AchievementDetailDialog key={selected.id} item={selected} onClose={() => setSelected(undefined)} />}</Card>;
 }
 
 function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOpen: () => void }) {
@@ -168,7 +168,7 @@ function SpecialAchievementDetail({ item }: { item: Extract<AchievementWallItem,
   const Icon = hidden ? LockKeyhole : specialAchievementIcons[achievement.code] ?? Award;
   const title = hidden ? tr("special.mystery") : tr(`achievements.${key}.title`);
   const status = achievement.unlocked_at ? tr("insights.unlockedAt", { date: formatDateTime(achievement.unlocked_at) }) : unlocked ? tr("special.reachedDateUnknown") : tr("milestones.locked");
-  return <div className="achievement-dialog-content special-detail"><span className={`special-detail-icon${unlocked ? " unlocked" : ""}`}><Icon size={28} /></span><h3>{title}</h3><p>{hidden ? tr("achievementWall.secretCondition") : tr(`achievements.${key}.description`)}</p><span className="badge">{status}</span></div>;
+  return <div className="achievement-dialog-content special-detail"><span className={`special-detail-icon${unlocked ? " unlocked" : ""}`}><Icon size={28} /></span><h3>{title}</h3><p>{hidden ? tr("achievementWall.secretCondition") : tr(`achievements.${key}.description`)}</p><Badge variant="outline">{status}</Badge></div>;
 }
 
 function ProviderRow({ provider }: { provider: NonNullable<InsightsStatus["providers"]>[number] }) {
@@ -176,8 +176,8 @@ function ProviderRow({ provider }: { provider: NonNullable<InsightsStatus["provi
   return <div className="provider-row"><AgentIcon agent={provider.agent} /><span><strong>{agentLabels[provider.agent]}</strong>{summary && <small>{summary}</small>}{provider.error && <Collapsible><CollapsibleTrigger>{tr("common.details")}</CollapsibleTrigger><CollapsibleContent><pre>{provider.error}</pre></CollapsibleContent></Collapsible>}</span></div>;
 }
 
-function AchievementMetric({ icon: Icon, label, value, detail }: { icon: ComponentType<{ size?: number }>; label: string; value: string; detail: string }) { return <div className="panel achievement-metric"><Icon size={18} /><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>; }
-function BreakdownPanel({ title, values }: { title: string; values: Array<{ key: string; label: string; detail: string; value: number }> }) { return <div className="panel"><div className="panel-head"><h2>{title}</h2></div><div className="repository-usage-list">{values.slice(0, 10).map((item) => <div key={item.key}><span><strong>{metadataLabel(item.label)}</strong><small>{item.detail}</small></span><strong>{formatCompact(item.value)}</strong></div>)}{!values.length && <p>{tr("insights.noRecords")}</p>}</div></div>; }
+function AchievementMetric({ icon: Icon, label, value, detail }: { icon: ComponentType<{ size?: number }>; label: string; value: string; detail: string }) { return <Card className="panel achievement-metric"><Icon size={18} /><span>{label}</span><strong>{value}</strong><small>{detail}</small></Card>; }
+function BreakdownPanel({ title, values }: { title: string; values: Array<{ key: string; label: string; detail: string; value: number }> }) { return <Card className="panel"><CardHeader className="panel-head"><h2>{title}</h2></CardHeader><CardContent className="p-0"><div className="repository-usage-list">{values.slice(0, 10).map((item) => <div key={item.key}><span><strong>{metadataLabel(item.label)}</strong><small>{item.detail}</small></span><strong>{formatCompact(item.value)}</strong></div>)}{!values.length && <p>{tr("insights.noRecords")}</p>}</div></CardContent></Card>; }
 function Empty({ icon: Icon, title, text }: { icon: ComponentType<{ size?: number }>; title: string; text?: string }) { return <div className="empty compact"><Icon size={28} /><h3>{title}</h3>{text && <p>{text}</p>}</div>; }
 function formatMilestoneValue(category: AchievementCategory, value: number) { return tr(`milestones.value.${category}`, { value: formatCompact(value) }); }
 function formatCompact(value: number) { return formatCompactNumber(value); }

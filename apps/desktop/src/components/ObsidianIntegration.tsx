@@ -2,6 +2,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ExternalLink, FolderOpen, Link2, Unlink } from "lucide-react";
@@ -13,9 +15,9 @@ function InstallationStatus({ integration }: { integration: ObsidianIntegration 
   const { installation } = integration;
   return (
     <div className="obsidian-status">
-      <span className={installation.installed ? "ready" : "status neutral"}>
+      <Badge variant={installation.installed ? "secondary" : "outline"}>
         {tr(installation.installed ? "obsidian.installed" : "obsidian.notInstalled")}
-      </span>
+      </Badge>
       {installation.version && <small>{tr("obsidian.version", { version: installation.version })}</small>}
       <small>{tr(installation.cli_available ? "obsidian.cliAvailable" : "obsidian.cliUnavailable")}</small>
     </div>
@@ -58,7 +60,7 @@ export function ObsidianSettingsCard() {
   };
 
   return (
-    <div className="panel obsidian-card">
+    <Card className="panel obsidian-card">
       <div className="panel-head">
         <div className="obsidian-heading">
           <div className="setting-icon"><Link2 /></div>
@@ -78,12 +80,12 @@ export function ObsidianSettingsCard() {
           <div className="obsidian-vault-row" key={vault.path}>
             <FolderOpen size={16} />
             <span><strong>{vault.name}</strong><small>{vault.path}</small></span>
-            <span className="status neutral">{tr(`obsidian.source.${vault.source}`)}</span>
+            <Badge variant="outline">{tr(`obsidian.source.${vault.source}`)}</Badge>
           </div>
         ))}
         {integration && !integration.vaults.length && <p className="muted">{tr("obsidian.noVaults")}</p>}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -140,7 +142,7 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
   if (integration && !integration.installation.installed && !link) return null;
 
   return (
-    <div className="panel obsidian-card workspace-obsidian-card">
+    <Card className="panel obsidian-card workspace-obsidian-card">
       <div className="panel-head">
         <h2>{tr("obsidian.workspaceTitle")}</h2>
         {link && <Button className="ghost" onClick={() => void openLinkedTarget()}><ExternalLink size={15} />{tr("obsidian.open")}</Button>}
@@ -163,6 +165,6 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
         </div>
       )}
       {integration?.installation.installed && !link && !integration.vaults.length && <p className="muted">{tr("obsidian.addVaultFirst")}</p>}
-    </div>
+    </Card>
   );
 }

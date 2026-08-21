@@ -1,4 +1,6 @@
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Minus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { api } from "../api";
@@ -60,24 +62,24 @@ export function WorkspaceDoctorPage({
   }
 
   return <div className="stack doctor-page">
-    <section className="panel doctor-summary">
+    <Card className="panel doctor-summary">
       <div>
         <span className="eyebrow">Context Doctor</span>
         <h2>{tr("doctor.title")}</h2>
         <p>{tr("doctor.description")}</p>
       </div>
       <div className="doctor-summary-counts">
-        <span className="error"><strong>{activeReport?.summary.error_count ?? 0}</strong>{tr("doctor.errors")}</span>
-        <span className="warning"><strong>{activeReport?.summary.warning_count ?? 0}</strong>{tr("doctor.warnings")}</span>
-        <span><strong>{activeReport?.summary.repairable_count ?? 0}</strong>{tr("doctor.repairable")}</span>
+        <Badge variant="destructive"><strong>{activeReport?.summary.error_count ?? 0}</strong>{tr("doctor.errors")}</Badge>
+        <Badge variant="outline"><strong>{activeReport?.summary.warning_count ?? 0}</strong>{tr("doctor.warnings")}</Badge>
+        <Badge variant="secondary"><strong>{activeReport?.summary.repairable_count ?? 0}</strong>{tr("doctor.repairable")}</Badge>
       </div>
       <div className="doctor-actions">
         <Button className="ghost" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={14} />{tr("common.refresh")}</Button>
         <Button className="primary" onClick={() => void repair()} disabled={loading || repairing || !activeReport?.summary.repairable_count}><Wrench size={14} />{tr(repairing ? "doctor.planning" : "doctor.reviewRepair")}</Button>
       </div>
-    </section>
+    </Card>
     {error && <div className="alert"><CircleAlert size={16} />{error}</div>}
-    {activeReport && <section className="panel doctor-matrix-panel">
+    {activeReport && <Card className="panel doctor-matrix-panel">
       <div className="panel-head"><div><h2>{tr("doctor.matrix")}</h2><p>{tr("doctor.matrixDescription")}</p></div></div>
       <div className="doctor-matrix" role="table">
         <div className="doctor-matrix-row heading" role="row"><span>{tr("doctor.agent")}</span><span>Instructions</span><span>Skills</span><span>MCP</span></div>
@@ -88,8 +90,8 @@ export function WorkspaceDoctorPage({
           <DoctorCell value={row.mcp} />
         </div>)}
       </div>
-    </section>}
-    {activeReport && <section className="panel doctor-issues">
+    </Card>}
+    {activeReport && <Card className="panel doctor-issues">
       <div className="panel-head"><div><h2>{tr("doctor.issues")}</h2><p>{tr("doctor.deterministicOnly")}</p></div></div>
       {!activeReport.issues.length && <div className="compact-state"><ShieldCheck size={22} /><strong>{tr("doctor.allClear")}</strong></div>}
       {activeReport.issues.map((issue) => <article className={`doctor-issue ${issue.severity}`} key={issue.id}>
@@ -99,7 +101,7 @@ export function WorkspaceDoctorPage({
           {issue.evidence.map((evidence, index) => <div className="doctor-evidence" key={`${issue.id}-${index}`}>{evidence.path && <code>{evidence.path}</code>}<span>{evidence.detail}</span>{evidence.expected && <small>{tr("doctor.expected")}: {shortHash(evidence.expected)} · {tr("doctor.actual")}: {shortHash(evidence.actual ?? tr("doctor.missing"))}</small>}</div>)}
         </div>
       </article>)}
-    </section>}
+    </Card>}
   </div>;
 }
 

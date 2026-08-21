@@ -1,6 +1,8 @@
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -120,7 +122,7 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
     setSelected({ ...location, parentBytes, workspaceBytes: storage ? metricStorageBytes(storage, metric) : metricBytes(location.node, metric) });
   };
 
-  if (!loaded) return <div className="panel storage-empty"><p>{tr("common.loading")}</p></div>;
+  if (!loaded) return <Card className="panel storage-empty"><p>{tr("common.loading")}</p></Card>;
 
   return <div className="stack storage-page">
     {hasCache && <div className="storage-toolbar toolbar">
@@ -139,7 +141,7 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
     {active && <div className="storage-progress"><span>{job?.state === "queued" ? tr("storage.waiting") : tr("storage.scanning")}</span><progress max={job?.progress_total || 1} value={job?.progress_current || 0} /><strong>{job?.progress_current ?? 0} / {job?.progress_total ?? workspaces.length}</strong></div>}
     {hasCache && (stale || legacy) && <div className="storage-notices">{stale && <span><CircleAlert size={14} />{tr("storage.stale")}</span>}{legacy && <span><CircleAlert size={14} />{tr("storage.legacySnapshot")}</span>}</div>}
     {!hasCache ? <EmptyState active={active} overview={overview} start={start} stop={stop} /> : <div className={`storage-main${selected ? " has-inspector" : ""}`}>
-      <section className="panel storage-map-panel">
+      <Card className="panel storage-map-panel">
         <div className="panel-head storage-map-head">
           <nav className="storage-breadcrumbs" aria-label={tr("storage.location")}>
             <Button variant="bare" size="content" onClick={() => { setTrail([]); setSelected(undefined); }}>{tr("storage.allWorkspaces")}</Button>
@@ -163,14 +165,14 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
             </Button>;
           })}
         </div> : <div className="storage-map-empty"><HardDrive size={26} /><span>{tr("storage.noItemsForMetric")}</span></div>}
-      </section>
+      </Card>
       {selected && <StorageInspector selection={selected} storage={storageById.get(selected.workspaceId)} workspace={workspaceById.get(selected.workspaceId)} metric={metric} onClose={() => setSelected(undefined)} onError={(reason) => setError(localizeMessage(reason))} />}
     </div>}
   </div>;
 }
 
 function EmptyState({ active, overview, start, stop }: { active: boolean; overview?: StorageOverview; start: () => Promise<void>; stop: () => Promise<void> }) {
-  return <div className="panel storage-empty"><HardDrive size={32} /><h2>{active ? tr("storage.scanning") : tr("storage.emptyTitle")}</h2>{!active && <p>{tr("storage.emptyText")}</p>}{overview?.workspaces.map((item) => <span className="storage-unavailable" key={item.workspace_id}><CircleAlert size={13} />{item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}</span>)}{active ? <Button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</Button> : <Button className="primary" onClick={() => void start()}>{tr("storage.startScan")}</Button>}</div>;
+  return <Card className="panel storage-empty"><HardDrive size={32} /><h2>{active ? tr("storage.scanning") : tr("storage.emptyTitle")}</h2>{!active && <p>{tr("storage.emptyText")}</p>}{overview?.workspaces.map((item) => <span className="storage-unavailable" key={item.workspace_id}><CircleAlert size={13} />{item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}</span>)}{active ? <Button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</Button> : <Button className="primary" onClick={() => void start()}>{tr("storage.startScan")}</Button>}</Card>;
 }
 
 function Metric({ label, value, meta }: { label: string; value: string; meta?: string }) { return <div><span>{label}</span><strong>{value}</strong>{meta && <small>{meta}</small>}</div>; }
@@ -183,8 +185,8 @@ function StorageInspector({ selection, storage, workspace, metric, onClose, onEr
     try { await api.openWorkspaceStoragePath(selection.workspaceId, node.kind === "aggregate" ? "" : node.relative_path); }
     catch (reason) { onError(reason); }
   };
-  return <aside className="panel storage-inspector">
-    <div className="panel-head"><div><h2>{nodeLabel(node)}</h2>{node.partial && <span className="quality-badge partial">{tr("storage.partialNode")}</span>}</div><Button className="icon-button" aria-label={tr("common.close")} onClick={onClose}><X size={16} /></Button></div>
+  return <Card className="panel storage-inspector">
+        <div className="panel-head"><div><h2>{nodeLabel(node)}</h2>{node.partial && <Badge variant="outline">{tr("storage.partialNode")}</Badge>}</div><Button className="icon-button" aria-label={tr("common.close")} onClick={onClose}><X size={16} /></Button></div>
     <dl className="storage-facts">
       <Fact label={tr("storage.allocated")} value={formatBytes(node.allocated_bytes)} />
       <Fact label={tr("storage.logical")} value={formatBytes(node.logical_bytes)} />
@@ -200,7 +202,7 @@ function StorageInspector({ selection, storage, workspace, metric, onClose, onEr
     {fullPath && <code className="storage-path" title={fullPath}>{fullPath}</code>}
     {storage?.error_key && <div className="storage-warning"><CircleAlert size={14} /><span>{tr(storage.error_key)}{storage.error_detail && <small>{storage.error_detail}</small>}</span></div>}
     {node.kind !== "aggregate" && <div className="storage-inspector-actions"><Button className="ghost" onClick={() => void open()}><ExternalLink size={14} />{tr("storage.openLocation")}</Button></div>}
-  </aside>;
+  </Card>;
 }
 
 function Fact({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }

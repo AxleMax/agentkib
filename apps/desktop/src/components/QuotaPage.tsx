@@ -2,6 +2,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -222,9 +223,11 @@ export function QuotaPage({
       <ToggleGroup className="quota-filter" value={[filter]} onValueChange={(values) => { const value = values[0]; if (value) setFilter(value as QuotaFilter); }} aria-label={tr("quota.filterLabel")}>
         {(["all", "healthy", "warning", "unavailable"] as QuotaFilter[]).map((value) => <ToggleGroupItem key={value} value={value} className={filter === value ? "active" : ""}>{tr(`quota.filter.${value}`)}</ToggleGroupItem>)}
       </ToggleGroup>
-      {popoverSupported && <CollapsibleTrigger className="ghost quota-display-settings-button" type="button"><Settings2 size={15} />{tr("quota.popoverSettings")}</CollapsibleTrigger>}
-      {snapshot && refreshLabel && <span className="badge">{refreshLabel}</span>}
-      <Button className="ghost icon-only" onClick={() => void refresh()} disabled={busy} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></Button>
+      <div className="quota-toolbar-actions">
+        {popoverSupported && <CollapsibleTrigger className="ghost quota-display-settings-button" type="button"><Settings2 size={15} />{tr("quota.popoverSettings")}</CollapsibleTrigger>}
+        {snapshot && refreshLabel && <Badge variant="secondary">{refreshLabel}</Badge>}
+        <Button className="ghost icon-only" onClick={() => void refresh()} disabled={busy} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></Button>
+      </div>
     </div>
 
     {popoverSupported && snapshot && <CollapsibleContent><QuotaDisplaySettings snapshot={snapshot} preferences={preferences} onChange={setPreferences} onClose={() => setShowPreferences(false)} /></CollapsibleContent>}
@@ -240,7 +243,7 @@ export function QuotaPage({
 }
 
 function ProviderTabs({ providers, selectedId, onSelect }: { providers: QuotaProvider[]; selectedId: string; onSelect: (id: string) => void }) {
-  return <Tabs value={selectedId} onValueChange={onSelect}><TabsList className="quota-provider-tabs" variant="line" aria-label={tr("quota.providers")}>
+  return <Tabs value={selectedId} onValueChange={onSelect}><TabsList className="quota-provider-tabs product-tabs" variant="line" aria-label={tr("quota.providers")}>
     {providers.map((provider) => {
       const remaining = lowestRemaining(provider);
       const unavailable = remaining === undefined;
