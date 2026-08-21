@@ -11,7 +11,6 @@ import { compareQuotaProviders, isQuotaProviderSupported, lowestRemaining, visib
 import { applyTheme } from "../theme";
 import type { EffectiveTheme, QuotaPopoverPreferences, QuotaProvider, QuotaSnapshot, RefreshJobStatus } from "../types";
 import { ProviderIcon, QuotaWindowRow } from "./QuotaDisplay";
-import "./quota.css";
 
 export function QuotaPopover() {
   const [snapshot, setSnapshot] = useState<QuotaSnapshot>();

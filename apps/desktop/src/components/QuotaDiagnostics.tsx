@@ -1,7 +1,6 @@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { tr } from "../i18n";
 import type { QuotaCollectorStatus, QuotaSnapshot } from "../types";
-import "./quota.css";
 
 export function QuotaDiagnostics({ status }: { status?: QuotaCollectorStatus }) {
   if (!status) return <div className="setting-empty">{tr("quota.statusUnavailable")}</div>;

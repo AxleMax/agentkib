@@ -30,7 +30,6 @@ import type {
   RefreshJobStatus,
 } from "../types";
 import { ProviderIcon, QuotaWindowRow } from "./QuotaDisplay";
-import "./quota.css";
 
 type QuotaFilter = "all" | "healthy" | "warning" | "unavailable";
 
