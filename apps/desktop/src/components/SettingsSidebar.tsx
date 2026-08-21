@@ -27,8 +27,8 @@ export function SettingsSidebar({
 }) {
   return (
     <aside className="sidebar settings-sidebar relative z-20 col-start-1 row-start-1 flex h-full min-h-0 w-[var(--sidebar-width)] flex-col border-r border-[var(--border)] bg-[var(--sidebar)] p-3 transition-transform duration-150 group-[.sidebar-collapsed]:pointer-events-none group-[.sidebar-collapsed]:-translate-x-full" aria-hidden={collapsed} inert={collapsed ? true : undefined}>
-      <div className="settings-sidebar-head flex h-[38px] items-center gap-2">
-        <Button variant="bare" size="content" className="back-to-app flex h-[34px] min-w-0 flex-1 items-center justify-start gap-2 rounded-[7px] px-2 text-left text-[13px] text-[#a5adbb] hover:bg-[#171c25] hover:text-white" type="button" onClick={onBack}>
+      <div className="flex h-[38px] items-center gap-2">
+        <Button variant="bare" size="content" className="flex h-[34px] min-w-0 flex-1 items-center justify-start gap-2 rounded-[7px] px-2 text-left text-[13px] text-[#a5adbb] hover:bg-[#171c25] hover:text-white" type="button" onClick={onBack}>
           <ArrowLeft size={16} />{tr("settings.backToApp")}
         </Button>
       </div>

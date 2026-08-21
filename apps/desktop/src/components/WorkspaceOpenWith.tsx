@@ -29,11 +29,11 @@ export function WorkspaceOpenWith({ workspace, onError }: { workspace: Workspace
   };
 
   if (!preferred) return null;
-  return <div className="workspace-open-with">
-    <Button className="ghost opener-main" disabled={opening} onClick={() => void openWorkspace()} title={tr("workspaceOpener.openWith", { app: preferred.name })}><OpenerIcon category={preferred.category} />{preferred.name}</Button>
-    <DropdownMenu><DropdownMenuTrigger className="ghost opener-dropdown-trigger" aria-label={tr("workspaceOpener.choose")} title={tr("workspaceOpener.choose")}><ChevronDown size={14} /></DropdownMenuTrigger><DropdownMenuContent className="opener-dropdown" align="end">{(["editor", "terminal", "file-manager"] as const).map((category) => {
+  return <div className="inline-flex h-9 max-w-full items-stretch">
+    <Button variant="outline" className="min-w-0 max-w-40 justify-start gap-2 rounded-r-none border-r-0 px-3" disabled={opening} onClick={() => void openWorkspace()} title={tr("workspaceOpener.openWith", { app: preferred.name })}><OpenerIcon category={preferred.category} /><span className="truncate">{preferred.name}</span></Button>
+    <DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-9 w-8 rounded-l-none px-0" />} aria-label={tr("workspaceOpener.choose")} title={tr("workspaceOpener.choose")}><ChevronDown size={14} /></DropdownMenuTrigger><DropdownMenuContent className="w-[248px] max-h-[min(480px,calc(100vh-110px))]" align="end">{(["editor", "terminal", "file-manager"] as const).map((category) => {
       const values = openers.filter((opener) => opener.category === category);
-      return values.length ? <DropdownMenuGroup key={category}><DropdownMenuLabel>{tr(`workspaceOpener.category.${category}`)}</DropdownMenuLabel>{values.map((opener) => <DropdownMenuItem key={opener.id} onClick={() => void openWorkspace(opener.id)}><OpenerIcon category={opener.category} /><strong>{opener.name}</strong>{opener.preferred && <em>{tr("workspaceOpener.default")}</em>}</DropdownMenuItem>)}</DropdownMenuGroup> : null;
+      return values.length ? <DropdownMenuGroup key={category} className="border-t border-border pt-1 first:border-t-0 first:pt-0"><DropdownMenuLabel>{tr(`workspaceOpener.category.${category}`)}</DropdownMenuLabel>{values.map((opener) => <DropdownMenuItem key={opener.id} className="grid grid-cols-[18px_minmax(0,1fr)_auto] gap-2" onClick={() => void openWorkspace(opener.id)}><OpenerIcon category={opener.category} /><strong className="truncate text-sm">{opener.name}</strong>{opener.preferred && <em className="text-xs not-italic text-primary">{tr("workspaceOpener.default")}</em>}</DropdownMenuItem>)}</DropdownMenuGroup> : null;
     })}</DropdownMenuContent></DropdownMenu>
   </div>;
 }

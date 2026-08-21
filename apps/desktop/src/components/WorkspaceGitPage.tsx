@@ -1,6 +1,8 @@
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -34,6 +36,7 @@ import type {
   GitWorkspaceSummary,
   WorkspaceSummary,
 } from "../types";
+import { cn } from "@/lib/utils";
 
 type GitSection = "history" | "worktree";
 
@@ -334,21 +337,21 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
   if (summary && activeSubview) {
     const commitDetail = activeSubview.kind === "commit";
     const detailTitle = commitDetail ? selectedCommit?.subject : tr("git.worktreeDetail");
-    return <div className="workspace-git git-detail-view">
-      <div className="git-detail-toolbar">
-        <Button className="ghost git-detail-back" onClick={() => setSubview(undefined)}><ArrowLeft size={14} />{tr("git.backToGit")}</Button>
-        <div className="git-detail-title"><strong>{detailTitle || tr("git.untitledCommit")}</strong>{commitDetail && selectedCommit && <span><code>{selectedCommit.oid.slice(0, 7)}</code><em>{selectedCommit.author_name}</em><time>{formatDateTime(selectedCommit.authored_at)}</time><span className="git-ref-list">{selectedCommit.refs.map((ref) => <em key={ref.full_name} className={ref.kind}>{ref.name}</em>)}</span></span>}</div>
-      </div>
-      <div className={`git-detail-browser${mobileDetailPane === "diff" ? " mobile-show-diff" : ""}`}>
-        <aside className="git-detail-files git-file-tree">
+    return <div className="flex h-full min-h-0 flex-col gap-2">
+      <Card className="flex min-h-[50px] items-center gap-2.5 rounded-xl p-1.5">
+        <Button variant="ghost" className="shrink-0" onClick={() => setSubview(undefined)}><ArrowLeft size={14} />{tr("git.backToGit")}</Button>
+        <div className="flex min-w-0 items-baseline gap-3 overflow-hidden"><strong className="min-w-0 truncate text-base">{detailTitle || tr("git.untitledCommit")}</strong>{commitDetail && selectedCommit && <span className="flex min-w-0 items-center gap-2 whitespace-nowrap text-xs text-muted-foreground max-[760px]:hidden"><code className="font-inherit text-foreground">{selectedCommit.oid.slice(0, 7)}</code><em className="not-italic">{selectedCommit.author_name}</em><time>{formatDateTime(selectedCommit.authored_at)}</time><span className="flex min-w-0 gap-1 overflow-hidden">{selectedCommit.refs.map((ref) => <Badge key={ref.full_name} variant="outline" className={cn("max-w-32 truncate px-1.5 py-0 text-[10px]", ref.kind === "remote-branch" && "text-sky-600", ref.kind === "tag" && "text-amber-600")}>{ref.name}</Badge>)}</span></span>}</div>
+      </Card>
+      <div className="relative grid min-h-0 flex-1 grid-cols-[clamp(280px,26%,340px)_minmax(0,1fr)] overflow-hidden rounded-xl border bg-card max-[760px]:block">
+        <aside className={cn("min-w-0 min-h-0 overflow-auto border-r border-border p-1.5 max-[760px]:absolute max-[760px]:inset-0 max-[760px]:z-10 max-[760px]:border-r-0", mobileDetailPane === "diff" && "max-[760px]:hidden")}>
           {commitDetail ? <>
-            <Button variant="bare" size="content" className={`git-all-changes${selectedFile ? "" : " active"}`} onClick={() => { setSelectedFile(undefined); setMobileDetailPane("diff"); }}><GitCompareArrows size={13} /><span>{tr("git.allChanges")}</span><em>{filesLoading ? "…" : files.length}</em></Button>
-            {filesLoading && <div className="git-file-tree-status"><RefreshCw size={14} className="spin" />{tr("common.loading")}</div>}
-            {!filesLoading && filesError && <div className="git-file-tree-status error"><CircleAlert size={14} /><span>{tr("git.filesFailed")}</span><Button className="ghost" onClick={() => { if (detailOid) void loadCommitFiles(detailOid); }}>{tr("git.retry")}</Button></div>}
+            <Button variant="ghost" className={cn("sticky top-0 z-10 grid min-h-8 w-full grid-cols-[16px_minmax(0,1fr)_auto] justify-start gap-1.5 rounded-md border-b border-border bg-card px-2 text-left text-xs", !selectedFile && "bg-muted text-foreground")} onClick={() => { setSelectedFile(undefined); setMobileDetailPane("diff"); }}><GitCompareArrows size={13} /><span>{tr("git.allChanges")}</span><em className="not-italic">{filesLoading ? "…" : files.length}</em></Button>
+            {filesLoading && <div className="flex min-h-9 items-center gap-2 px-2 text-xs text-muted-foreground"><RefreshCw size={14} className="animate-spin" />{tr("common.loading")}</div>}
+            {!filesLoading && filesError && <div className="flex min-h-9 items-center gap-2 px-2 text-xs text-destructive"><CircleAlert size={14} /><span className="min-w-0 flex-1">{tr("git.filesFailed")}</span><Button variant="ghost" size="sm" onClick={() => { if (detailOid) void loadCommitFiles(detailOid); }}>{tr("git.retry")}</Button></div>}
             {!filesLoading && !filesError && files.length > 0 && <FileTree files={files} selectedPath={selectedFile} onSelect={(path) => { setSelectedFile(path); setMobileDetailPane("diff"); }} />}
-            {!filesLoading && !filesError && files.length === 0 && <div className="git-file-tree-status"><FileQuestion size={14} />{tr("git.noFiles")}</div>}
+            {!filesLoading && !filesError && files.length === 0 && <div className="flex min-h-9 items-center gap-2 px-2 text-xs text-muted-foreground"><FileQuestion size={14} />{tr("git.noFiles")}</div>}
           </> : <>
-            <Button variant="bare" size="content" className={`git-all-changes${selectedWorktree ? "" : " active"}`} onClick={() => { setSelectedWorktree(undefined); setMobileDetailPane("diff"); }}><GitCompareArrows size={13} /><span>{tr(activeSubview.diffKind === "staged" ? "git.allStagedChanges" : "git.allWorktreeChanges")}</span><em>{worktreeDetailFiles.length}</em></Button>
+            <Button variant="ghost" className={cn("sticky top-0 z-10 grid min-h-8 w-full grid-cols-[16px_minmax(0,1fr)_auto] justify-start gap-1.5 rounded-md border-b border-border bg-card px-2 text-left text-xs", !selectedWorktree && "bg-muted text-foreground")} onClick={() => { setSelectedWorktree(undefined); setMobileDetailPane("diff"); }}><GitCompareArrows size={13} /><span>{tr(activeSubview.diffKind === "staged" ? "git.allStagedChanges" : "git.allWorktreeChanges")}</span><em className="not-italic">{worktreeDetailFiles.length}</em></Button>
             <FileTree files={worktreeDetailFiles} selectedPath={selectedWorktree?.path} onSelect={(path) => { setSelectedWorktree({ path, kind: activeSubview.diffKind }); setSubview({ kind: "worktree", path, diffKind: activeSubview.diffKind }); setMobileDetailPane("diff"); }} />
           </>}
         </aside>
@@ -359,93 +362,95 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
           untracked={!commitDetail && selectedWorktreeIsUntracked}
           onRetry={() => void loadDiff(diffRequest)}
           onBackToFiles={() => setMobileDetailPane("files")}
+          mobileVisible={mobileDetailPane === "diff"}
         />
       </div>
     </div>;
   }
 
-  return <div className="workspace-git">
-    <div className="git-toolbar">
+  return <div className="flex h-full min-h-0 flex-col gap-2">
+    <div className="flex min-h-[42px] items-center gap-2.5">
       <Tabs value={section} onValueChange={(value) => value === "history" ? showHistory() : showWorktree()}><TabsList className="w-fit justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent" variant="line" aria-label={tr("git.sectionLabel")}>
         <TabsTrigger className="flex-none rounded-none px-3" value="history"><History size={14} />{tr("git.history")}</TabsTrigger>
         <TabsTrigger className="flex-none rounded-none px-3" value="worktree"><FileCode2 size={14} />{tr("git.worktree")} {summary?.changes.length ? <em>{summary.changes.length}</em> : null}</TabsTrigger>
       </TabsList></Tabs>
-      {summary && <div className="git-head-meta"><GitBranch size={14} /><strong>{summary.head ?? tr("git.detached")}</strong>{summary.upstream && <span>{summary.upstream}</span>}{(summary.ahead > 0 || summary.behind > 0) && <span>↑{summary.ahead} ↓{summary.behind}</span>}{summary.stash_count > 0 && <span>{tr("git.stashes", { count: summary.stash_count })}</span>}</div>}
-      <Button className="ghost icon-only" onClick={() => void load()} disabled={loading} aria-label={tr("common.refresh")} title={tr("common.refresh")}><RefreshCw size={15} className={loading ? "spin" : ""} /></Button>
+      {summary && <div className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground"><GitBranch size={14} /><strong className="max-w-44 truncate text-foreground">{summary.head ?? tr("git.detached")}</strong>{summary.upstream && <span className="max-w-48 truncate max-[760px]:hidden">{summary.upstream}</span>}{(summary.ahead > 0 || summary.behind > 0) && <span className="max-[760px]:hidden">↑{summary.ahead} ↓{summary.behind}</span>}{summary.stash_count > 0 && <span className="max-[760px]:hidden">{tr("git.stashes", { count: summary.stash_count })}</span>}</div>}
+      <Button variant="ghost" size="icon" className="shrink-0" onClick={() => void load()} disabled={loading} aria-label={tr("common.refresh")} title={tr("common.refresh")}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></Button>
     </div>
     {error && <div className="alert"><CircleAlert size={15} />{error}</div>}
-    {!loading && !summary && <div className="compact-state git-not-repository"><GitBranch size={19} /><span>{tr("git.notRepository")}</span></div>}
+    {!loading && !summary && <div className="flex min-h-16 items-center gap-2 rounded-xl border bg-card px-4 text-sm text-muted-foreground"><GitBranch size={19} /><span>{tr("git.notRepository")}</span></div>}
     {summary && section === "history" && <>
-      <div className="git-filterbar">
-        <div className="search"><Search size={14} /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tr("git.searchPlaceholder")} /></div>
-        <SelectControl value={reference} onChange={(event) => setReference(event.target.value)} aria-label={tr("git.reference")}><option value="">{tr("git.allRefs")}</option>{summary.refs.filter((ref) => ref.kind === "local-branch" || ref.kind === "remote-branch" || ref.kind === "tag").map((ref) => <option key={ref.full_name} value={ref.full_name}>{ref.name}</option>)}</SelectControl>
-        <SelectControl value={mergesOnly ? "merges" : "all"} onChange={(event) => setMergesOnly(event.target.value === "merges")} aria-label={tr("git.commitKind")}><option value="all">{tr("git.allCommits")}</option><option value="merges">{tr("git.mergesOnly")}</option></SelectControl>
-        <Input value={author} onChange={(event) => setAuthor(event.target.value)} placeholder={tr("git.author")} aria-label={tr("git.author")} />
-        <Input type="date" value={since} onChange={(event) => setSince(event.target.value)} aria-label={tr("git.since")} />
-        <Input type="date" value={until} onChange={(event) => setUntil(event.target.value)} aria-label={tr("git.until")} />
-        <Input value={path} onChange={(event) => setPath(event.target.value)} placeholder={tr("git.path")} aria-label={tr("git.path")} />
-      </div>
-      <div className="git-list-surface">
-        <section className="git-master git-master-full">
-          <div ref={historyListRef} className="git-commit-list" role="listbox" aria-label={tr("git.history")}>
-            {filteredCommits.map((commit, index) => <Button variant="bare" size="content" key={commit.oid} role="option" aria-selected={selectedOid === commit.oid} className={selectedOid === commit.oid ? "active" : ""} onClick={() => enterCommit(commit.oid)}>
+      <Card className="grid min-h-[45px] grid-cols-[minmax(180px,1.6fr)_minmax(115px,.8fr)_minmax(110px,.7fr)_minmax(100px,.7fr)_126px_126px_minmax(110px,.8fr)] gap-1.5 rounded-xl p-1.5 max-[1120px]:grid-cols-[minmax(180px,1fr)_minmax(120px,.7fr)_minmax(100px,.7fr)] max-[760px]:grid-cols-[minmax(160px,1fr)_minmax(110px,.7fr)]">
+        <div className="relative flex min-w-0 items-center"><Search size={14} className="pointer-events-none absolute left-2.5 text-muted-foreground" /><Input className="h-8 min-w-0 pl-8" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tr("git.searchPlaceholder")} /></div>
+        <SelectControl className="h-8 min-w-0" value={reference} onChange={(event) => setReference(event.target.value)} aria-label={tr("git.reference")}><option value="">{tr("git.allRefs")}</option>{summary.refs.filter((ref) => ref.kind === "local-branch" || ref.kind === "remote-branch" || ref.kind === "tag").map((ref) => <option key={ref.full_name} value={ref.full_name}>{ref.name}</option>)}</SelectControl>
+        <SelectControl className="h-8 min-w-0" value={mergesOnly ? "merges" : "all"} onChange={(event) => setMergesOnly(event.target.value === "merges")} aria-label={tr("git.commitKind")}><option value="all">{tr("git.allCommits")}</option><option value="merges">{tr("git.mergesOnly")}</option></SelectControl>
+        <Input className="h-8 min-w-0 max-[760px]:hidden" value={author} onChange={(event) => setAuthor(event.target.value)} placeholder={tr("git.author")} aria-label={tr("git.author")} />
+        <Input className="h-8 min-w-0 max-[1120px]:hidden" type="date" value={since} onChange={(event) => setSince(event.target.value)} aria-label={tr("git.since")} />
+        <Input className="h-8 min-w-0 max-[1120px]:hidden" type="date" value={until} onChange={(event) => setUntil(event.target.value)} aria-label={tr("git.until")} />
+        <Input className="h-8 min-w-0 max-[760px]:hidden" value={path} onChange={(event) => setPath(event.target.value)} placeholder={tr("git.path")} aria-label={tr("git.path")} />
+      </Card>
+      <Card className="flex min-h-0 flex-1 overflow-hidden rounded-xl p-0">
+        <section className="flex min-w-0 min-h-0 w-full flex-col">
+          <div ref={historyListRef} className="min-h-0 flex-1 overflow-auto" role="listbox" aria-label={tr("git.history")}>
+            {filteredCommits.map((commit, index) => <Button variant="bare" size="content" key={commit.oid} role="option" aria-selected={selectedOid === commit.oid} className={cn("grid min-h-11 w-full grid-cols-[auto_minmax(190px,1fr)_minmax(90px,.3fr)_136px_16px] items-center gap-2 border-b border-border px-2 text-left text-foreground hover:bg-muted max-[1120px]:grid-cols-[auto_minmax(170px,1fr)_100px_16px] max-[1120px]:[&_.commit-author]:hidden max-[760px]:grid-cols-[auto_minmax(150px,1fr)_16px] max-[760px]:[&_.commit-author]:hidden max-[760px]:[&>time]:hidden", selectedOid === commit.oid && "bg-primary/10")} onClick={() => enterCommit(commit.oid)}>
               <CommitGraph row={graph[index]} commit={commit} />
-              <span className="git-commit-main"><strong>{commit.subject || tr("git.untitledCommit")}</strong><span className="git-ref-list">{commit.refs.map((ref) => <em key={ref.full_name} className={ref.kind}>{ref.kind === "tag" && <Tags size={10} />}{ref.name}</em>)}</span></span>
-              <span className="git-commit-author">{commit.author_name}</span>
-              <time>{formatDateTime(commit.authored_at)}</time>
+              <span className="flex min-w-0 items-center gap-2"><strong className="min-w-0 truncate text-sm">{commit.subject || tr("git.untitledCommit")}</strong><span className="flex min-w-0 gap-1 overflow-hidden">{commit.refs.map((ref) => <Badge key={ref.full_name} variant="outline" className={cn("max-w-32 gap-1 truncate px-1.5 py-0 text-[10px]", ref.kind === "remote-branch" && "text-sky-600", ref.kind === "tag" && "text-amber-600")}>{ref.kind === "tag" && <Tags size={10} />}{ref.name}</Badge>)}</span></span>
+              <span className="commit-author truncate text-xs text-muted-foreground max-[1120px]:hidden">{commit.author_name}</span>
+              <time className="truncate text-xs text-muted-foreground">{formatDateTime(commit.authored_at)}</time>
               <ChevronRight size={14} />
             </Button>)}
             {!filteredCommits.length && !loading && <div className="compact-state"><GitCommitHorizontal size={18} /><span>{tr("git.noCommits")}</span></div>}
           </div>
-          {nextCursor && !search.trim() && <Button className="ghost git-load-more" disabled={loadingMore} onClick={() => void loadMore()}>{tr(loadingMore ? "common.loading" : "git.loadMore")}</Button>}
+          {nextCursor && !search.trim() && <Button variant="ghost" className="mx-auto my-2" disabled={loadingMore} onClick={() => void loadMore()}>{tr(loadingMore ? "common.loading" : "git.loadMore")}</Button>}
         </section>
-      </div>
+      </Card>
     </>}
-    {summary && section === "worktree" && <div className="git-list-surface">
-      <section ref={worktreeListRef} className="git-master git-master-full git-worktree-list">
-        {worktreeEntries.map(([group, entries]) => entries.length > 0 && <div className="git-change-group" key={group}><h3>{tr(`git.group.${group}`)}<em>{entries.length}</em></h3>{entries.map((entry) => <Button variant="bare" size="content" key={`${entry.kind}:${entry.change.path}`} className={selectedWorktree?.path === entry.change.path && selectedWorktree.kind === entry.kind ? "active" : ""} onClick={() => enterWorktree(entry.change.path, entry.kind)}><ChangeIcon change={entry.change} /><span><strong>{fileName(entry.change.path)}</strong><small>{entry.change.old_path ? `${entry.change.old_path} → ${entry.change.path}` : entry.change.path}</small></span><em>{changeCode(entry.change, entry.kind)}</em><ChevronRight size={14} /></Button>)}</div>)}
+    {summary && section === "worktree" && <Card className="min-h-0 flex-1 overflow-auto rounded-xl p-0">
+      <section ref={worktreeListRef} className="min-h-0 overflow-auto">
+        {worktreeEntries.map(([group, entries]) => entries.length > 0 && <div key={group}><h3 className="flex min-h-9 items-center gap-1.5 border-b border-border bg-muted px-3 py-2 text-xs font-semibold text-muted-foreground">{tr(`git.group.${group}`)}<Badge variant="secondary" className="size-[18px] justify-center rounded-full px-0 py-0 text-[10px]">{entries.length}</Badge></h3>{entries.map((entry) => <Button variant="bare" size="content" key={`${entry.kind}:${entry.change.path}`} className={cn("grid min-h-12 w-full grid-cols-[18px_minmax(0,1fr)_24px_16px] items-center gap-2 border-b border-border px-3 py-2 text-left text-muted-foreground hover:bg-muted", selectedWorktree?.path === entry.change.path && selectedWorktree.kind === entry.kind && "bg-muted")} onClick={() => enterWorktree(entry.change.path, entry.kind)}><ChangeIcon change={entry.change} /><span className="min-w-0"><strong className="block truncate text-sm text-foreground">{fileName(entry.change.path)}</strong><small className="mt-0.5 block truncate text-xs text-muted-foreground">{entry.change.old_path ? `${entry.change.old_path} → ${entry.change.path}` : entry.change.path}</small></span><em className="text-xs not-italic text-primary">{changeCode(entry.change, entry.kind)}</em><ChevronRight size={14} /></Button>)}</div>)}
         {!summary.changes.length && <div className="compact-state"><GitCommitHorizontal size={18} /><span>{tr("git.clean")}</span></div>}
       </section>
-    </div>}
+    </Card>}
   </div>;
 }
 
 function CommitGraph({ row, commit }: { row: CommitGraphRow; commit: GitCommitSummary }) {
   const width = Math.max(30, row.lanes * 16 + 12);
   const x = (lane: number) => lane * 16 + 10;
-  return <svg className="git-graph" width={width} height="44" viewBox={`0 0 ${width} 44`} aria-hidden="true">
+  return <svg className="self-stretch overflow-visible" width={width} height="44" viewBox={`0 0 ${width} 44`} aria-hidden="true">
     {row.edges.map((edge, index) => <path key={`${edge.from}:${edge.to}:${index}`} d={`M ${x(edge.from)} 0 C ${x(edge.from)} 15, ${x(edge.to)} 28, ${x(edge.to)} 44`} stroke={graphColors[edge.color]} fill="none" strokeWidth="2" />)}
     <circle cx={x(row.lane)} cy="22" r={commit.parents.length > 1 ? 5 : 4} fill="var(--surface)" stroke={graphColors[stableColor(commit.oid)]} strokeWidth="2.5" />
     {commit.parents.length > 1 && <GitMerge x={x(row.lane) - 4} y={18} width="8" height="8" color={graphColors[stableColor(commit.oid)]} />}
   </svg>;
 }
 
-function GitDiffPane({ title, fileCount, diffState, onRetry, untracked, onBackToFiles }: {
+function GitDiffPane({ title, fileCount, diffState, onRetry, untracked, onBackToFiles, mobileVisible }: {
   title: string;
   fileCount?: number;
   diffState: DiffState;
   onRetry: () => void;
   untracked?: boolean;
   onBackToFiles: () => void;
+  mobileVisible: boolean;
 }) {
   const diff = diffState.status === "ready" ? diffState.value : undefined;
-  return <div className="git-diff-view">
-      <div className="git-diff-header">
-        <Button className="ghost git-mobile-files-back" onClick={onBackToFiles}><ArrowLeft size={14} />{tr("git.backToFiles")}</Button>
-        <strong>{title}</strong>
-        {fileCount !== undefined && <span>{tr("git.fileCount", { count: fileCount })}</span>}
-        {diff?.truncated && <em>{tr("git.truncated")}</em>}
+  return <div className={cn("relative min-w-0 min-h-0 overflow-auto bg-muted/40 max-[760px]:absolute max-[760px]:inset-0", !mobileVisible && "max-[760px]:hidden")}>
+      <div className="sticky top-0 z-10 flex min-h-9 items-center gap-2 border-b border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground">
+        <Button variant="ghost" size="sm" className="hidden max-[760px]:inline-flex" onClick={onBackToFiles}><ArrowLeft size={14} />{tr("git.backToFiles")}</Button>
+        <strong className="min-w-0 flex-1 truncate text-foreground">{title}</strong>
+        {fileCount !== undefined && <span className="whitespace-nowrap">{tr("git.fileCount", { count: fileCount })}</span>}
+        {diff?.truncated && <Badge variant="outline" className="border-amber-500/30 px-1.5 py-0 text-[10px] text-amber-600">{tr("git.truncated")}</Badge>}
       </div>
       {untracked && <div className="compact-state"><FileQuestion size={20} /><span>{tr("git.untrackedNoDiff")}</span></div>}
       {!untracked && diffState.status === "idle" && <div className="compact-state"><FileQuestion size={20} /><span>{tr("git.diffEmpty")}</span></div>}
       {!untracked && diffState.status === "loading" && <div className="compact-state"><RefreshCw size={16} className="spin" /><span>{tr("git.loadingDiff")}</span></div>}
       {!untracked && diffState.status === "empty" && <div className="compact-state"><FileQuestion size={20} /><span>{tr("git.diffEmpty")}</span></div>}
-      {!untracked && diffState.status === "error" && <div className="compact-state git-diff-error"><CircleAlert size={18} /><span>{tr("git.diffFailed")}</span><small>{diffState.message}</small><Button className="ghost" onClick={onRetry}>{tr("git.retry")}</Button></div>}
+      {!untracked && diffState.status === "error" && <div className="flex min-h-32 flex-col items-center justify-center gap-1.5 text-center text-destructive"><CircleAlert size={18} /><span>{tr("git.diffFailed")}</span><small className="max-w-[460px] text-xs text-muted-foreground">{diffState.message}</small><Button variant="ghost" onClick={onRetry}>{tr("git.retry")}</Button></div>}
       {diff?.binary && <div className="compact-state"><Binary size={18} /><span>{tr("git.binaryDiff")}</span></div>}
-      {diff?.submodule && <div className="git-diff-notice"><GitBranch size={14} />{tr("git.submoduleDiff")}</div>}
-      {diff?.encoding_lossy && <div className="git-diff-notice"><AlertTriangle size={14} />{tr("git.encodingLossy")}</div>}
-      {diff && !diff.binary && diff.patch && <pre className="selectable">{diff.patch.split("\n").map((line, index) => <span key={index} className={line.startsWith("+") && !line.startsWith("+++") ? "added" : line.startsWith("-") && !line.startsWith("---") ? "removed" : line.startsWith("@@") ? "hunk" : ""}>{line || " "}</span>)}</pre>}
-      {diff?.truncated && <div className="git-truncated"><AlertTriangle size={14} />{tr("git.diffTruncated")}</div>}
+      {diff?.submodule && <div className="flex min-h-8 items-center gap-2 border-b border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground"><GitBranch size={14} />{tr("git.submoduleDiff")}</div>}
+      {diff?.encoding_lossy && <div className="flex min-h-8 items-center gap-2 border-b border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground"><AlertTriangle size={14} />{tr("git.encodingLossy")}</div>}
+      {diff && !diff.binary && diff.patch && <pre className="selectable m-0 min-w-max px-0 py-2.5 pb-6 font-mono text-xs leading-relaxed text-muted-foreground">{diff.patch.split("\n").map((line, index) => <span key={index} className={cn("block min-h-[19px] whitespace-pre px-3", line.startsWith("+") && !line.startsWith("+++") && "bg-green-500/10 text-green-700", line.startsWith("-") && !line.startsWith("---") && "bg-red-500/10 text-red-700", line.startsWith("@@") && "bg-primary/10 text-primary")}>{line || " "}</span>)}</pre>}
+      {diff?.truncated && <div className="sticky bottom-0 flex min-h-8 items-center gap-2 border-t border-border bg-card px-2.5 py-1.5 text-xs text-amber-600"><AlertTriangle size={14} />{tr("git.diffTruncated")}</div>}
     </div>;
 }
 
@@ -461,12 +466,12 @@ function FileTree({ files, selectedPath, onSelect }: { files: GitFileChange[]; s
     });
     current.file = file;
   });
-  return <div>{[...root.children.values()].map((node) => <FileNodeRow key={node.path} node={node} selectedPath={selectedPath} onSelect={onSelect} />)}</div>;
+  return <div className="space-y-0.5">{[...root.children.values()].map((node) => <FileNodeRow key={node.path} node={node} selectedPath={selectedPath} onSelect={onSelect} />)}</div>;
 }
 
 function FileNodeRow({ node, selectedPath, onSelect }: { node: FileNode; selectedPath?: string; onSelect: (path: string) => void }) {
-  if (node.file) return <Button variant="bare" size="content" className={selectedPath === node.file.path ? "active" : ""} onClick={() => onSelect(node.file!.path)}><FileCode2 size={13} /><span>{node.name}</span><em>{node.file.status}</em></Button>;
-  return <Collapsible defaultOpen><CollapsibleTrigger>{node.name}</CollapsibleTrigger><CollapsibleContent>{[...node.children.values()].map((child) => <FileNodeRow key={child.path} node={child} selectedPath={selectedPath} onSelect={onSelect} />)}</CollapsibleContent></Collapsible>;
+  if (node.file) return <Button variant="ghost" size="content" className={cn("grid min-h-7 w-full grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-1.5 justify-start rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:text-foreground", selectedPath === node.file.path && "bg-muted text-foreground")} onClick={() => onSelect(node.file!.path)}><FileCode2 size={13} /><span className="truncate">{node.name}</span><em className="text-[10px] not-italic">{node.file.status}</em></Button>;
+  return <Collapsible defaultOpen><CollapsibleTrigger className="flex min-h-7 w-full items-center rounded-md bg-transparent px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground">{node.name}</CollapsibleTrigger><CollapsibleContent className="pl-3">{[...node.children.values()].map((child) => <FileNodeRow key={child.path} node={child} selectedPath={selectedPath} onSelect={onSelect} />)}</CollapsibleContent></Collapsible>;
 }
 
 function worktreeRows(changes: GitWorkingTreeChange[]) {

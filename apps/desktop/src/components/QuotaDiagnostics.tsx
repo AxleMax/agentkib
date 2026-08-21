@@ -13,6 +13,6 @@ export function QuotaDiagnostics({ status }: { status?: QuotaCollectorStatus }) 
   </div>;
 }
 
-function DiagnosticRow({ label, value }: { label: string; value: string }) { return <div className="setting-row"><span>{label}</span><strong>{value}</strong></div>; }
+function DiagnosticRow({ label, value }: { label: string; value: string }) { return <div className="flex min-h-[58px] items-center justify-between gap-5 border-b border-border-subtle px-4 py-3 last:border-b-0"><span>{label}</span><strong>{value}</strong></div>; }
 function backendLabel(backend: QuotaSnapshot["backend"], version?: string) { return `${backend === "codex-bar-cli" ? "CodexBarCLI" : "Win-CodexBar"}${version ? ` · ${version}` : ""}`; }
 function formatDateTime(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(document.documentElement.lang || "en-US", { dateStyle: "medium", timeStyle: "short" }).format(date); }

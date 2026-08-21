@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAppDialogs } from "./AppDialogProvider";
 import { useState } from "react";
 import { Pencil, Plus, RefreshCw, Server, Trash2, X } from "lucide-react";
@@ -84,44 +84,46 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
   };
 
   return (
-    <Card className="panel settings-section remote-gateways">
-      <div className="panel-head">
-        <h2>{tr("gateway.title")}</h2>
+    <Card className="overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between border-b border-border-subtle px-4 py-4">
+        <CardTitle className="text-base">{tr("gateway.title")}</CardTitle>
         <Button className="primary" onClick={() => edit()}><Plus size={14} />{tr("gateway.add")}</Button>
-      </div>
-      {error && <div className="alert">{error}</div>}
+      </CardHeader>
+      <CardContent className="p-0">
+      {error && <div className="m-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
       {draft && (
-        <form className="remote-gateway-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-          <Label><span>{tr("gateway.kind")}</span><SelectControl aria-label={tr("gateway.kind")} value={draft.kind} onChange={(event) => { const kind = event.target.value as RemoteGatewayKind; setDraft({ ...draft, kind, auth_kind: authKinds(kind)[0], name: draft.id ? draft.name : kind === "open-claw" ? "OpenClaw" : "Hermes" }); }}><option value="open-claw">OpenClaw</option><option value="hermes">Hermes</option></SelectControl></Label>
-          <Label><span>{tr("gateway.name")}</span><Input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></Label>
-          <Label className="remote-gateway-url"><span>{tr("gateway.url")}</span><Input required type="url" value={draft.url} placeholder={draft.kind === "open-claw" ? "wss://gateway.example.com" : "https://hermes.example.com"} onChange={(event) => setDraft({ ...draft, url: event.target.value })} /></Label>
-          <Label><span>{tr("gateway.auth")}</span><SelectControl aria-label={tr("gateway.auth")} value={draft.auth_kind} onChange={(event) => setDraft({ ...draft, auth_kind: event.target.value as RemoteGatewayAuthKind })}>{authKinds(draft.kind).map((kind) => <option value={kind} key={kind}>{tr(`gateway.auth.${kind}`)}</option>)}</SelectControl></Label>
-          {draft.auth_kind === "basic" && <Label><span>{tr("gateway.username")}</span><Input required value={draft.username ?? ""} onChange={(event) => setDraft({ ...draft, username: event.target.value })} /></Label>}
-          {draft.auth_kind !== "none" && <Label><span>{tr("gateway.secret")}</span><Input type="password" required={!draft.id || gateways.find((gateway) => gateway.id === draft.id)?.auth_kind !== draft.auth_kind} value={draft.secret ?? ""} placeholder={draft.id ? tr("gateway.secretKeep") : ""} onChange={(event) => setDraft({ ...draft, secret: event.target.value })} /></Label>}
-          <div className="remote-gateway-form-actions"><Button type="button" className="ghost" onClick={() => setDraft(undefined)}><X size={14} />{tr("common.cancel")}</Button><Button className="primary" disabled={Boolean(busyId)}>{tr("common.save")}</Button></div>
+        <form className="grid gap-4 border-b border-border-subtle p-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+          <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.kind")}</span><SelectControl aria-label={tr("gateway.kind")} value={draft.kind} onChange={(event) => { const kind = event.target.value as RemoteGatewayKind; setDraft({ ...draft, kind, auth_kind: authKinds(kind)[0], name: draft.id ? draft.name : kind === "open-claw" ? "OpenClaw" : "Hermes" }); }}><option value="open-claw">OpenClaw</option><option value="hermes">Hermes</option></SelectControl></Label>
+          <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.name")}</span><Input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></Label>
+          <Label className="grid gap-1.5 text-xs text-muted-foreground sm:col-span-2"><span>{tr("gateway.url")}</span><Input required type="url" value={draft.url} placeholder={draft.kind === "open-claw" ? "wss://gateway.example.com" : "https://hermes.example.com"} onChange={(event) => setDraft({ ...draft, url: event.target.value })} /></Label>
+          <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.auth")}</span><SelectControl aria-label={tr("gateway.auth")} value={draft.auth_kind} onChange={(event) => setDraft({ ...draft, auth_kind: event.target.value as RemoteGatewayAuthKind })}>{authKinds(draft.kind).map((kind) => <option value={kind} key={kind}>{tr(`gateway.auth.${kind}`)}</option>)}</SelectControl></Label>
+          {draft.auth_kind === "basic" && <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.username")}</span><Input required value={draft.username ?? ""} onChange={(event) => setDraft({ ...draft, username: event.target.value })} /></Label>}
+          {draft.auth_kind !== "none" && <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.secret")}</span><Input type="password" required={!draft.id || gateways.find((gateway) => gateway.id === draft.id)?.auth_kind !== draft.auth_kind} value={draft.secret ?? ""} placeholder={draft.id ? tr("gateway.secretKeep") : ""} onChange={(event) => setDraft({ ...draft, secret: event.target.value })} /></Label>}
+          <div className="flex justify-end gap-2 sm:col-span-2"><Button type="button" className="ghost" onClick={() => setDraft(undefined)}><X size={14} />{tr("common.cancel")}</Button><Button className="primary" disabled={Boolean(busyId)}>{tr("common.save")}</Button></div>
         </form>
       )}
-      <div className="remote-gateway-list">
+      <div className="grid">
         {gateways.map((gateway) => (
-          <article key={gateway.id}>
-            <Server size={17} />
-            <div className="remote-gateway-main">
-              <div><strong>{gateway.name}</strong><Badge variant={gateway.state === "connected" ? "secondary" : "outline"}>{tr(`gateway.state.${gateway.state}`)}</Badge></div>
-              <code>{gateway.url}</code>
-              <small>{tr("gateway.workspaceCount", { count: gateway.workspaces.length })} · {tr("gateway.sessionCount", { count: gateway.session_count })} · {tr("gateway.assetCount", { count: gateway.assets.length })}{gateway.last_connected_at ? ` · ${formatDateTime(gateway.last_connected_at)}` : ""}</small>
-              {gateway.kind === "hermes" && gateway.state === "connected" && <small className="gateway-partial">{tr("gateway.hermesPartial")}</small>}
-              {gateway.pairing_request_id && <div className="gateway-pairing"><strong>{tr("gateway.pairingRequired")}</strong><code>openclaw devices approve {gateway.pairing_request_id}</code></div>}
-              {gateway.last_error && <small className="gateway-error">{gateway.last_error}</small>}
+          <article className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-t border-border-subtle p-4 first:border-t-0" key={gateway.id}>
+            <Server size={17} className="mt-0.5 text-primary" />
+            <div className="grid min-w-0 gap-1.5">
+              <div className="flex items-center gap-2"><strong className="text-sm">{gateway.name}</strong><Badge variant={gateway.state === "connected" ? "secondary" : "outline"}>{tr(`gateway.state.${gateway.state}`)}</Badge></div>
+              <code className="truncate text-xs text-muted-foreground">{gateway.url}</code>
+              <small className="text-xs text-muted-foreground">{tr("gateway.workspaceCount", { count: gateway.workspaces.length })} · {tr("gateway.sessionCount", { count: gateway.session_count })} · {tr("gateway.assetCount", { count: gateway.assets.length })}{gateway.last_connected_at ? ` · ${formatDateTime(gateway.last_connected_at)}` : ""}</small>
+              {gateway.kind === "hermes" && gateway.state === "connected" && <small className="text-xs text-amber-600">{tr("gateway.hermesPartial")}</small>}
+              {gateway.pairing_request_id && <div className="mt-1 grid gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs"><strong>{tr("gateway.pairingRequired")}</strong><code className="overflow-x-auto text-amber-700">openclaw devices approve {gateway.pairing_request_id}</code></div>}
+              {gateway.last_error && <small className="whitespace-pre-wrap text-xs text-destructive">{gateway.last_error}</small>}
             </div>
-            <div className="remote-gateway-actions">
+            <div className="flex gap-1">
               <Button className="icon-button" title={tr("gateway.refresh")} disabled={Boolean(busyId)} onClick={() => void refresh(gateway.id)}><RefreshCw size={14} className={busyId === gateway.id ? "spin" : ""} /></Button>
               <Button className="icon-button" title={tr("gateway.edit")} disabled={Boolean(busyId)} onClick={() => edit(gateway)}><Pencil size={14} /></Button>
               <Button className="icon-danger" title={tr("gateway.remove")} disabled={Boolean(busyId)} onClick={() => void remove(gateway.id)}><Trash2 size={14} /></Button>
             </div>
           </article>
         ))}
-        {!gateways.length && !draft && <div className="setting-empty">{tr("gateway.empty")}</div>}
+        {!gateways.length && !draft && <div className="p-4 text-sm text-muted-foreground">{tr("gateway.empty")}</div>}
       </div>
+      </CardContent>
     </Card>
   );
 }
