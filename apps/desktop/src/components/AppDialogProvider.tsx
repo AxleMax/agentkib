@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { tr } from "../i18n";
+import { tr } from "../core/i18n";
 
 type DialogTone = "default" | "destructive" | "warning";
 
@@ -115,7 +115,7 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
           <AlertDialogFooter>
             {active.kind === "confirm" && <AlertDialogCancel onClick={() => finish(false, active.id)}>{tr("common.cancel")}</AlertDialogCancel>}
             <AlertDialogAction
-              className={active.tone === "warning" ? "dialog-action-warning" : undefined}
+              className={active.tone === "warning" ? "border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300" : undefined}
               variant={active.tone === "destructive" ? "destructive" : "default"}
               onClick={() => finish(true, active.id)}
             >
@@ -125,12 +125,12 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
         </AlertDialogContent>}
       </AlertDialog>
       <Dialog open={Boolean(secretRequest)} onOpenChange={(open) => { if (!open && secretRequest) finishSecrets(null, secretRequest.id); }}>
-        {secretRequest && <DialogContent className="mcp-secret-dialog">
+        {secretRequest && <DialogContent className="w-[min(520px,calc(100vw-2rem))]">
           <DialogHeader>
             <DialogTitle>{tr("mcp.secretDialogTitle")}</DialogTitle>
             <DialogDescription>{tr("mcp.secretDialogDescription")}</DialogDescription>
           </DialogHeader>
-          <div className="mcp-secret-fields">
+          <div className="grid gap-4">
             {secretRequest.keys.map((key) => <Label key={key}><span>{key}</span><Input type="password" autoComplete="off" value={secretValues[key] ?? ""} onChange={(event) => setSecretValues((current) => ({ ...current, [key]: event.target.value }))} /></Label>)}
           </div>
           <DialogFooter>

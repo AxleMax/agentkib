@@ -2596,6 +2596,7 @@ mod tests {
         )
         .unwrap();
         drop(file);
+        // Keep history newer than the fixture file mtime so the assertion is deterministic.
         fs::write(
             dir.path().join("history.jsonl"),
             format!(
@@ -2603,7 +2604,7 @@ mod tests {
                 serde_json::json!({
                     "project":workspace,
                     "sessionId":"transcript-only",
-                    "timestamp":"2026-08-21T10:00:00Z",
+                    "timestamp":"2099-08-21T10:00:00Z",
                     "display":"private prompt"
                 })
             ),
@@ -2621,7 +2622,7 @@ mod tests {
         );
         assert_eq!(
             sessions[0].updated_at.unwrap().to_rfc3339(),
-            "2026-08-21T10:00:00+00:00"
+            "2099-08-21T10:00:00+00:00"
         );
         let page = provider.read_events("transcript-only", None, 100).unwrap();
         assert_eq!(page.events.len(), 2);

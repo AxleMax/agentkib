@@ -2,12 +2,12 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api";
-import { initializeI18n } from "../i18n";
-import type { GitCommitSummary, GitDiff, GitWorkspaceSummary, WorkspaceSummary } from "../types";
+import { api } from "../core/api";
+import { initializeI18n } from "../core/i18n";
+import type { GitCommitSummary, GitDiff, GitWorkspaceSummary, WorkspaceSummary } from "../core/types";
 import { layoutCommitGraph, WorkspaceGitPage } from "./WorkspaceGitPage";
 
-vi.mock("../api", () => ({
+vi.mock("../core/api", () => ({
   api: {
     workspaceGitSummary: vi.fn(),
     workspaceGitHistory: vi.fn(),
@@ -88,7 +88,7 @@ describe("WorkspaceGitPage Diff", () => {
     fireEvent.click(await screen.findByRole("option", { name: /c Test/ }));
     await waitFor(() => expect(api.gitDiff).toHaveBeenCalledWith("workspace", { kind: "commit", oid: "c", path: undefined }));
     expect(await screen.findByText("+full patch")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /All changes/ })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: /All changes/ })).toHaveClass("bg-muted", "text-foreground");
 
     fireEvent.click(await screen.findByRole("button", { name: /one.txt/ }));
     await waitFor(() => expect(api.gitDiff).toHaveBeenLastCalledWith("workspace", { kind: "commit", oid: "c", path: "one.txt" }));

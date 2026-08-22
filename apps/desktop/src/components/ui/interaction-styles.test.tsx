@@ -46,8 +46,9 @@ describe("interaction style primitives", () => {
       "group-data-[variant=line]/tabs-list:focus-visible:outline-none",
       "group-data-[variant=line]/tabs-list:data-active:font-semibold",
       "data-active:text-foreground",
+      "after:absolute",
+      "group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
     );
-    expect(screen.getByRole("tab", { name: "Second" })).not.toHaveClass("after:absolute");
 
     await user.keyboard("{ArrowLeft}");
 

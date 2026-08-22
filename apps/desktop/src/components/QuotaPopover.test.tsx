@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initializeI18n } from "../i18n";
+import { initializeI18n } from "../core/i18n";
 import { QuotaPopover } from "./QuotaPopover";
 
 const { listen, quotaSnapshot, quotaPopoverPreferences, refreshStatus, requestRefresh, refreshQuota, openQuotaDashboard, runtime, hide } = vi.hoisted(() => ({
@@ -19,7 +19,7 @@ const { listen, quotaSnapshot, quotaPopoverPreferences, refreshStatus, requestRe
 
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ hide }) }));
-vi.mock("../api", () => ({
+vi.mock("../core/api", () => ({
   api: { quotaSnapshot, quotaPopoverPreferences, refreshStatus, requestRefresh, refreshQuota, openQuotaDashboard, runtime },
 }));
 

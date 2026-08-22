@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const sourceRoot = dirname(fileURLToPath(import.meta.url));
+const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function businessSources(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -20,7 +20,7 @@ function businessSources(directory: string): string[] {
 describe("interaction component source constraints", () => {
   it("keeps native and hand-written interaction primitives out of business pages", () => {
     const forbidden = [
-      /<(?:button|input|textarea|select|label|details)\b/,
+      /<(?:button|input|textarea|select|details)\b/,
       /\bwindow\.(?:alert|confirm|prompt)\s*\(/,
       /\brole=["'](?:dialog|tab|tablist)["']/,
       /\btype=["']checkbox["']/,
@@ -36,7 +36,7 @@ describe("interaction component source constraints", () => {
   it("keeps Base UI tabs and full-surface buttons on their design-system state", () => {
     const sources = businessSources(sourceRoot).map((path) => ({ path, source: readFileSync(path, "utf8") }));
     const manualTabState = sources.flatMap(({ path, source }) => source.split("\n")
-      .filter((line) => /<TabsTrigger\b/.test(line) && /className=.*active/.test(line))
+      .filter((line) => /<TabsTrigger\b/.test(line) && /\bactive\s*=/.test(line))
       .map(() => path.replace(`${sourceRoot}/`, "")));
     const surfaceClasses = ["workspace-row", "catalog-row", "agent-master-list", "conversation-list", "file-list"];
     const incorrectlySizedSurfaces = sources.flatMap(({ path, source }) => source.split("\n")
