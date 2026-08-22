@@ -104,7 +104,7 @@ function stableColor(value: string) {
 
 export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: WorkspaceGitPageProps) {
   const [section, setSection] = useState<GitSection>("history");
-  const [internalSubview, setInternalSubview] = useState<GitSubview>();
+  const [internalSubview, setInternalSubview] = useState<GitSubview | undefined>(subview);
   const [summary, setSummary] = useState<GitWorkspaceSummary>();
   const [commits, setCommits] = useState<GitCommitSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string>();
@@ -134,11 +134,15 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
   const historyScrollTop = useRef(0);
   const worktreeScrollTop = useRef(0);
   const [appliedFilters, setAppliedFilters] = useState({ reference: "", author: "", since: "", until: "", path: "", mergesOnly: false });
-  const activeSubview = onSubviewChange ? subview : internalSubview;
+  const activeSubview = internalSubview;
   const setSubview = (next?: GitSubview) => {
-    if (onSubviewChange) onSubviewChange(next);
-    else setInternalSubview(next);
+    setInternalSubview(next);
+    onSubviewChange?.(next);
   };
+
+  useEffect(() => {
+    setInternalSubview(subview);
+  }, [subview]);
 
   const historyQuery = (): GitHistoryQuery => ({
     reference: appliedFilters.reference || undefined,

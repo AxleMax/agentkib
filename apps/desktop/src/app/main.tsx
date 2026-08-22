@@ -7,6 +7,8 @@ import { api } from "../core/api";
 import { initializeI18n, normalizeLocale } from "../core/i18n";
 import { applyPlatformAttribute } from "../core/platform";
 import { applyTheme, systemTheme } from "../core/theme";
+import type { RuntimeInfo } from "../core/types";
+import { useAppStore } from "../stores/app-store";
 import "../styles.css";
 
 applyPlatformAttribute(import.meta.env.TAURI_ENV_PLATFORM);
@@ -14,15 +16,17 @@ applyPlatformAttribute(import.meta.env.TAURI_ENV_PLATFORM);
 async function bootstrap() {
   let locale = normalizeLocale(navigator.language);
   let theme = systemTheme();
+  let bootstrapRuntime: RuntimeInfo | undefined;
   try {
-    const runtime = await api.runtime();
-    locale = runtime.effective_locale;
-    theme = runtime.effective_theme;
+    bootstrapRuntime = await api.runtime();
+    locale = bootstrapRuntime.effective_locale;
+    theme = bootstrapRuntime.effective_theme;
   } catch {
     // The web preview has no Tauri runtime; the system browser locale remains useful.
   }
   applyTheme(theme);
   await initializeI18n(locale);
+  if (bootstrapRuntime) useAppStore.getState().setRuntime(bootstrapRuntime);
   const surface = new URLSearchParams(window.location.search).get("surface");
   createRoot(document.getElementById("root")!).render(
     <StrictMode><AppDialogProvider>{surface === "quota-popover" ? <QuotaPopover /> : <App />}</AppDialogProvider></StrictMode>,
