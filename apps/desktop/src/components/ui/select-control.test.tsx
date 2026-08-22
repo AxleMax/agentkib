@@ -10,7 +10,11 @@ import { SelectControl } from "./select-control";
 function LocalizedSelect() {
   const [value, setValue] = useState("system");
   return (
-    <SelectControl aria-label="语言" value={value} onChange={(event) => setValue(event.target.value)}>
+    <SelectControl
+      aria-label="语言"
+      value={value}
+      onChange={(event) => setValue(event.target.value)}
+    >
       <option value="system">跟随系统</option>
       <option value="zh-CN">简体中文</option>
     </SelectControl>
@@ -26,7 +30,14 @@ describe("SelectControl", () => {
     expect(trigger).toHaveTextContent("跟随系统");
 
     vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
-      bottom: 32, height: 32, left: 0, right: 120, top: 0, width: 120, x: 0, y: 0,
+      bottom: 32,
+      height: 32,
+      left: 0,
+      right: 120,
+      top: 0,
+      width: 120,
+      x: 0,
+      y: 0,
       toJSON: () => ({}),
     });
     await user.click(trigger);

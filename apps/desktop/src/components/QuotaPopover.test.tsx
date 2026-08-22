@@ -5,7 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeI18n } from "../core/i18n";
 import { QuotaPopover } from "./QuotaPopover";
 
-const { listen, quotaSnapshot, quotaPopoverPreferences, refreshStatus, requestRefresh, refreshQuota, openQuotaDashboard, runtime, hide } = vi.hoisted(() => ({
+const {
+  listen,
+  quotaSnapshot,
+  quotaPopoverPreferences,
+  refreshStatus,
+  requestRefresh,
+  refreshQuota,
+  openQuotaDashboard,
+  runtime,
+  hide,
+} = vi.hoisted(() => ({
   listen: vi.fn(),
   quotaSnapshot: vi.fn(),
   quotaPopoverPreferences: vi.fn(),
@@ -20,7 +30,15 @@ const { listen, quotaSnapshot, quotaPopoverPreferences, refreshStatus, requestRe
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ hide }) }));
 vi.mock("../core/api", () => ({
-  api: { quotaSnapshot, quotaPopoverPreferences, refreshStatus, requestRefresh, refreshQuota, openQuotaDashboard, runtime },
+  api: {
+    quotaSnapshot,
+    quotaPopoverPreferences,
+    refreshStatus,
+    requestRefresh,
+    refreshQuota,
+    openQuotaDashboard,
+    runtime,
+  },
 }));
 
 beforeEach(async () => {
@@ -36,7 +54,11 @@ beforeEach(async () => {
     fetched_at: "2026-08-14T02:00:00Z",
     stale_after_seconds: 300,
     freshness: "fresh",
-    providers: [provider("codex", "Codex", 72), provider("claude", "Claude", 8), provider("gemini", "Gemini", 50)],
+    providers: [
+      provider("codex", "Codex", 72),
+      provider("claude", "Claude", 8),
+      provider("gemini", "Gemini", 50),
+    ],
   });
 });
 
@@ -61,12 +83,18 @@ describe("QuotaPopover", () => {
 
     fireEvent.click(window);
 
-    await waitFor(() => expect(openQuotaDashboard).toHaveBeenCalledWith("codex", {
-      provider_id: "codex",
-      account_id: undefined,
-      kind: "session",
-      label: "5 hour",
-    }, false));
+    await waitFor(() =>
+      expect(openQuotaDashboard).toHaveBeenCalledWith(
+        "codex",
+        {
+          provider_id: "codex",
+          account_id: undefined,
+          kind: "session",
+          label: "5 hour",
+        },
+        false,
+      ),
+    );
   });
 
   it("hides when Escape is pressed", async () => {
@@ -85,7 +113,14 @@ function provider(id: string, name: string, remaining: number) {
     name,
     enabled: true,
     identity: { account_email: `${id}@example.com` },
-    windows: [{ kind: "session", label: "5 hour", used_percent: 100 - remaining, remaining_percent: remaining }],
+    windows: [
+      {
+        kind: "session",
+        label: "5 hour",
+        used_percent: 100 - remaining,
+        remaining_percent: remaining,
+      },
+    ],
     accounts: [],
   };
 }

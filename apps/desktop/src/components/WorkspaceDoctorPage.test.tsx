@@ -20,14 +20,39 @@ const workspace: WorkspaceSummary = {
 };
 
 const report: ContextDoctorReport = {
-  summary: { workspace_id: "workspace", error_count: 0, warning_count: 1, info_count: 0, repairable_count: 1, checked_at: "2026-08-18T00:00:00Z" },
-  matrix: [{
-    agent: "codex", detected: true, installed: true, enabled: true, writable: true,
-    instructions: { status: "attention", expected: 1, actual: 0 },
-    skills: { status: "healthy", expected: 0, actual: 0 },
-    mcp: { status: "healthy", expected: 1, actual: 1 },
-  }],
-  issues: [{ id: "issue", code: "managed.missing", severity: "warning", agent: "codex", asset_kind: "instruction", repairable: true, evidence: [{ path: "/tmp/workspace/AGENTS.md", detail: "missing", expected: "abc", actual: undefined }] }],
+  summary: {
+    workspace_id: "workspace",
+    error_count: 0,
+    warning_count: 1,
+    info_count: 0,
+    repairable_count: 1,
+    checked_at: "2026-08-18T00:00:00Z",
+  },
+  matrix: [
+    {
+      agent: "codex",
+      detected: true,
+      installed: true,
+      enabled: true,
+      writable: true,
+      instructions: { status: "attention", expected: 1, actual: 0 },
+      skills: { status: "healthy", expected: 0, actual: 0 },
+      mcp: { status: "healthy", expected: 1, actual: 1 },
+    },
+  ],
+  issues: [
+    {
+      id: "issue",
+      code: "managed.missing",
+      severity: "warning",
+      agent: "codex",
+      asset_kind: "instruction",
+      repairable: true,
+      evidence: [
+        { path: "/tmp/workspace/AGENTS.md", detail: "missing", expected: "abc", actual: undefined },
+      ],
+    },
+  ],
 };
 
 beforeEach(async () => {
@@ -35,7 +60,10 @@ beforeEach(async () => {
   vi.mocked(api.workspaceDoctorReport).mockResolvedValue(report);
 });
 
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 describe("WorkspaceDoctorPage", () => {
   it("renders deterministic evidence and plans project repairs", async () => {
@@ -55,7 +83,9 @@ describe("WorkspaceDoctorPage", () => {
       issues: [],
     });
     const { unmount } = render(<WorkspaceDoctorPage workspace={workspace} onRepair={vi.fn()} />);
-    expect(await screen.findByText("No deterministic configuration issues found")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No deterministic configuration issues found"),
+    ).toBeInTheDocument();
     unmount();
 
     vi.mocked(api.workspaceDoctorReport).mockRejectedValueOnce(new Error("diagnosis failed"));
@@ -66,25 +96,42 @@ describe("WorkspaceDoctorPage", () => {
   it("ignores a stale report after switching workspaces", async () => {
     let resolveFirst!: (value: ContextDoctorReport) => void;
     let resolveSecond!: (value: ContextDoctorReport) => void;
-    const first = new Promise<ContextDoctorReport>((resolve) => { resolveFirst = resolve; });
-    const second = new Promise<ContextDoctorReport>((resolve) => { resolveSecond = resolve; });
+    const first = new Promise<ContextDoctorReport>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<ContextDoctorReport>((resolve) => {
+      resolveSecond = resolve;
+    });
     vi.mocked(api.workspaceDoctorReport)
       .mockImplementationOnce(() => first)
       .mockImplementationOnce(() => second);
     const nextWorkspace = { ...workspace, id: "other-workspace", name: "Other workspace" };
     const nextReport: ContextDoctorReport = {
       ...report,
-      summary: { ...report.summary, workspace_id: nextWorkspace.id, warning_count: 0, repairable_count: 0 },
+      summary: {
+        ...report.summary,
+        workspace_id: nextWorkspace.id,
+        warning_count: 0,
+        repairable_count: 0,
+      },
       issues: [],
     };
     const { rerender } = render(<WorkspaceDoctorPage workspace={workspace} onRepair={vi.fn()} />);
 
     rerender(<WorkspaceDoctorPage workspace={nextWorkspace} onRepair={vi.fn()} />);
-    await act(async () => { resolveSecond(nextReport); });
-    expect(await screen.findByText("No deterministic configuration issues found")).toBeInTheDocument();
+    await act(async () => {
+      resolveSecond(nextReport);
+    });
+    expect(
+      await screen.findByText("No deterministic configuration issues found"),
+    ).toBeInTheDocument();
 
-    await act(async () => { resolveFirst(report); });
-    await waitFor(() => expect(screen.queryByText("/tmp/workspace/AGENTS.md")).not.toBeInTheDocument());
+    await act(async () => {
+      resolveFirst(report);
+    });
+    await waitFor(() =>
+      expect(screen.queryByText("/tmp/workspace/AGENTS.md")).not.toBeInTheDocument(),
+    );
     expect(api.workspaceDoctorReport).toHaveBeenNthCalledWith(1, workspace.id);
     expect(api.workspaceDoctorReport).toHaveBeenNthCalledWith(2, nextWorkspace.id);
   });

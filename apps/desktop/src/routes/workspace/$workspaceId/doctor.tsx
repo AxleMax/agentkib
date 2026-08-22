@@ -8,7 +8,14 @@ import { useWorkspaceStore } from "../../../stores/workspace-store";
 function WorkspaceDoctorRoute() {
   const navigate = useNavigate();
   const { workspaceId } = useParams({ from: "/workspace/$workspaceId/doctor" });
-  const { project, selectedWorkspace, setChangeSet, setChangeSetOrigin, setHandoffLaunchRequest, setMessage } = useWorkspaceStore();
+  const {
+    project,
+    selectedWorkspace,
+    setChangeSet,
+    setChangeSetOrigin,
+    setHandoffLaunchRequest,
+    setMessage,
+  } = useWorkspaceStore();
   if (!selectedWorkspace) return <LoadingState label="Loading…" />;
   const planRepairs = async () => {
     if (!project) return;
@@ -25,4 +32,6 @@ function WorkspaceDoctorRoute() {
   return <WorkspaceDoctorPage workspace={selectedWorkspace} onRepair={planRepairs} />;
 }
 
-export const Route = createFileRoute("/workspace/$workspaceId/doctor")({ component: WorkspaceDoctorRoute });
+export const Route = createFileRoute("/workspace/$workspaceId/doctor")({
+  component: WorkspaceDoctorRoute,
+});

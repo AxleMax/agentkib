@@ -4,7 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../core/api";
 import { initializeI18n } from "../core/i18n";
-import type { GitCommitSummary, GitDiff, GitWorkspaceSummary, WorkspaceSummary } from "../core/types";
+import type {
+  GitCommitSummary,
+  GitDiff,
+  GitWorkspaceSummary,
+  WorkspaceSummary,
+} from "../core/types";
 import { layoutCommitGraph, WorkspaceGitPage } from "./WorkspaceGitPage";
 
 vi.mock("../core/api", () => ({
@@ -17,28 +22,54 @@ vi.mock("../core/api", () => ({
 }));
 
 const workspace: WorkspaceSummary = {
-  id: "workspace", path: "/tmp/workspace", name: "Workspace", status: "healthy",
-  asset_count: 0, warning_count: 0, sources: [],
+  id: "workspace",
+  path: "/tmp/workspace",
+  name: "Workspace",
+  status: "healthy",
+  asset_count: 0,
+  warning_count: 0,
+  sources: [],
 };
 
 const summary: GitWorkspaceSummary = {
-  repository_root: "/tmp/workspace", worktree_root: "/tmp/workspace", head: "main", head_oid: "c",
-  ahead: 0, behind: 0, stash_count: 0, detached: false, refs: [], changes: [],
+  repository_root: "/tmp/workspace",
+  worktree_root: "/tmp/workspace",
+  head: "main",
+  head_oid: "c",
+  ahead: 0,
+  behind: 0,
+  stash_count: 0,
+  detached: false,
+  refs: [],
+  changes: [],
 };
 
 const fullDiff: GitDiff = {
   patch: "diff --git a/one.txt b/one.txt\n+full patch",
-  binary: false, submodule: false, encoding_lossy: false, truncated: false,
+  binary: false,
+  submodule: false,
+  encoding_lossy: false,
+  truncated: false,
 };
 
 function commit(oid: string, parents: string[]): GitCommitSummary {
-  return { oid, parents, subject: oid, author_name: "Test", authored_at: "2026-08-17T00:00:00Z", refs: [] };
+  return {
+    oid,
+    parents,
+    subject: oid,
+    author_name: "Test",
+    authored_at: "2026-08-17T00:00:00Z",
+    refs: [],
+  };
 }
 
 beforeEach(async () => {
   await initializeI18n("en-US");
   vi.mocked(api.workspaceGitSummary).mockResolvedValue(summary);
-  vi.mocked(api.workspaceGitHistory).mockResolvedValue({ commits: [commit("c", ["b"])], repository_fingerprint: "fingerprint" });
+  vi.mocked(api.workspaceGitHistory).mockResolvedValue({
+    commits: [commit("c", ["b"])],
+    repository_fingerprint: "fingerprint",
+  });
   vi.mocked(api.gitCommitFiles).mockResolvedValue([{ status: "M", path: "one.txt" }]);
   vi.mocked(api.gitDiff).mockResolvedValue(fullDiff);
 });
@@ -79,19 +110,34 @@ describe("WorkspaceGitPage Diff", () => {
   });
 
   it("loads the complete commit Diff by default and switches to a file Diff", async () => {
-    vi.mocked(api.gitDiff).mockImplementation(async (_workspaceId, request) => request.path
-      ? { ...fullDiff, patch: `single:${request.path}` }
-      : fullDiff);
+    vi.mocked(api.gitDiff).mockImplementation(async (_workspaceId, request) =>
+      request.path ? { ...fullDiff, patch: `single:${request.path}` } : fullDiff,
+    );
 
     render(<WorkspaceGitPage workspace={workspace} />);
 
     fireEvent.click(await screen.findByRole("option", { name: /c Test/ }));
-    await waitFor(() => expect(api.gitDiff).toHaveBeenCalledWith("workspace", { kind: "commit", oid: "c", path: undefined }));
+    await waitFor(() =>
+      expect(api.gitDiff).toHaveBeenCalledWith("workspace", {
+        kind: "commit",
+        oid: "c",
+        path: undefined,
+      }),
+    );
     expect(await screen.findByText("+full patch")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /All changes/ })).toHaveClass("bg-muted", "text-foreground");
+    expect(screen.getByRole("button", { name: /All changes/ })).toHaveClass(
+      "bg-muted",
+      "text-foreground",
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: /one.txt/ }));
-    await waitFor(() => expect(api.gitDiff).toHaveBeenLastCalledWith("workspace", { kind: "commit", oid: "c", path: "one.txt" }));
+    await waitFor(() =>
+      expect(api.gitDiff).toHaveBeenLastCalledWith("workspace", {
+        kind: "commit",
+        oid: "c",
+        path: "one.txt",
+      }),
+    );
     expect(await screen.findByText("single:one.txt")).toBeInTheDocument();
   });
 
@@ -106,7 +152,9 @@ describe("WorkspaceGitPage Diff", () => {
   });
 
   it("shows a retryable error instead of an endless loading state", async () => {
-    vi.mocked(api.gitDiff).mockRejectedValueOnce(new Error("diff failed")).mockResolvedValueOnce(fullDiff);
+    vi.mocked(api.gitDiff)
+      .mockRejectedValueOnce(new Error("diff failed"))
+      .mockResolvedValueOnce(fullDiff);
 
     render(<WorkspaceGitPage workspace={workspace} />);
 
@@ -118,8 +166,13 @@ describe("WorkspaceGitPage Diff", () => {
 
   it("ignores an older Diff response after selecting another commit", async () => {
     let resolveFirst: ((value: GitDiff) => void) | undefined;
-    const first = new Promise<GitDiff>((resolve) => { resolveFirst = resolve; });
-    vi.mocked(api.workspaceGitHistory).mockResolvedValue({ commits: [commit("c", ["b"]), commit("b", ["a"])], repository_fingerprint: "fingerprint" });
+    const first = new Promise<GitDiff>((resolve) => {
+      resolveFirst = resolve;
+    });
+    vi.mocked(api.workspaceGitHistory).mockResolvedValue({
+      commits: [commit("c", ["b"]), commit("b", ["a"])],
+      repository_fingerprint: "fingerprint",
+    });
     vi.mocked(api.gitDiff)
       .mockImplementationOnce(() => first)
       .mockResolvedValueOnce({ ...fullDiff, patch: "newer commit patch" });
@@ -151,7 +204,9 @@ describe("WorkspaceGitPage Diff", () => {
     list.scrollTop = 180;
     fireEvent.click(screen.getByRole("option", { name: /c Test/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Back to Git" }));
-    await waitFor(() => expect(screen.getByRole("listbox", { name: "Commit History" }).scrollTop).toBe(180));
+    await waitFor(() =>
+      expect(screen.getByRole("listbox", { name: "Commit History" }).scrollTop).toBe(180),
+    );
   });
 
   it("returns to the Git list with Escape", async () => {
@@ -174,7 +229,12 @@ describe("WorkspaceGitPage Diff", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /Working Tree/ }));
     fireEvent.click(screen.getAllByText("staged.txt")[0].closest("button")!);
 
-    await waitFor(() => expect(api.gitDiff).toHaveBeenLastCalledWith("workspace", { kind: "staged", path: "staged.txt" }));
+    await waitFor(() =>
+      expect(api.gitDiff).toHaveBeenLastCalledWith("workspace", {
+        kind: "staged",
+        path: "staged.txt",
+      }),
+    );
     expect(screen.getByText("All staged changes")).toBeInTheDocument();
     expect(screen.queryByText("unstaged.txt")).not.toBeInTheDocument();
   });
@@ -188,7 +248,9 @@ describe("WorkspaceGitPage Diff", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /Working Tree/ }));
     fireEvent.click(screen.getAllByText("new.txt")[0].closest("button")!);
 
-    expect(await screen.findByText("Untracked files do not have a Git Diff yet")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Untracked files do not have a Git Diff yet"),
+    ).toBeInTheDocument();
     expect(api.gitDiff).not.toHaveBeenCalled();
   });
 });

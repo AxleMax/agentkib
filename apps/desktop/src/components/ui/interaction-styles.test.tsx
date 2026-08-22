@@ -22,10 +22,20 @@ function StatefulTabs() {
 
 describe("interaction style primitives", () => {
   it("lets full-surface buttons own their dimensions and chrome", () => {
-    render(<Button variant="bare" size="content">Workspace row</Button>);
+    render(
+      <Button variant="bare" size="content">
+        Workspace row
+      </Button>,
+    );
     const button = screen.getByRole("button", { name: "Workspace row" });
 
-    expect(button).toHaveClass("h-auto", "rounded-none", "border-0", "bg-transparent", "active:translate-y-0");
+    expect(button).toHaveClass(
+      "h-auto",
+      "rounded-none",
+      "border-0",
+      "bg-transparent",
+      "active:translate-y-0",
+    );
     expect(button).not.toHaveClass("h-8", "rounded-lg");
   });
 

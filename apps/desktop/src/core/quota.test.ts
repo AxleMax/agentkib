@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { flattenQuotaWindows, isQuotaProviderSupported, providerHasPartialData, providerIsUnavailable, visibleQuotaWindows } from "./quota";
+import {
+  flattenQuotaWindows,
+  isQuotaProviderSupported,
+  providerHasPartialData,
+  providerIsUnavailable,
+  visibleQuotaWindows,
+} from "./quota";
 import type { QuotaProvider } from "./types";
 
 describe("quota display model", () => {
@@ -10,7 +16,12 @@ describe("quota display model", () => {
     expect(windows).toHaveLength(2);
     expect(windows[0].selector.account_id).toBeUndefined();
     expect(windows[1].selector.account_id).toBe("secondary");
-    expect(visibleQuotaWindows(provider, { hidden_providers: [], hidden_windows: [windows[1].selector] })).toEqual([windows[0]]);
+    expect(
+      visibleQuotaWindows(provider, {
+        hidden_providers: [],
+        hidden_windows: [windows[1].selector],
+      }),
+    ).toEqual([windows[0]]);
   });
 
   it("treats errors with usable windows as partial instead of unavailable", () => {
@@ -35,12 +46,14 @@ function fixture(): QuotaProvider {
     name: "Codex",
     enabled: true,
     windows: [{ kind: "weekly", label: "Weekly", used_percent: 20, remaining_percent: 80 }],
-    accounts: [{
-      id: "secondary",
-      label: "Secondary",
-      active: false,
-      identity: { account_email: "secondary@example.com" },
-      windows: [{ kind: "session", label: "5 hour", used_percent: 40, remaining_percent: 60 }],
-    }],
+    accounts: [
+      {
+        id: "secondary",
+        label: "Secondary",
+        active: false,
+        identity: { account_email: "secondary@example.com" },
+        windows: [{ kind: "session", label: "5 hour", used_percent: 40, remaining_percent: 60 }],
+      },
+    ],
   };
 }

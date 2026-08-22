@@ -19,11 +19,21 @@ vi.mock("../core/api", () => ({
 }));
 
 const workspace: WorkspaceSummary = {
-  id: "workspace", path: "/tmp/workspace", name: "Workspace", status: "healthy",
-  asset_count: 0, warning_count: 0, sources: [{ agent: "codex", evidence: "session-cwd", session_count: 1 }],
+  id: "workspace",
+  path: "/tmp/workspace",
+  name: "Workspace",
+  status: "healthy",
+  asset_count: 0,
+  warning_count: 0,
+  sources: [{ agent: "codex", evidence: "session-cwd", session_count: 1 }],
 };
 
-function node(name: string, relativePath: string, bytes: number, children: StorageNode[] = []): StorageNode {
+function node(
+  name: string,
+  relativePath: string,
+  bytes: number,
+  children: StorageNode[] = [],
+): StorageNode {
   return {
     id: `directory:${relativePath}`,
     name,
@@ -54,12 +64,26 @@ const overview: StorageOverview = {
   regenerable_bytes: 600,
   agent_asset_bytes: 0,
   last_scanned_at: new Date().toISOString(),
-  workspaces: [{
-    workspace_id: "workspace", name: "Workspace", path: "/tmp/workspace", snapshot_version: 2, root,
-    measurement: "allocated-exact", quality: "complete", allocated_bytes: 1_000, logical_bytes: 1_000,
-    regenerable_bytes: 600, agent_asset_bytes: 0, file_count: 2, directory_count: 2, breakdown: [],
-    last_attempt_at: new Date().toISOString(), last_success_at: new Date().toISOString(),
-  }],
+  workspaces: [
+    {
+      workspace_id: "workspace",
+      name: "Workspace",
+      path: "/tmp/workspace",
+      snapshot_version: 2,
+      root,
+      measurement: "allocated-exact",
+      quality: "complete",
+      allocated_bytes: 1_000,
+      logical_bytes: 1_000,
+      regenerable_bytes: 600,
+      agent_asset_bytes: 0,
+      file_count: 2,
+      directory_count: 2,
+      breakdown: [],
+      last_attempt_at: new Date().toISOString(),
+      last_success_at: new Date().toISOString(),
+    },
+  ],
 };
 
 beforeEach(async () => {
@@ -94,13 +118,17 @@ describe("WorkspaceStoragePage", () => {
 
     expect(await screen.findByText("Share of parent")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open in file manager" }));
-    await waitFor(() => expect(api.openWorkspaceStoragePath).toHaveBeenCalledWith("workspace", "src"));
+    await waitFor(() =>
+      expect(api.openWorkspaceStoragePath).toHaveBeenCalledWith("workspace", "src"),
+    );
   });
 
   it("highlights search matches without removing non-matching tiles", async () => {
     render(<WorkspaceStoragePage workspaces={[workspace]} />);
     fireEvent.doubleClick(await screen.findByRole("treeitem", { name: /Workspace/ }));
-    fireEvent.change(screen.getByPlaceholderText("Search names or relative paths"), { target: { value: "src" } });
+    fireEvent.change(screen.getByPlaceholderText("Search names or relative paths"), {
+      target: { value: "src" },
+    });
 
     expect(screen.getByRole("treeitem", { name: /src/ })).toHaveClass("ring-2", "ring-offset-1");
     expect(screen.getByRole("treeitem", { name: /target/ })).toHaveClass("opacity-35", "grayscale");

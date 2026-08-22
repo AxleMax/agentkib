@@ -6,7 +6,11 @@ export interface HeatmapMonthMarker {
   column: number;
 }
 
-export function buildHeatmapMonthMarkers(points: HeatmapPoint[], padding: number, locale: string): HeatmapMonthMarker[] {
+export function buildHeatmapMonthMarkers(
+  points: HeatmapPoint[],
+  padding: number,
+  locale: string,
+): HeatmapMonthMarker[] {
   const markers = new Map<string, HeatmapMonthMarker>();
   for (const [index, point] of points.entries()) {
     const date = new Date(`${point.date}T00:00:00`);

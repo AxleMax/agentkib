@@ -60,7 +60,9 @@ interface AppActions {
   setRemoteGateways: (value: Updater<RemoteGatewaySummary[]>) => void;
   setInsightsSummary: (value: Updater<InsightsSummary | undefined>) => void;
   setInsightsStatus: (value: Updater<InsightsStatus | undefined>) => void;
-  setQuotaStatus: (value: Updater<import("../core/types").QuotaCollectorStatus | undefined>) => void;
+  setQuotaStatus: (
+    value: Updater<import("../core/types").QuotaCollectorStatus | undefined>,
+  ) => void;
   setNavigationRequest: (value: Updater<AppNavigationRequest | undefined>) => void;
   setMenuCommand: (value: Updater<AppMenuCommandRequest | undefined>) => void;
   setRefreshJobs: (value: Updater<RefreshJobStatus[]>) => void;
@@ -68,10 +70,14 @@ interface AppActions {
   setGlobalError: (value: Updater<string | undefined>) => void;
 }
 
-const resolve = <T,>(value: Updater<T>, current: T): T => typeof value === "function" ? (value as (current: T) => T)(current) : value;
+const resolve = <T>(value: Updater<T>, current: T): T =>
+  typeof value === "function" ? (value as (current: T) => T)(current) : value;
 
 export const useAppStore = create<AppState & AppActions>((set) => ({
-  sidebarCollapsed: typeof localStorage === "undefined" ? false : localStorage.getItem("agentkib.sidebar.collapsed") === "true",
+  sidebarCollapsed:
+    typeof localStorage === "undefined"
+      ? false
+      : localStorage.getItem("agentkib.sidebar.collapsed") === "true",
   isFullscreen: false,
   workspaces: [],
   installations: [],
@@ -84,48 +90,62 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   remoteGateways: [],
   refreshJobs: [],
   quotaConfigureRequest: 0,
-  reset: () => set({
-    sidebarCollapsed: typeof localStorage === "undefined" ? false : localStorage.getItem("agentkib.sidebar.collapsed") === "true",
-    isFullscreen: false,
-    runtime: undefined,
-    workspaces: [],
-    installations: [],
-    doctorSummaries: {},
-    catalog: [],
-    globalMemories: [],
-    activity: [],
-    scanRoots: [],
-    excluded: [],
-    discovery: undefined,
-    remoteGateways: [],
-    insightsSummary: undefined,
-    insightsStatus: undefined,
-    quotaStatus: undefined,
-    navigationRequest: undefined,
-    menuCommand: undefined,
-    refreshJobs: [],
-    quotaConfigureRequest: 0,
-    globalError: undefined,
-  }),
-  setSidebarCollapsed: (value) => set((state) => ({ sidebarCollapsed: resolve(value, state.sidebarCollapsed) })),
-  setIsFullscreen: (value) => set((state) => ({ isFullscreen: resolve(value, state.isFullscreen) })),
+  reset: () =>
+    set({
+      sidebarCollapsed:
+        typeof localStorage === "undefined"
+          ? false
+          : localStorage.getItem("agentkib.sidebar.collapsed") === "true",
+      isFullscreen: false,
+      runtime: undefined,
+      workspaces: [],
+      installations: [],
+      doctorSummaries: {},
+      catalog: [],
+      globalMemories: [],
+      activity: [],
+      scanRoots: [],
+      excluded: [],
+      discovery: undefined,
+      remoteGateways: [],
+      insightsSummary: undefined,
+      insightsStatus: undefined,
+      quotaStatus: undefined,
+      navigationRequest: undefined,
+      menuCommand: undefined,
+      refreshJobs: [],
+      quotaConfigureRequest: 0,
+      globalError: undefined,
+    }),
+  setSidebarCollapsed: (value) =>
+    set((state) => ({ sidebarCollapsed: resolve(value, state.sidebarCollapsed) })),
+  setIsFullscreen: (value) =>
+    set((state) => ({ isFullscreen: resolve(value, state.isFullscreen) })),
   setRuntime: (value) => set((state) => ({ runtime: resolve(value, state.runtime) })),
   setWorkspaces: (value) => set((state) => ({ workspaces: resolve(value, state.workspaces) })),
-  setInstallations: (value) => set((state) => ({ installations: resolve(value, state.installations) })),
-  setDoctorSummaries: (value) => set((state) => ({ doctorSummaries: resolve(value, state.doctorSummaries) })),
+  setInstallations: (value) =>
+    set((state) => ({ installations: resolve(value, state.installations) })),
+  setDoctorSummaries: (value) =>
+    set((state) => ({ doctorSummaries: resolve(value, state.doctorSummaries) })),
   setCatalog: (value) => set((state) => ({ catalog: resolve(value, state.catalog) })),
-  setGlobalMemories: (value) => set((state) => ({ globalMemories: resolve(value, state.globalMemories) })),
+  setGlobalMemories: (value) =>
+    set((state) => ({ globalMemories: resolve(value, state.globalMemories) })),
   setActivity: (value) => set((state) => ({ activity: resolve(value, state.activity) })),
   setScanRoots: (value) => set((state) => ({ scanRoots: resolve(value, state.scanRoots) })),
   setExcluded: (value) => set((state) => ({ excluded: resolve(value, state.excluded) })),
   setDiscovery: (value) => set((state) => ({ discovery: resolve(value, state.discovery) })),
-  setRemoteGateways: (value) => set((state) => ({ remoteGateways: resolve(value, state.remoteGateways) })),
-  setInsightsSummary: (value) => set((state) => ({ insightsSummary: resolve(value, state.insightsSummary) })),
-  setInsightsStatus: (value) => set((state) => ({ insightsStatus: resolve(value, state.insightsStatus) })),
+  setRemoteGateways: (value) =>
+    set((state) => ({ remoteGateways: resolve(value, state.remoteGateways) })),
+  setInsightsSummary: (value) =>
+    set((state) => ({ insightsSummary: resolve(value, state.insightsSummary) })),
+  setInsightsStatus: (value) =>
+    set((state) => ({ insightsStatus: resolve(value, state.insightsStatus) })),
   setQuotaStatus: (value) => set((state) => ({ quotaStatus: resolve(value, state.quotaStatus) })),
-  setNavigationRequest: (value) => set((state) => ({ navigationRequest: resolve(value, state.navigationRequest) })),
+  setNavigationRequest: (value) =>
+    set((state) => ({ navigationRequest: resolve(value, state.navigationRequest) })),
   setMenuCommand: (value) => set((state) => ({ menuCommand: resolve(value, state.menuCommand) })),
   setRefreshJobs: (value) => set((state) => ({ refreshJobs: resolve(value, state.refreshJobs) })),
-  setQuotaConfigureRequest: (value) => set((state) => ({ quotaConfigureRequest: resolve(value, state.quotaConfigureRequest) })),
+  setQuotaConfigureRequest: (value) =>
+    set((state) => ({ quotaConfigureRequest: resolve(value, state.quotaConfigureRequest) })),
   setGlobalError: (value) => set((state) => ({ globalError: resolve(value, state.globalError) })),
 }));

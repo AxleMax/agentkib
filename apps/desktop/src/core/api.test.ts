@@ -23,7 +23,11 @@ describe("AgentKib API boundary", () => {
   });
 
   it("keeps Obsidian linking explicit at the IPC boundary", async () => {
-    vi.mocked(invoke).mockResolvedValue({ workspace_id: "workspace", vault_path: "/Notes", target_path: "/Notes/Projects" });
+    vi.mocked(invoke).mockResolvedValue({
+      workspace_id: "workspace",
+      vault_path: "/Notes",
+      target_path: "/Notes/Projects",
+    });
 
     await api.linkWorkspaceToObsidian("workspace", "/Notes", "Projects");
 
@@ -51,28 +55,52 @@ describe("AgentKib API boundary", () => {
   });
 
   it("queues refresh work without waiting for collector results", async () => {
-    vi.mocked(invoke).mockResolvedValue({ kind: "insights", disposition: "queued", request_id: "refresh-1", status: { kind: "insights", state: "queued" } });
+    vi.mocked(invoke).mockResolvedValue({
+      kind: "insights",
+      disposition: "queued",
+      request_id: "refresh-1",
+      status: { kind: "insights", state: "queued" },
+    });
 
-    await expect(api.requestRefresh("insights", true)).resolves.toMatchObject({ disposition: "queued" });
+    await expect(api.requestRefresh("insights", true)).resolves.toMatchObject({
+      disposition: "queued",
+    });
 
     expect(invoke).toHaveBeenCalledWith("request_refresh", { kind: "insights", force: true });
   });
 
   it("exposes quota refresh as a non-blocking IPC request", async () => {
-    vi.mocked(invoke).mockResolvedValue({ kind: "quota", disposition: "queued", request_id: "quota-1", status: { kind: "quota", state: "queued" } });
+    vi.mocked(invoke).mockResolvedValue({
+      kind: "quota",
+      disposition: "queued",
+      request_id: "quota-1",
+      status: { kind: "quota", state: "queued" },
+    });
 
-    await expect(api.refreshQuota()).resolves.toMatchObject({ kind: "quota", disposition: "queued" });
+    await expect(api.refreshQuota()).resolves.toMatchObject({
+      kind: "quota",
+      disposition: "queued",
+    });
 
     expect(invoke).toHaveBeenCalledWith("refresh_quota");
   });
 
   it("keeps workspace storage scanning explicit", async () => {
-    vi.mocked(invoke).mockResolvedValue({ total_workspace_count: 2, scanned_workspace_count: 0, workspaces: [] });
+    vi.mocked(invoke).mockResolvedValue({
+      total_workspace_count: 2,
+      scanned_workspace_count: 0,
+      workspaces: [],
+    });
 
     await api.storageOverview();
     expect(invoke).toHaveBeenCalledWith("get_storage_overview");
 
-    vi.mocked(invoke).mockResolvedValue({ kind: "storage", disposition: "queued", request_id: "storage-1", status: { kind: "storage", state: "queued" } });
+    vi.mocked(invoke).mockResolvedValue({
+      kind: "storage",
+      disposition: "queued",
+      request_id: "storage-1",
+      status: { kind: "storage", state: "queued" },
+    });
     await api.requestRefresh("storage", true);
     expect(invoke).toHaveBeenCalledWith("request_refresh", { kind: "storage", force: true });
   });
@@ -109,10 +137,14 @@ describe("AgentKib API boundary", () => {
     vi.mocked(invoke).mockResolvedValue([]);
 
     await api.workspaceDoctorSummaries(["workspace-1"]);
-    expect(invoke).toHaveBeenCalledWith("get_workspace_doctor_summaries", { workspaceIds: ["workspace-1"] });
+    expect(invoke).toHaveBeenCalledWith("get_workspace_doctor_summaries", {
+      workspaceIds: ["workspace-1"],
+    });
 
     await api.workspaceDoctorReport("workspace-1");
-    expect(invoke).toHaveBeenCalledWith("get_workspace_doctor_report", { workspaceId: "workspace-1" });
+    expect(invoke).toHaveBeenCalledWith("get_workspace_doctor_report", {
+      workspaceId: "workspace-1",
+    });
   });
 
   it("batches Doctor summaries within the backend limit", async () => {
@@ -125,14 +157,27 @@ describe("AgentKib API boundary", () => {
     await expect(api.workspaceDoctorSummaries(workspaceIds)).resolves.toHaveLength(201);
 
     expect(invoke).toHaveBeenCalledTimes(3);
-    expect(invoke).toHaveBeenNthCalledWith(1, "get_workspace_doctor_summaries", { workspaceIds: workspaceIds.slice(0, 100) });
-    expect(invoke).toHaveBeenNthCalledWith(2, "get_workspace_doctor_summaries", { workspaceIds: workspaceIds.slice(100, 200) });
-    expect(invoke).toHaveBeenNthCalledWith(3, "get_workspace_doctor_summaries", { workspaceIds: workspaceIds.slice(200) });
+    expect(invoke).toHaveBeenNthCalledWith(1, "get_workspace_doctor_summaries", {
+      workspaceIds: workspaceIds.slice(0, 100),
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "get_workspace_doctor_summaries", {
+      workspaceIds: workspaceIds.slice(100, 200),
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "get_workspace_doctor_summaries", {
+      workspaceIds: workspaceIds.slice(200),
+    });
   });
 
   it("previews handoffs before planning a ChangeSet save", async () => {
-    vi.mocked(invoke).mockResolvedValue({ status: "ready", draft: { filename: "handoff.md", content: "# handoff" } });
-    const request = { session_id: "hashed-session", target_agent: "claude-code" as const, format: "markdown" as const };
+    vi.mocked(invoke).mockResolvedValue({
+      status: "ready",
+      draft: { filename: "handoff.md", content: "# handoff" },
+    });
+    const request = {
+      session_id: "hashed-session",
+      target_agent: "claude-code" as const,
+      format: "markdown" as const,
+    };
 
     await api.prepareSessionHandoff(request);
     expect(invoke).toHaveBeenCalledWith("prepare_session_handoff", { request });
@@ -146,7 +191,13 @@ describe("AgentKib API boundary", () => {
       editedContent: "# edited handoff",
     });
 
-    await api.planSessionHandoff("workspace-1", "handoff.md", "markdown", "# handoff", "claude-code");
+    await api.planSessionHandoff(
+      "workspace-1",
+      "handoff.md",
+      "markdown",
+      "# handoff",
+      "claude-code",
+    );
     expect(invoke).toHaveBeenCalledWith("plan_session_handoff", {
       workspaceId: "workspace-1",
       filename: "handoff.md",
@@ -155,8 +206,18 @@ describe("AgentKib API boundary", () => {
       targetAgent: "claude-code",
     });
 
-    const launchRequest = { workspace_id: "workspace-1", filename: "handoff.md", target_agent: "claude-code" as const };
-    const changeSet = { id: "changes", project_root: "/tmp/project", created_at: "2026-08-18T00:00:00Z", changes: [], requires_home_approval: false };
+    const launchRequest = {
+      workspace_id: "workspace-1",
+      filename: "handoff.md",
+      target_agent: "claude-code" as const,
+    };
+    const changeSet = {
+      id: "changes",
+      project_root: "/tmp/project",
+      created_at: "2026-08-18T00:00:00Z",
+      changes: [],
+      requires_home_approval: false,
+    };
     await api.continueSessionHandoff(changeSet, launchRequest);
     expect(invoke).toHaveBeenCalledWith("continue_session_handoff", { changeSet, launchRequest });
     await api.launchSessionHandoff(launchRequest);
@@ -202,10 +263,22 @@ describe("AgentKib API boundary", () => {
   it("keeps remote gateway credentials inside the native IPC boundary", async () => {
     vi.mocked(invoke).mockResolvedValue({ id: "gateway", state: "connected" });
 
-    await api.saveRemoteGateway({ kind: "open-claw", name: "Server", url: "wss://gateway.test", auth_kind: "token", secret: "local-only" });
+    await api.saveRemoteGateway({
+      kind: "open-claw",
+      name: "Server",
+      url: "wss://gateway.test",
+      auth_kind: "token",
+      secret: "local-only",
+    });
 
     expect(invoke).toHaveBeenCalledWith("save_remote_gateway", {
-      input: { kind: "open-claw", name: "Server", url: "wss://gateway.test", auth_kind: "token", secret: "local-only" },
+      input: {
+        kind: "open-claw",
+        name: "Server",
+        url: "wss://gateway.test",
+        auth_kind: "token",
+        secret: "local-only",
+      },
     });
   });
 });

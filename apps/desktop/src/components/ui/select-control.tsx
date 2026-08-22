@@ -43,14 +43,18 @@ function SelectControl({
     if (!React.isValidElement<SelectOptionProps>(child) || child.type !== "option") return [];
     const optionValue = child.props.value;
     if (optionValue === undefined) return [];
-    return [{
-      disabled: child.props.disabled,
-      label: child.props.children,
-      value: String(optionValue),
-    }];
+    return [
+      {
+        disabled: child.props.disabled,
+        label: child.props.children,
+        value: String(optionValue),
+      },
+    ];
   });
   const selectedOption = options.find((option) => option.value === value);
-  const fallbackLabel = options.find((option) => typeof option.label === "string")?.label as string | undefined;
+  const fallbackLabel = options.find((option) => typeof option.label === "string")?.label as
+    | string
+    | undefined;
 
   return (
     <Select

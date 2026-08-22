@@ -29,7 +29,11 @@ async function bootstrap() {
   if (bootstrapRuntime) useAppStore.getState().setRuntime(bootstrapRuntime);
   const surface = new URLSearchParams(window.location.search).get("surface");
   createRoot(document.getElementById("root")!).render(
-    <StrictMode><AppDialogProvider>{surface === "quota-popover" ? <QuotaPopover /> : <App />}</AppDialogProvider></StrictMode>,
+    <StrictMode>
+      <AppDialogProvider>
+        {surface === "quota-popover" ? <QuotaPopover /> : <App />}
+      </AppDialogProvider>
+    </StrictMode>,
   );
 }
 

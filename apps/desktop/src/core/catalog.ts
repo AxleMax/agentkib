@@ -25,7 +25,14 @@ export interface WorkspaceAssetGroup {
   records: AssetRecord[];
 }
 
-const agentOrder: AgentKind[] = ["codex", "claude-code", "cursor", "open-claw", "hermes", "deepseek-harness"];
+const agentOrder: AgentKind[] = [
+  "codex",
+  "claude-code",
+  "cursor",
+  "open-claw",
+  "hermes",
+  "deepseek-harness",
+];
 
 export function groupCatalogAssets(assets: CatalogAsset[]): CatalogAssetGroup[] {
   const grouped = new Map<string, CatalogAssetGroup>();
@@ -52,10 +59,12 @@ export function groupCatalogAssets(assets: CatalogAsset[]): CatalogAssetGroup[] 
     }
     current.records.push(asset);
     current.size = Math.max(current.size, asset.size);
-    if (asset.modified_at && (!current.modified_at || asset.modified_at > current.modified_at)) current.modified_at = asset.modified_at;
+    if (asset.modified_at && (!current.modified_at || asset.modified_at > current.modified_at))
+      current.modified_at = asset.modified_at;
     if (asset.agent && !current.agents.includes(asset.agent)) current.agents.push(asset.agent);
   }
-  for (const asset of grouped.values()) asset.agents.sort((a, b) => agentOrder.indexOf(a) - agentOrder.indexOf(b));
+  for (const asset of grouped.values())
+    asset.agents.sort((a, b) => agentOrder.indexOf(a) - agentOrder.indexOf(b));
   return [...grouped.values()];
 }
 
@@ -79,14 +88,16 @@ export function groupWorkspaceAssets(assets: AssetRecord[]): WorkspaceAssetGroup
     current.size = Math.max(current.size, asset.size);
     if (!current.agents.includes(asset.agent)) current.agents.push(asset.agent);
   }
-  for (const asset of grouped.values()) asset.agents.sort((a, b) => agentOrder.indexOf(a) - agentOrder.indexOf(b));
+  for (const asset of grouped.values())
+    asset.agents.sort((a, b) => agentOrder.indexOf(a) - agentOrder.indexOf(b));
   return [...grouped.values()];
 }
 
 export function workspaceAssetCounts(groups: CatalogAssetGroup[]) {
   const counts = new Map<string, number>();
   for (const asset of groups) {
-    if (asset.workspace_id) counts.set(asset.workspace_id, (counts.get(asset.workspace_id) ?? 0) + 1);
+    if (asset.workspace_id)
+      counts.set(asset.workspace_id, (counts.get(asset.workspace_id) ?? 0) + 1);
   }
   return counts;
 }

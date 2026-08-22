@@ -15,8 +15,13 @@ vi.mock("../core/api", () => ({
 }));
 
 const workspace: WorkspaceSummary = {
-  id: "workspace", path: "/tmp/workspace", name: "Workspace", status: "healthy",
-  asset_count: 0, warning_count: 0, sources: [],
+  id: "workspace",
+  path: "/tmp/workspace",
+  name: "Workspace",
+  status: "healthy",
+  asset_count: 0,
+  warning_count: 0,
+  sources: [],
 };
 
 beforeEach(async () => {
@@ -37,14 +42,18 @@ describe("WorkspaceOpenWith", () => {
   it("opens with the preferred application from the main action", async () => {
     render(<WorkspaceOpenWith workspace={workspace} onError={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Finder" }));
-    await waitFor(() => expect(api.openWorkspaceWithApp).toHaveBeenCalledWith("workspace", undefined));
+    await waitFor(() =>
+      expect(api.openWorkspaceWithApp).toHaveBeenCalledWith("workspace", undefined),
+    );
   });
 
   it("remembers a selected installed application", async () => {
     render(<WorkspaceOpenWith workspace={workspace} onError={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Choose application" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "PyCharm" }));
-    await waitFor(() => expect(api.openWorkspaceWithApp).toHaveBeenCalledWith("workspace", "pycharm"));
+    await waitFor(() =>
+      expect(api.openWorkspaceWithApp).toHaveBeenCalledWith("workspace", "pycharm"),
+    );
     expect(api.workspaceOpeners).toHaveBeenCalledTimes(2);
   });
 });

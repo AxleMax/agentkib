@@ -14,15 +14,37 @@ const quotaWindowSchema = z.object({
 
 const gitSubviewSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("commit"), oid: z.string() }),
-  z.object({ kind: z.literal("worktree"), path: z.string(), diffKind: z.enum(["commit", "worktree", "staged"]) }),
+  z.object({
+    kind: z.literal("worktree"),
+    path: z.string(),
+    diffKind: z.enum(["commit", "worktree", "staged"]),
+  }),
 ]);
 
 const searchSchema = z.object({
-  assetSection: z.enum(["instructions", "skills", "mcp", "memory", "other"]).optional().catch(undefined),
-  workspaceAssetSection: z.enum(["instructions", "skills", "mcp", "native"]).optional().catch(undefined),
+  assetSection: z
+    .enum(["instructions", "skills", "mcp", "memory", "other"])
+    .optional()
+    .catch(undefined),
+  workspaceAssetSection: z
+    .enum(["instructions", "skills", "mcp", "native"])
+    .optional()
+    .catch(undefined),
   workspaceView: z.enum(["list", "storage"]).optional().catch(undefined),
-  settingsSection: z.enum(["general", "discovery", "integrations", "privacy", "diagnostics"] satisfies SettingsSection[]).optional().catch(undefined),
-  insightsSection: z.enum(["overview", "tokens", "commits", "milestones", "sources"] satisfies InsightsSection[]).optional().catch(undefined),
+  settingsSection: z
+    .enum([
+      "general",
+      "discovery",
+      "integrations",
+      "privacy",
+      "diagnostics",
+    ] satisfies SettingsSection[])
+    .optional()
+    .catch(undefined),
+  insightsSection: z
+    .enum(["overview", "tokens", "commits", "milestones", "sources"] satisfies InsightsSection[])
+    .optional()
+    .catch(undefined),
   quotaProvider: z.string().optional().catch(undefined),
   quotaWindow: quotaWindowSchema.optional().catch(undefined),
   gitSubview: gitSubviewSchema.optional().catch(undefined),

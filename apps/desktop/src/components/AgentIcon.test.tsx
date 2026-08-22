@@ -7,15 +7,19 @@ import type { AgentKind } from "../core/types";
 afterEach(cleanup);
 
 describe("AgentIcon", () => {
-  it.each(["codex", "claude-code", "cursor", "open-claw", "hermes", "deepseek-harness"] as AgentKind[])(
-    "renders the local %s brand asset instead of a letter placeholder",
-    (agent) => {
-      const { container } = render(<AgentIcon agent={agent} />);
-      const icon = container.querySelector("img");
+  it.each([
+    "codex",
+    "claude-code",
+    "cursor",
+    "open-claw",
+    "hermes",
+    "deepseek-harness",
+  ] as AgentKind[])("renders the local %s brand asset instead of a letter placeholder", (agent) => {
+    const { container } = render(<AgentIcon agent={agent} />);
+    const icon = container.querySelector("img");
 
-      expect(icon?.getAttribute("alt")).toBe("");
-      expect(icon?.getAttribute("src")).toMatch(/\.svg|^data:image\/svg\+xml/);
-      expect(container.textContent).toBe("");
-    },
-  );
+    expect(icon?.getAttribute("alt")).toBe("");
+    expect(icon?.getAttribute("src")).toMatch(/\.svg|^data:image\/svg\+xml/);
+    expect(container.textContent).toBe("");
+  });
 });

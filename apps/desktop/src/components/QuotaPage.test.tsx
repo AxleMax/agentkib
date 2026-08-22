@@ -5,7 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeI18n } from "../core/i18n";
 import { QuotaPage } from "./QuotaPage";
 
-const { listen, quotaSnapshot, quotaCollectorStatus, quotaPopoverPreferences, setQuotaPopoverPreferences, refreshQuota, refreshStatus, requestRefresh } = vi.hoisted(() => ({
+const {
+  listen,
+  quotaSnapshot,
+  quotaCollectorStatus,
+  quotaPopoverPreferences,
+  setQuotaPopoverPreferences,
+  refreshQuota,
+  refreshStatus,
+  requestRefresh,
+} = vi.hoisted(() => ({
   listen: vi.fn(),
   quotaSnapshot: vi.fn(),
   quotaCollectorStatus: vi.fn(),
@@ -17,7 +26,15 @@ const { listen, quotaSnapshot, quotaCollectorStatus, quotaPopoverPreferences, se
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("../core/api", () => ({
-  api: { quotaSnapshot, quotaCollectorStatus, quotaPopoverPreferences, setQuotaPopoverPreferences, refreshQuota, refreshStatus, requestRefresh },
+  api: {
+    quotaSnapshot,
+    quotaCollectorStatus,
+    quotaPopoverPreferences,
+    setQuotaPopoverPreferences,
+    refreshQuota,
+    refreshStatus,
+    requestRefresh,
+  },
 }));
 
 beforeEach(async () => {
@@ -37,7 +54,12 @@ beforeEach(async () => {
     kind: "quota",
     disposition: "queued",
     request_id: "quota-auto",
-    status: { kind: "quota", state: "queued", request_id: "quota-auto", queued_at: "2026-08-14T02:00:00Z" },
+    status: {
+      kind: "quota",
+      state: "queued",
+      request_id: "quota-auto",
+      queued_at: "2026-08-14T02:00:00Z",
+    },
   });
   quotaSnapshot.mockResolvedValue({
     schema_version: 1,
@@ -111,7 +133,11 @@ describe("QuotaPage", () => {
 
     expect(await screen.findAllByText("Preparing quota collection…")).toHaveLength(1);
     expect(requestRefresh).not.toHaveBeenCalled();
-    expect(screen.getAllByRole("button", { name: "Refresh quota" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
+    expect(
+      screen
+        .getAllByRole("button", { name: "Refresh quota" })
+        .every((button) => button.hasAttribute("disabled")),
+    ).toBe(true);
   });
 
   it("requests a stale snapshot without forcing a duplicate collector", async () => {
@@ -138,21 +164,31 @@ describe("QuotaPage", () => {
 
     await waitFor(() => expect(requestRefresh).toHaveBeenCalledWith("quota", false));
     expect(listen).toHaveBeenCalledTimes(3);
-    expect(listen.mock.invocationCallOrder[2]).toBeLessThan(requestRefresh.mock.invocationCallOrder[0]);
+    expect(listen.mock.invocationCallOrder[2]).toBeLessThan(
+      requestRefresh.mock.invocationCallOrder[0],
+    );
   });
 
   it("polls an active refresh and recovers when the terminal event was missed", async () => {
     quotaSnapshot.mockResolvedValue(undefined);
     refreshStatus
       .mockResolvedValueOnce([{ kind: "quota", state: "queued", request_id: "existing" }])
-      .mockResolvedValueOnce([{ kind: "quota", state: "failed", request_id: "existing", error: "collector failed" }]);
+      .mockResolvedValueOnce([
+        { kind: "quota", state: "failed", request_id: "existing", error: "collector failed" },
+      ]);
 
     render(<QuotaPage />);
 
     expect(await screen.findByText("Preparing quota collection…")).toBeInTheDocument();
-    expect(await screen.findByText("Quota refresh failed", {}, { timeout: 2_000 })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Quota refresh failed", {}, { timeout: 2_000 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("collector failed")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Refresh quota" }).every((button) => !button.hasAttribute("disabled"))).toBe(true);
+    expect(
+      screen
+        .getAllByRole("button", { name: "Refresh quota" })
+        .every((button) => !button.hasAttribute("disabled")),
+    ).toBe(true);
   });
 
   it("keeps valid windows visible when a provider reports partial data", async () => {
@@ -176,7 +212,9 @@ describe("QuotaPage", () => {
 
   it("configures menu bar windows without hiding them from the dashboard", async () => {
     render(<QuotaPage configurePopoverRequest={1} popoverSupported />);
-    await waitFor(() => expect(screen.getByRole("complementary", { name: "Menu bar display" })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("complementary", { name: "Menu bar display" })).toBeInTheDocument(),
+    );
 
     const checkboxes = screen.getAllByRole("checkbox");
     fireEvent.click(checkboxes[1]);
@@ -190,7 +228,9 @@ describe("QuotaPage", () => {
 
     await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
     expect(screen.queryByRole("button", { name: "Menu bar display" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "Menu bar display" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("complementary", { name: "Menu bar display" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -201,7 +241,15 @@ function provider(id: string, name: string, remaining: number, account: string) 
     enabled: true,
     source: "oauth",
     identity: { account_email: account, plan: "Pro" },
-    windows: [{ kind: "session", label: "5 hour", used_percent: 100 - remaining, remaining_percent: remaining, reset_at: "2026-08-14T05:00:00Z" }],
+    windows: [
+      {
+        kind: "session",
+        label: "5 hour",
+        used_percent: 100 - remaining,
+        remaining_percent: remaining,
+        reset_at: "2026-08-14T05:00:00Z",
+      },
+    ],
     accounts: [],
   };
 }

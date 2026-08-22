@@ -9,8 +9,19 @@ import {
 } from "./achievements";
 import type { Achievement } from "./types";
 
-function achievement(category: string, threshold: number, progress: number, unlocked = false): Achievement {
-  return { code: `${category}-${threshold}`, category, threshold, progress, unlocked_at: unlocked ? "2026-01-01T00:00:00Z" : undefined };
+function achievement(
+  category: string,
+  threshold: number,
+  progress: number,
+  unlocked = false,
+): Achievement {
+  return {
+    code: `${category}-${threshold}`,
+    category,
+    threshold,
+    progress,
+    unlocked_at: unlocked ? "2026-01-01T00:00:00Z" : undefined,
+  };
 }
 
 describe("achievement milestone tracks", () => {
@@ -31,7 +42,9 @@ describe("achievement milestone tracks", () => {
       "workspaces",
       "agents",
     ]);
-    expect(tracks[0].milestones.map((milestone) => milestone.threshold)).toEqual([100_000, 1_000_000]);
+    expect(tracks[0].milestones.map((milestone) => milestone.threshold)).toEqual([
+      100_000, 1_000_000,
+    ]);
     expect(tracks[0].completed).toBe(2);
     expect(tracks.find((track) => track.category === "agents")?.next?.threshold).toBe(2);
   });
@@ -50,7 +63,12 @@ describe("achievement milestone tracks", () => {
   it("handles not-started and completed tracks", () => {
     const milestones = [achievement("agents", 2, 0), achievement("agents", 4, 0)];
     expect(calculateAchievementTrackProgress(milestones, 0)).toBe(0);
-    expect(calculateAchievementTrackProgress(milestones.map((item) => ({ ...item, progress: 5 })), 5)).toBe(1);
+    expect(
+      calculateAchievementTrackProgress(
+        milestones.map((item) => ({ ...item, progress: 5 })),
+        5,
+      ),
+    ).toBe(1);
   });
 
   it("retains a permanently unlocked milestone if current progress drops", () => {
@@ -65,14 +83,34 @@ describe("achievement milestone tracks", () => {
       achievement("token", 100_000, 100_000, true),
       { code: "special-night-owl", category: "special", threshold: 1, progress: 0 },
       { code: "special-first-memory", category: "special", threshold: 1, progress: 1 },
-      { code: "special-first-changeset", category: "special", threshold: 1, progress: 1, unlocked_at: "2026-01-02T00:00:00Z" },
+      {
+        code: "special-first-changeset",
+        category: "special",
+        threshold: 1,
+        progress: 1,
+        unlocked_at: "2026-01-02T00:00:00Z",
+      },
     ];
 
-    expect(buildAchievementTracks(achievements).flatMap((track) => track.milestones)).toHaveLength(1);
+    expect(buildAchievementTracks(achievements).flatMap((track) => track.milestones)).toHaveLength(
+      1,
+    );
     expect(buildSpecialAchievements(achievements)).toEqual([
-      expect.objectContaining({ achievement: expect.objectContaining({ code: "special-first-changeset" }), secret: false, unlocked: true }),
-      expect.objectContaining({ achievement: expect.objectContaining({ code: "special-first-memory" }), secret: false, unlocked: true }),
-      expect.objectContaining({ achievement: expect.objectContaining({ code: "special-night-owl" }), secret: true, unlocked: false }),
+      expect.objectContaining({
+        achievement: expect.objectContaining({ code: "special-first-changeset" }),
+        secret: false,
+        unlocked: true,
+      }),
+      expect.objectContaining({
+        achievement: expect.objectContaining({ code: "special-first-memory" }),
+        secret: false,
+        unlocked: true,
+      }),
+      expect.objectContaining({
+        achievement: expect.objectContaining({ code: "special-night-owl" }),
+        secret: true,
+        unlocked: false,
+      }),
     ]);
   });
 
@@ -97,7 +135,13 @@ describe("achievement milestone tracks", () => {
       { ...achievement("token", 100_000, 100_000, true), unlocked_at: "2026-01-02T00:00:00Z" },
       { ...achievement("commit", 1, 1, true), unlocked_at: "2026-01-01T00:00:00Z" },
       achievement("agents", 1, 1),
-      { code: "special-first-changeset", category: "special", threshold: 1, progress: 1, unlocked_at: "2026-01-03T00:00:00Z" },
+      {
+        code: "special-first-changeset",
+        category: "special",
+        threshold: 1,
+        progress: 1,
+        unlocked_at: "2026-01-03T00:00:00Z",
+      },
       { code: "special-night-owl", category: "special", threshold: 1, progress: 0 },
     ]);
 

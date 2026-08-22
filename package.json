@@ -6,8 +6,16 @@
     "diagnose:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File apps/desktop/scripts/diagnose-windows.ps1",
     "dev": "pnpm --filter @agentkib/desktop dev",
     "build": "pnpm --filter @agentkib/desktop build",
+    "format": "oxfmt apps/desktop/src",
+    "format:check": "oxfmt --check apps/desktop/src",
+    "lint": "oxlint apps/desktop/src",
+    "lint:fix": "oxlint apps/desktop/src --fix",
     "test": "pnpm --filter @agentkib/desktop test",
     "tauri": "pnpm --filter @agentkib/desktop tauri",
     "typecheck": "pnpm --filter @agentkib/desktop typecheck"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.64.0",
+    "oxlint": "^1.79.0"
   }
 }

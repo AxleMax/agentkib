@@ -4,8 +4,28 @@ import { groupCatalogAssets, groupWorkspaceAssets, workspaceAssetCounts } from "
 describe("catalog presentation", () => {
   it("groups the same workspace asset while retaining every visible Agent", () => {
     const groups = groupCatalogAssets([
-      { id: "1", scope: "workspace", workspace_id: "w", agent: "codex", kind: "instruction", name: "AGENTS.md", path: "/repo/AGENTS.md", summary: "", size: 10 },
-      { id: "2", scope: "workspace", workspace_id: "w", agent: "claude-code", kind: "instruction", name: "AGENTS.md", path: "/repo/AGENTS.md", summary: "", size: 10 },
+      {
+        id: "1",
+        scope: "workspace",
+        workspace_id: "w",
+        agent: "codex",
+        kind: "instruction",
+        name: "AGENTS.md",
+        path: "/repo/AGENTS.md",
+        summary: "",
+        size: 10,
+      },
+      {
+        id: "2",
+        scope: "workspace",
+        workspace_id: "w",
+        agent: "claude-code",
+        kind: "instruction",
+        name: "AGENTS.md",
+        path: "/repo/AGENTS.md",
+        summary: "",
+        size: 10,
+      },
     ]);
 
     expect(groups).toHaveLength(1);
@@ -15,9 +35,30 @@ describe("catalog presentation", () => {
 
   it("groups native scan records by physical path and kind", () => {
     const groups = groupWorkspaceAssets([
-      { agent: "claude-code", kind: "instruction", path: "/repo/CLAUDE.md", exists: true, size: 1024, summary: "" },
-      { agent: "hermes", kind: "instruction", path: "/repo/CLAUDE.md", exists: true, size: 1024, summary: "" },
-      { agent: "codex", kind: "instruction", path: "/other/CLAUDE.md", exists: true, size: 2048, summary: "" },
+      {
+        agent: "claude-code",
+        kind: "instruction",
+        path: "/repo/CLAUDE.md",
+        exists: true,
+        size: 1024,
+        summary: "",
+      },
+      {
+        agent: "hermes",
+        kind: "instruction",
+        path: "/repo/CLAUDE.md",
+        exists: true,
+        size: 1024,
+        summary: "",
+      },
+      {
+        agent: "codex",
+        kind: "instruction",
+        path: "/other/CLAUDE.md",
+        exists: true,
+        size: 2048,
+        summary: "",
+      },
     ]);
 
     expect(groups).toHaveLength(2);

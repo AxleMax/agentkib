@@ -6,7 +6,9 @@ import { useAppStore } from "../stores/app-store";
 import { tr } from "../core/i18n";
 import type { WorkspaceSummary } from "../core/types";
 
-const AgentsPageLazy = lazy(() => import("../components/AgentsPage").then(({ AgentsPage }) => ({ default: AgentsPage })));
+const AgentsPageLazy = lazy(() =>
+  import("../components/AgentsPage").then(({ AgentsPage }) => ({ default: AgentsPage })),
+);
 
 function AgentsRoute() {
   const navigate = useNavigate();
@@ -20,9 +22,18 @@ function AgentsRoute() {
     await navigate({ to: "/workspace/$workspaceId", params: { workspaceId: workspace.id } });
   };
 
-  return <Suspense fallback={<LoadingState label={tr("common.loading")} />}>
-    <AgentsPageLazy installations={installations} assets={assets} workspaces={workspaces} remoteGateways={remoteGateways} insightsStatus={insightsStatus} onOpen={openWorkspace} />
-  </Suspense>;
+  return (
+    <Suspense fallback={<LoadingState label={tr("common.loading")} />}>
+      <AgentsPageLazy
+        installations={installations}
+        assets={assets}
+        workspaces={workspaces}
+        remoteGateways={remoteGateways}
+        insightsStatus={insightsStatus}
+        onOpen={openWorkspace}
+      />
+    </Suspense>
+  );
 }
 
 export const Route = createFileRoute("/agents")({ component: AgentsRoute });

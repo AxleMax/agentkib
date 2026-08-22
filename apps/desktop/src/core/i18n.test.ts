@@ -14,8 +14,12 @@ describe("i18n resources", () => {
     for (const dictionary of Object.values(dictionaries)) {
       expect(Object.keys(dictionary).sort()).toEqual(englishKeys);
       for (const key of englishKeys) {
-        const placeholders = (String(dictionary[key as keyof typeof dictionary]).match(/{{[^}]+}}/g) ?? []).sort();
-        const englishPlaceholders = (String(enUS[key as keyof typeof enUS]).match(/{{[^}]+}}/g) ?? []).sort();
+        const placeholders = (
+          String(dictionary[key as keyof typeof dictionary]).match(/{{[^}]+}}/g) ?? []
+        ).sort();
+        const englishPlaceholders = (
+          String(enUS[key as keyof typeof enUS]).match(/{{[^}]+}}/g) ?? []
+        ).sort();
         expect(placeholders, key).toEqual(englishPlaceholders);
       }
     }

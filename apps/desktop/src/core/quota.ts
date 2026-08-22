@@ -1,4 +1,10 @@
-import type { QuotaAccount, QuotaPopoverPreferences, QuotaProvider, QuotaWindow, QuotaWindowSelector } from "./types";
+import type {
+  QuotaAccount,
+  QuotaPopoverPreferences,
+  QuotaProvider,
+  QuotaWindow,
+  QuotaWindowSelector,
+} from "./types";
 
 export type QuotaSeverity = "healthy" | "warning" | "danger";
 
@@ -37,7 +43,11 @@ export function flattenQuotaWindows(provider: QuotaProvider): QuotaDisplayWindow
   return [...direct, ...accounts];
 }
 
-function displayWindow(provider: QuotaProvider, account: QuotaAccount | undefined, window: QuotaWindow): QuotaDisplayWindow {
+function displayWindow(
+  provider: QuotaProvider,
+  account: QuotaAccount | undefined,
+  window: QuotaWindow,
+): QuotaDisplayWindow {
   const selector: QuotaWindowSelector = {
     provider_id: provider.id,
     account_id: account?.id,
@@ -71,8 +81,10 @@ export function quotaSeverity(remaining: number): QuotaSeverity {
 }
 
 export function compareQuotaProviders(left: QuotaProvider, right: QuotaProvider) {
-  return (lowestRemaining(left) ?? 101) - (lowestRemaining(right) ?? 101)
-    || left.name.localeCompare(right.name);
+  return (
+    (lowestRemaining(left) ?? 101) - (lowestRemaining(right) ?? 101) ||
+    left.name.localeCompare(right.name)
+  );
 }
 
 export function providerIsUnavailable(provider: QuotaProvider) {

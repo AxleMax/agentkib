@@ -22,7 +22,9 @@ interface Rect {
 }
 
 export function squarifyTreemap(values: TreemapInput[], width = 100, height = 100): TreemapRect[] {
-  const positive = values.filter((item) => item.value > 0).sort((left, right) => right.value - left.value);
+  const positive = values
+    .filter((item) => item.value > 0)
+    .sort((left, right) => right.value - left.value);
   const total = positive.reduce((sum, item) => sum + item.value, 0);
   if (!total || width <= 0 || height <= 0) return [];
   const scale = (width * height) / total;
@@ -62,17 +64,41 @@ function layoutRow(row: SizedInput[], bounds: Rect, output: TreemapRect[]): Rect
     let x = bounds.x;
     for (const item of row) {
       const itemWidth = rowHeight ? item.area / rowHeight : 0;
-      output.push({ id: item.id, value: item.value, x, y: bounds.y, width: itemWidth, height: rowHeight });
+      output.push({
+        id: item.id,
+        value: item.value,
+        x,
+        y: bounds.y,
+        width: itemWidth,
+        height: rowHeight,
+      });
       x += itemWidth;
     }
-    return { x: bounds.x, y: bounds.y + rowHeight, width: bounds.width, height: Math.max(0, bounds.height - rowHeight) };
+    return {
+      x: bounds.x,
+      y: bounds.y + rowHeight,
+      width: bounds.width,
+      height: Math.max(0, bounds.height - rowHeight),
+    };
   }
   const rowWidth = bounds.height ? area / bounds.height : 0;
   let y = bounds.y;
   for (const item of row) {
     const itemHeight = rowWidth ? item.area / rowWidth : 0;
-    output.push({ id: item.id, value: item.value, x: bounds.x, y, width: rowWidth, height: itemHeight });
+    output.push({
+      id: item.id,
+      value: item.value,
+      x: bounds.x,
+      y,
+      width: rowWidth,
+      height: itemHeight,
+    });
     y += itemHeight;
   }
-  return { x: bounds.x + rowWidth, y: bounds.y, width: Math.max(0, bounds.width - rowWidth), height: bounds.height };
+  return {
+    x: bounds.x + rowWidth,
+    y: bounds.y,
+    width: Math.max(0, bounds.width - rowWidth),
+    height: bounds.height,
+  };
 }

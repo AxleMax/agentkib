@@ -24,7 +24,7 @@ export const secretAchievementCodes = [
   "special-same-day-delivery",
 ] as const;
 
-export type AchievementCategory = typeof achievementCategories[number];
+export type AchievementCategory = (typeof achievementCategories)[number];
 
 export interface AchievementTrack {
   category: AchievementCategory;
@@ -69,7 +69,10 @@ export function buildAchievementTracks(achievements: Achievement[]): Achievement
     const milestones = achievements
       .filter((achievement) => achievement.category === category)
       .sort((left, right) => left.threshold - right.threshold);
-    const progress = milestones.reduce((value, milestone) => Math.max(value, milestone.progress), 0);
+    const progress = milestones.reduce(
+      (value, milestone) => Math.max(value, milestone.progress),
+      0,
+    );
     const completed = milestones.filter(achievementReached).length;
     const next = milestones.find((milestone) => !achievementReached(milestone));
     return {
@@ -87,11 +90,15 @@ export function buildSpecialAchievements(achievements: Achievement[]): SpecialAc
   const byCode = new Map(achievements.map((achievement) => [achievement.code, achievement]));
   return [...productAchievementCodes, ...secretAchievementCodes].flatMap((code) => {
     const achievement = byCode.get(code);
-    return achievement ? [{
-      achievement,
-      secret: (secretAchievementCodes as readonly string[]).includes(code),
-      unlocked: achievementReached(achievement),
-    }] : [];
+    return achievement
+      ? [
+          {
+            achievement,
+            secret: (secretAchievementCodes as readonly string[]).includes(code),
+            unlocked: achievementReached(achievement),
+          },
+        ]
+      : [];
   });
 }
 
@@ -120,14 +127,16 @@ export function buildAchievementWallItems(achievements: Achievement[]): Achievem
         stableOrder: index,
       };
     });
-  const specials = buildSpecialAchievements(achievements).map((special, index): AchievementWallItem => ({
-    id: `special:${special.achievement.code}`,
-    kind: "special",
-    special,
-    unlocked: special.unlocked,
-    latestUnlockedAt: validUnlockDate(special.achievement.unlocked_at),
-    stableOrder: achievementCategories.length + index,
-  }));
+  const specials = buildSpecialAchievements(achievements).map(
+    (special, index): AchievementWallItem => ({
+      id: `special:${special.achievement.code}`,
+      kind: "special",
+      special,
+      unlocked: special.unlocked,
+      latestUnlockedAt: validUnlockDate(special.achievement.unlocked_at),
+      stableOrder: achievementCategories.length + index,
+    }),
+  );
   return [...tracks, ...specials].sort(compareWallItems);
 }
 

@@ -6,7 +6,9 @@ export function SidebarBrand() {
       <span className="grid size-8 shrink-0 place-items-center">
         <img src={logoUrl} alt="" className="size-full object-contain" aria-hidden="true" />
       </span>
-      <span className="text-[15px] font-semibold tracking-[-0.02em] text-sidebar-foreground">AgentKib</span>
+      <span className="text-[15px] font-semibold tracking-[-0.02em] text-sidebar-foreground">
+        AgentKib
+      </span>
     </div>
   );
 }

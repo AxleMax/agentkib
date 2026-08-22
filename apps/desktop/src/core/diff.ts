@@ -3,11 +3,14 @@ export type DiffLine = { type: "same" | "added" | "removed"; content: string };
 export function diffLines(before: string, after: string): DiffLine[] {
   const left = before.split("\n");
   const right = after.split("\n");
-  const table = Array.from({ length: left.length + 1 }, () => Array<number>(right.length + 1).fill(0));
+  const table = Array.from({ length: left.length + 1 }, () =>
+    Array<number>(right.length + 1).fill(0),
+  );
 
   for (let i = left.length - 1; i >= 0; i -= 1) {
     for (let j = right.length - 1; j >= 0; j -= 1) {
-      table[i][j] = left[i] === right[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+      table[i][j] =
+        left[i] === right[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
     }
   }
 

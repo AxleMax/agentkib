@@ -41,7 +41,8 @@ interface WorkspaceActions {
   resetWorkspace: () => void;
 }
 
-const resolve = <T,>(value: Updater<T>, current: T): T => typeof value === "function" ? (value as (current: T) => T)(current) : value;
+const resolve = <T>(value: Updater<T>, current: T): T =>
+  typeof value === "function" ? (value as (current: T) => T)(current) : value;
 
 export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>((set) => ({
   project: "",
@@ -52,16 +53,35 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>((set)
   message: "",
   applyingChanges: false,
   setProject: (value) => set((state) => ({ project: resolve(value, state.project) })),
-  setSelectedWorkspace: (value) => set((state) => ({ selectedWorkspace: resolve(value, state.selectedWorkspace) })),
+  setSelectedWorkspace: (value) =>
+    set((state) => ({ selectedWorkspace: resolve(value, state.selectedWorkspace) })),
   setScan: (value) => set((state) => ({ scan: resolve(value, state.scan) })),
   setManifest: (value) => set((state) => ({ manifest: resolve(value, state.manifest) })),
   setChangeSet: (value) => set((state) => ({ changeSet: resolve(value, state.changeSet) })),
-  setChangeSetOrigin: (value) => set((state) => ({ changeSetOrigin: resolve(value, state.changeSetOrigin) })),
-  setHandoffLaunchRequest: (value) => set((state) => ({ handoffLaunchRequest: resolve(value, state.handoffLaunchRequest) })),
-  setBaselineManifest: (value) => set((state) => ({ baselineManifest: resolve(value, state.baselineManifest) })),
-  setWorkspaceDrafts: (value) => set((state) => ({ workspaceDrafts: resolve(value, state.workspaceDrafts) })),
+  setChangeSetOrigin: (value) =>
+    set((state) => ({ changeSetOrigin: resolve(value, state.changeSetOrigin) })),
+  setHandoffLaunchRequest: (value) =>
+    set((state) => ({ handoffLaunchRequest: resolve(value, state.handoffLaunchRequest) })),
+  setBaselineManifest: (value) =>
+    set((state) => ({ baselineManifest: resolve(value, state.baselineManifest) })),
+  setWorkspaceDrafts: (value) =>
+    set((state) => ({ workspaceDrafts: resolve(value, state.workspaceDrafts) })),
   setBusy: (value) => set((state) => ({ busy: resolve(value, state.busy) })),
   setMessage: (value) => set((state) => ({ message: resolve(value, state.message) })),
-  setApplyingChanges: (value) => set((state) => ({ applyingChanges: resolve(value, state.applyingChanges) })),
-  resetWorkspace: () => set({ project: "", selectedWorkspace: undefined, scan: undefined, manifest: undefined, changeSet: undefined, changeSetOrigin: "standard", handoffLaunchRequest: undefined, baselineManifest: "", busy: false, message: "", applyingChanges: false }),
+  setApplyingChanges: (value) =>
+    set((state) => ({ applyingChanges: resolve(value, state.applyingChanges) })),
+  resetWorkspace: () =>
+    set({
+      project: "",
+      selectedWorkspace: undefined,
+      scan: undefined,
+      manifest: undefined,
+      changeSet: undefined,
+      changeSetOrigin: "standard",
+      handoffLaunchRequest: undefined,
+      baselineManifest: "",
+      busy: false,
+      message: "",
+      applyingChanges: false,
+    }),
 }));
