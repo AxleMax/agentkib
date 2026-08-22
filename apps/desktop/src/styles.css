@@ -108,7 +108,7 @@
 }
 
 :root {
-  --sidebar-width: 208px;
+  --sidebar-width: 232px;
   --window-toolbar-height: 48px;
   --page-header-height: 52px;
   --panel: var(--card);
