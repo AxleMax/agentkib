@@ -377,7 +377,7 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
       {summary && <div className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground"><GitBranch size={14} /><strong className="max-w-44 truncate text-foreground">{summary.head ?? tr("git.detached")}</strong>{summary.upstream && <span className="max-w-48 truncate max-[760px]:hidden">{summary.upstream}</span>}{(summary.ahead > 0 || summary.behind > 0) && <span className="max-[760px]:hidden">↑{summary.ahead} ↓{summary.behind}</span>}{summary.stash_count > 0 && <span className="max-[760px]:hidden">{tr("git.stashes", { count: summary.stash_count })}</span>}</div>}
       <Button variant="ghost" size="icon" className="shrink-0" onClick={() => void load()} disabled={loading} aria-label={tr("common.refresh")} title={tr("common.refresh")}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></Button>
     </div>
-    {error && <div className="alert"><CircleAlert size={15} />{error}</div>}
+    {error && <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><CircleAlert size={15} />{error}</div>}
     {!loading && !summary && <div className="flex min-h-16 items-center gap-2 rounded-xl border bg-card px-4 text-sm text-muted-foreground"><GitBranch size={19} /><span>{tr("git.notRepository")}</span></div>}
     {summary && section === "history" && <>
       <Card className="grid min-h-[45px] grid-cols-[minmax(180px,1.6fr)_minmax(115px,.8fr)_minmax(110px,.7fr)_minmax(100px,.7fr)_126px_126px_minmax(110px,.8fr)] gap-1.5 rounded-xl p-1.5 max-[1120px]:grid-cols-[minmax(180px,1fr)_minmax(120px,.7fr)_minmax(100px,.7fr)] max-[760px]:grid-cols-[minmax(160px,1fr)_minmax(110px,.7fr)]">
@@ -399,7 +399,7 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
               <time className="truncate text-xs text-muted-foreground">{formatDateTime(commit.authored_at)}</time>
               <ChevronRight size={14} />
             </Button>)}
-            {!filteredCommits.length && !loading && <div className="compact-state"><GitCommitHorizontal size={18} /><span>{tr("git.noCommits")}</span></div>}
+            {!filteredCommits.length && !loading && <div className="grid min-h-32 place-content-center justify-items-center gap-2 text-sm text-muted-foreground"><GitCommitHorizontal size={18} /><span>{tr("git.noCommits")}</span></div>}
           </div>
           {nextCursor && !search.trim() && <Button variant="ghost" className="mx-auto my-2" disabled={loadingMore} onClick={() => void loadMore()}>{tr(loadingMore ? "common.loading" : "git.loadMore")}</Button>}
         </section>
@@ -408,7 +408,7 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
     {summary && section === "worktree" && <Card className="min-h-0 flex-1 overflow-auto rounded-xl p-0">
       <section ref={worktreeListRef} className="min-h-0 overflow-auto">
         {worktreeEntries.map(([group, entries]) => entries.length > 0 && <div key={group}><h3 className="flex min-h-9 items-center gap-1.5 border-b border-border bg-muted px-3 py-2 text-xs font-semibold text-muted-foreground">{tr(`git.group.${group}`)}<Badge variant="secondary" className="size-[18px] justify-center rounded-full px-0 py-0 text-[10px]">{entries.length}</Badge></h3>{entries.map((entry) => <Button variant="bare" size="content" key={`${entry.kind}:${entry.change.path}`} className={cn("grid min-h-12 w-full grid-cols-[18px_minmax(0,1fr)_24px_16px] items-center gap-2 border-b border-border px-3 py-2 text-left text-muted-foreground hover:bg-muted", selectedWorktree?.path === entry.change.path && selectedWorktree.kind === entry.kind && "bg-muted")} onClick={() => enterWorktree(entry.change.path, entry.kind)}><ChangeIcon change={entry.change} /><span className="min-w-0"><strong className="block truncate text-sm text-foreground">{fileName(entry.change.path)}</strong><small className="mt-0.5 block truncate text-xs text-muted-foreground">{entry.change.old_path ? `${entry.change.old_path} → ${entry.change.path}` : entry.change.path}</small></span><em className="text-xs not-italic text-primary">{changeCode(entry.change, entry.kind)}</em><ChevronRight size={14} /></Button>)}</div>)}
-        {!summary.changes.length && <div className="compact-state"><GitCommitHorizontal size={18} /><span>{tr("git.clean")}</span></div>}
+        {!summary.changes.length && <div className="grid min-h-32 place-content-center justify-items-center gap-2 text-sm text-muted-foreground"><GitCommitHorizontal size={18} /><span>{tr("git.clean")}</span></div>}
       </section>
     </Card>}
   </div>;
@@ -441,15 +441,15 @@ function GitDiffPane({ title, fileCount, diffState, onRetry, untracked, onBackTo
         {fileCount !== undefined && <span className="whitespace-nowrap">{tr("git.fileCount", { count: fileCount })}</span>}
         {diff?.truncated && <Badge variant="outline" className="border-amber-500/30 px-1.5 py-0 text-[10px] text-amber-600">{tr("git.truncated")}</Badge>}
       </div>
-      {untracked && <div className="compact-state"><FileQuestion size={20} /><span>{tr("git.untrackedNoDiff")}</span></div>}
-      {!untracked && diffState.status === "idle" && <div className="compact-state"><FileQuestion size={20} /><span>{tr("git.diffEmpty")}</span></div>}
-      {!untracked && diffState.status === "loading" && <div className="compact-state"><RefreshCw size={16} className="spin" /><span>{tr("git.loadingDiff")}</span></div>}
-      {!untracked && diffState.status === "empty" && <div className="compact-state"><FileQuestion size={20} /><span>{tr("git.diffEmpty")}</span></div>}
+      {untracked && <div className="grid min-h-32 place-content-center justify-items-center gap-2 text-sm text-muted-foreground"><FileQuestion size={20} /><span>{tr("git.untrackedNoDiff")}</span></div>}
+      {!untracked && diffState.status === "idle" && <div className="grid min-h-32 place-content-center justify-items-center gap-2 text-sm text-muted-foreground"><FileQuestion size={20} /><span>{tr("git.diffEmpty")}</span></div>}
+      {!untracked && diffState.status === "loading" && <div className="grid min-h-32 place-content-center justify-items-center gap-2 text-sm text-muted-foreground"><RefreshCw size={16} className="animate-spin" /><span>{tr("git.loadingDiff")}</span></div>}
+      {!untracked && diffState.status === "empty" && <div className="grid min-h-32 place-content-center justify-items-center gap-2 text-sm text-muted-foreground"><FileQuestion size={20} /><span>{tr("git.diffEmpty")}</span></div>}
       {!untracked && diffState.status === "error" && <div className="flex min-h-32 flex-col items-center justify-center gap-1.5 text-center text-destructive"><CircleAlert size={18} /><span>{tr("git.diffFailed")}</span><small className="max-w-[460px] text-xs text-muted-foreground">{diffState.message}</small><Button variant="ghost" onClick={onRetry}>{tr("git.retry")}</Button></div>}
-      {diff?.binary && <div className="compact-state"><Binary size={18} /><span>{tr("git.binaryDiff")}</span></div>}
+      {diff?.binary && <div className="grid min-h-32 place-content-center justify-items-center gap-2 text-sm text-muted-foreground"><Binary size={18} /><span>{tr("git.binaryDiff")}</span></div>}
       {diff?.submodule && <div className="flex min-h-8 items-center gap-2 border-b border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground"><GitBranch size={14} />{tr("git.submoduleDiff")}</div>}
       {diff?.encoding_lossy && <div className="flex min-h-8 items-center gap-2 border-b border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground"><AlertTriangle size={14} />{tr("git.encodingLossy")}</div>}
-      {diff && !diff.binary && diff.patch && <pre className="selectable m-0 min-w-max px-0 py-2.5 pb-6 font-mono text-xs leading-relaxed text-muted-foreground">{diff.patch.split("\n").map((line, index) => <span key={index} className={cn("block min-h-[19px] whitespace-pre px-3", line.startsWith("+") && !line.startsWith("+++") && "bg-green-500/10 text-green-700", line.startsWith("-") && !line.startsWith("---") && "bg-red-500/10 text-red-700", line.startsWith("@@") && "bg-primary/10 text-primary")}>{line || " "}</span>)}</pre>}
+      {diff && !diff.binary && diff.patch && <pre className="select-text m-0 min-w-max px-0 py-2.5 pb-6 font-mono text-xs leading-relaxed text-muted-foreground">{diff.patch.split("\n").map((line, index) => <span key={index} className={cn("block min-h-[19px] whitespace-pre px-3", line.startsWith("+") && !line.startsWith("+++") && "bg-green-500/10 text-green-700", line.startsWith("-") && !line.startsWith("---") && "bg-red-500/10 text-red-700", line.startsWith("@@") && "bg-primary/10 text-primary")}>{line || " "}</span>)}</pre>}
       {diff?.truncated && <div className="sticky bottom-0 flex min-h-8 items-center gap-2 border-t border-border bg-card px-2.5 py-1.5 text-xs text-amber-600"><AlertTriangle size={14} />{tr("git.diffTruncated")}</div>}
     </div>;
 }

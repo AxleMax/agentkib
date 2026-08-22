@@ -18,8 +18,8 @@ const agentIcons: Record<AgentKind, string> = {
 
 export function AgentIcon({ agent }: { agent: AgentKind }) {
   return (
-    <div className={cn("agent-logo grid size-[35px] place-items-center overflow-hidden rounded-[9px] bg-[#20242d]", agent === "codex" && "codex bg-[#171b22]", agent === "claude-code" && "claude-code bg-[#38251f]", agent === "cursor" && "cursor bg-[#1d1d1f]", agent === "open-claw" && "open-claw bg-[#391e26]", agent === "hermes" && "hermes bg-[#173730]", agent === "deepseek-harness" && "deepseek-harness bg-[#20242d]")} aria-hidden="true">
-      <img className={cn("block size-[23px] object-contain", agent === "hermes" && "opacity-[0.92] invert")} src={agentIcons[agent]} alt="" />
+    <div className="grid size-9 place-items-center overflow-hidden rounded-xl border border-border bg-muted/50 p-1" aria-hidden="true">
+      <img className={cn("block size-full object-contain", agent === "cursor" && "rounded-md bg-[#1d1d1f] p-1", agent === "hermes" && "opacity-[0.92] invert")} src={agentIcons[agent]} alt="" />
     </div>
   );
 }

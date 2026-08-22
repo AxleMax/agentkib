@@ -13,6 +13,7 @@ import { api } from "../api";
 import { currentLocale, formatDateTime, localizeMessage, tr } from "../i18n";
 import { squarifyTreemap } from "../treemap";
 import type { AgentKind, RefreshJobStatus, StorageNode, StorageOverview, WorkspaceStorage, WorkspaceSummary } from "../types";
+import { cn } from "@/lib/utils";
 
 const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes", "deepseek-harness": "DeepSeek Harness" };
 type StorageMetric = "allocated" | "regenerable" | "agent-assets";
@@ -128,12 +129,12 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
 
   return <div className="min-w-0 space-y-4">
     {hasCache && <div className="flex min-h-12 flex-wrap items-center gap-2">
-      <div className="search max-w-[360px] flex-1"><Search size={16} /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("storage.searchPlaceholder")} /></div>
-      <SelectControl aria-label={tr("workspace.allAgents")} className="setting-select" value={agent} onChange={(event) => { setAgent(event.target.value as typeof agent); setTrail([]); setSelected(undefined); }}><option value="all">{tr("workspace.allAgents")}</option>{Object.entries(agentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectControl>
-      <ToggleGroup className="segmented" value={[metric]} onValueChange={(values) => { const value = values[0]; if (value) { setMetric(value as StorageMetric); setSelected(undefined); } }} aria-label={tr("storage.metricLabel")}>{(["allocated", "regenerable", "agent-assets"] as StorageMetric[]).map((value) => <ToggleGroupItem key={value} value={value} className={metric === value ? "active" : ""}>{tr(`storage.metric.${value}`)}</ToggleGroupItem>)}</ToggleGroup>
-      {active ? <Button className="ghost" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</Button> : <Button className="primary" onClick={() => void start()}><RefreshCw size={14} />{tr("storage.scanAgain")}</Button>}
+      <label className="flex max-w-[360px] flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3 text-muted-foreground"><Search size={16} /><Input className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("storage.searchPlaceholder")} /></label>
+      <SelectControl aria-label={tr("workspace.allAgents")} className="h-9 min-w-[150px]" value={agent} onChange={(event) => { setAgent(event.target.value as typeof agent); setTrail([]); setSelected(undefined); }}><option value="all">{tr("workspace.allAgents")}</option>{Object.entries(agentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectControl>
+      <ToggleGroup spacing={0} variant="outline" size="sm" className="shrink-0" value={[metric]} onValueChange={(values) => { const value = values[0]; if (value) { setMetric(value as StorageMetric); setSelected(undefined); } }} aria-label={tr("storage.metricLabel")}>{(["allocated", "regenerable", "agent-assets"] as StorageMetric[]).map((value) => <ToggleGroupItem key={value} value={value} className="min-w-[84px]">{tr(`storage.metric.${value}`)}</ToggleGroupItem>)}</ToggleGroup>
+      {active ? <Button variant="outline" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</Button> : <Button onClick={() => void start()}><RefreshCw size={14} />{tr("storage.scanAgain")}</Button>}
     </div>}
-    {error && <div className="alert"><CircleAlert size={16} />{error}</div>}
+    {error && <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><CircleAlert size={16} />{error}</div>}
     {hasCache && <Card className="grid grid-cols-2 divide-x divide-border overflow-hidden p-0 lg:grid-cols-4">
       <Metric label={tr("storage.allocated")} value={formatBytes(overview?.allocated_bytes ?? 0)} meta={estimated ? tr("storage.estimated") : undefined} />
       <Metric label={tr("storage.regenerable")} value={formatBytes(overview?.regenerable_bytes ?? 0)} />
@@ -151,7 +152,7 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
           </nav>
           <span className="shrink-0 text-xs text-muted-foreground">{expanding ? tr("storage.loadingDirectory") : overview?.last_scanned_at ? tr("storage.scannedAt", { time: formatDateTime(overview.last_scanned_at) }) : ""}</span>
         </div>
-        {rects.length ? <div className="storage-treemap" role="tree" aria-label={current ? nodeLabel(current.node) : tr("storage.allWorkspaces")}>
+        {rects.length ? <div className="relative min-h-[510px] overflow-hidden bg-background p-1" role="tree" aria-label={current ? nodeLabel(current.node) : tr("storage.allWorkspaces")}>
           {rects.map((rect) => {
             const location = visibleById.get(rect.id)!;
             const bytes = metricBytes(location.node, metric);
@@ -160,10 +161,11 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
             const match = matchesNode(location.node, query);
             const hasDescendantMatch = containsMatch(location.node, query);
             const detail = area >= 500 ? "rich" : area >= 150 ? "medium" : area >= 42 ? "name" : "tiny";
-            return <Button variant="bare" size="content" key={rect.id} role="treeitem" aria-label={`${nodeLabel(location.node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`} className={`storage-tile semantic-${semanticKind(location.node)} detail-${detail}${query.trim() && !hasDescendantMatch ? " search-dim" : ""}${query.trim() && match ? " search-match" : ""}${location.node.partial ? " partial" : ""}`} style={{ left: `${rect.x}%`, top: `${rect.y}%`, width: `${rect.width}%`, height: `${rect.height}%` }} title={`${nodeLabel(location.node)} · ${formatBytes(bytes)} · ${formatPercent(ratio)}`} onClick={() => select(location)} onDoubleClick={() => void enter(location)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void enter(location); } }}>
-              {detail !== "tiny" && <strong>{nodeLabel(location.node)}</strong>}
-              {(detail === "medium" || detail === "rich") && <span>{formatBytes(bytes)}</span>}
-              {detail === "rich" && <small>{formatPercent(ratio)} · {tr(`storage.type.${semanticKind(location.node)}`)}</small>}
+            const kind = semanticKind(location.node);
+            return <Button variant="bare" size="content" key={rect.id} role="treeitem" aria-label={`${nodeLabel(location.node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`} className={cn("absolute flex flex-col items-center justify-center gap-1 overflow-hidden rounded-md border p-2 text-center transition-colors duration-200", kind === "git" && "border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800", kind === "agent" && "border-primary/70 bg-primary text-primary-foreground hover:bg-primary/90", kind === "regenerable" && "border-amber-300 bg-amber-100 text-amber-950 hover:bg-amber-200", kind === "aggregate" && "border-border bg-muted text-foreground hover:bg-muted/80", kind === "normal" && "border-border bg-muted/70 text-foreground hover:bg-muted", detail === "tiny" && "text-[10px]", detail === "name" && "text-[11px]", detail === "medium" && "text-xs", detail === "rich" && "text-sm", query.trim() && !hasDescendantMatch && "opacity-35 grayscale", query.trim() && match && "z-10 ring-2 ring-primary ring-offset-1", location.node.partial && "border-dashed")} style={{ left: `${rect.x}%`, top: `${rect.y}%`, width: `${rect.width}%`, height: `${rect.height}%` }} title={`${nodeLabel(location.node)} · ${formatBytes(bytes)} · ${formatPercent(ratio)}`} onClick={() => select(location)} onDoubleClick={() => void enter(location)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void enter(location); } }}>
+              {detail !== "tiny" && <strong className="max-w-full truncate">{nodeLabel(location.node)}</strong>}
+              {(detail === "medium" || detail === "rich") && <span className="text-[.9em] opacity-80">{formatBytes(bytes)}</span>}
+              {detail === "rich" && <small className="text-[.82em] opacity-75">{formatPercent(ratio)} · {tr(`storage.type.${kind}`)}</small>}
             </Button>;
           })}
         </div> : <div className="m-2 grid min-h-[390px] place-content-center justify-items-center gap-2 rounded-lg bg-muted text-sm text-muted-foreground"><HardDrive size={26} /><span>{tr("storage.noItemsForMetric")}</span></div>}
@@ -174,7 +176,7 @@ export function WorkspaceStoragePage({ workspaces, job }: { workspaces: Workspac
 }
 
 function EmptyState({ active, overview, start, stop }: { active: boolean; overview?: StorageOverview; start: () => Promise<void>; stop: () => Promise<void> }) {
-  return <Card className="grid min-h-[340px] place-content-center justify-items-center gap-2 p-6 text-center"><HardDrive size={32} /><h2 className="m-0 text-base font-semibold">{active ? tr("storage.scanning") : tr("storage.emptyTitle")}</h2>{!active && <p className="m-0 max-w-[420px] text-sm text-muted-foreground">{tr("storage.emptyText")}</p>}{overview?.workspaces.map((item) => <span className="inline-flex items-center gap-1.5 text-xs text-amber-600" key={item.workspace_id}><CircleAlert size={13} />{item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}</span>)}{active ? <Button className="ghost mt-2" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</Button> : <Button className="primary mt-2" onClick={() => void start()}>{tr("storage.startScan")}</Button>}</Card>;
+  return <Card className="grid min-h-[340px] place-content-center justify-items-center gap-2 p-6 text-center"><HardDrive size={32} /><h2 className="m-0 text-base font-semibold">{active ? tr("storage.scanning") : tr("storage.emptyTitle")}</h2>{!active && <p className="m-0 max-w-[420px] text-sm text-muted-foreground">{tr("storage.emptyText")}</p>}{overview?.workspaces.map((item) => <span className="inline-flex items-center gap-1.5 text-xs text-amber-600" key={item.workspace_id}><CircleAlert size={13} />{item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}</span>)}{active ? <Button variant="outline" className="mt-2" onClick={() => void stop()}><Pause size={14} />{tr("storage.stopScan")}</Button> : <Button className="mt-2" onClick={() => void start()}>{tr("storage.startScan")}</Button>}</Card>;
 }
 
 function Metric({ label, value, meta }: { label: string; value: string; meta?: string }) { return <CardContent className="grid min-h-[72px] min-w-0 content-center gap-1 px-4 py-3"><span className="truncate text-xs text-muted-foreground">{label}</span><strong className="truncate text-lg text-foreground">{value}</strong>{meta && <small className="text-xs text-muted-foreground">{meta}</small>}</CardContent>; }
@@ -187,8 +189,8 @@ function StorageInspector({ selection, storage, workspace, metric, onClose, onEr
     try { await api.openWorkspaceStoragePath(selection.workspaceId, node.kind === "aggregate" ? "" : node.relative_path); }
     catch (reason) { onError(reason); }
   };
-  return <Card className="storage-inspector min-w-0 overflow-hidden lg:max-h-full">
-    <div className="flex min-h-12 items-center justify-between gap-2 border-b border-border-subtle px-4 py-3"><div className="flex items-center gap-2"><h2 className="m-0 text-base font-semibold">{nodeLabel(node)}</h2>{node.partial && <Badge variant="outline">{tr("storage.partialNode")}</Badge>}</div><Button className="icon-button" aria-label={tr("common.close")} onClick={onClose}><X size={16} /></Button></div>
+  return <Card className="min-w-0 overflow-hidden lg:max-h-full">
+    <div className="flex min-h-12 items-center justify-between gap-2 border-b border-border-subtle px-4 py-3"><div className="flex items-center gap-2"><h2 className="m-0 text-base font-semibold">{nodeLabel(node)}</h2>{node.partial && <Badge variant="outline">{tr("storage.partialNode")}</Badge>}</div><Button variant="ghost" size="icon" aria-label={tr("common.close")} onClick={onClose}><X size={16} /></Button></div>
     <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-3 border-b border-border-subtle px-4 py-3">
       <Fact label={tr("storage.allocated")} value={formatBytes(node.allocated_bytes)} />
       <Fact label={tr("storage.logical")} value={formatBytes(node.logical_bytes)} />
@@ -203,7 +205,7 @@ function StorageInspector({ selection, storage, workspace, metric, onClose, onEr
     </dl>
     {fullPath && <code className="mx-4 mb-3 block overflow-hidden rounded-md bg-muted px-2 py-2 text-xs text-muted-foreground [text-overflow:ellipsis] whitespace-nowrap" title={fullPath}>{fullPath}</code>}
     {storage?.error_key && <div className="mx-4 mb-3 flex gap-2 rounded-md border border-amber-600/25 bg-amber-500/10 p-2 text-xs text-amber-600"><CircleAlert size={14} /><span>{tr(storage.error_key)}{storage.error_detail && <small className="mt-1 block text-muted-foreground">{storage.error_detail}</small>}</span></div>}
-    {node.kind !== "aggregate" && <div className="px-4 pb-4"><Button className="ghost w-full justify-center" onClick={() => void open()}><ExternalLink size={14} />{tr("storage.openLocation")}</Button></div>}
+    {node.kind !== "aggregate" && <div className="px-4 pb-4"><Button variant="outline" className="w-full justify-center" onClick={() => void open()}><ExternalLink size={14} />{tr("storage.openLocation")}</Button></div>}
   </Card>;
 }
 

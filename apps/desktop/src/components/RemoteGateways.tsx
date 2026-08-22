@@ -87,7 +87,7 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
     <Card className="overflow-hidden">
       <CardHeader className="flex flex-row items-center justify-between border-b border-border-subtle px-4 py-4">
         <CardTitle className="text-base">{tr("gateway.title")}</CardTitle>
-        <Button className="primary" onClick={() => edit()}><Plus size={14} />{tr("gateway.add")}</Button>
+        <Button onClick={() => edit()}><Plus size={14} />{tr("gateway.add")}</Button>
       </CardHeader>
       <CardContent className="p-0">
       {error && <div className="m-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
@@ -99,7 +99,7 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
           <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.auth")}</span><SelectControl aria-label={tr("gateway.auth")} value={draft.auth_kind} onChange={(event) => setDraft({ ...draft, auth_kind: event.target.value as RemoteGatewayAuthKind })}>{authKinds(draft.kind).map((kind) => <option value={kind} key={kind}>{tr(`gateway.auth.${kind}`)}</option>)}</SelectControl></Label>
           {draft.auth_kind === "basic" && <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.username")}</span><Input required value={draft.username ?? ""} onChange={(event) => setDraft({ ...draft, username: event.target.value })} /></Label>}
           {draft.auth_kind !== "none" && <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.secret")}</span><Input type="password" required={!draft.id || gateways.find((gateway) => gateway.id === draft.id)?.auth_kind !== draft.auth_kind} value={draft.secret ?? ""} placeholder={draft.id ? tr("gateway.secretKeep") : ""} onChange={(event) => setDraft({ ...draft, secret: event.target.value })} /></Label>}
-          <div className="flex justify-end gap-2 sm:col-span-2"><Button type="button" className="ghost" onClick={() => setDraft(undefined)}><X size={14} />{tr("common.cancel")}</Button><Button className="primary" disabled={Boolean(busyId)}>{tr("common.save")}</Button></div>
+          <div className="flex justify-end gap-2 sm:col-span-2"><Button type="button" variant="outline" onClick={() => setDraft(undefined)}><X size={14} />{tr("common.cancel")}</Button><Button disabled={Boolean(busyId)}>{tr("common.save")}</Button></div>
         </form>
       )}
       <div className="grid">
@@ -115,9 +115,9 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
               {gateway.last_error && <small className="whitespace-pre-wrap text-xs text-destructive">{gateway.last_error}</small>}
             </div>
             <div className="flex gap-1">
-              <Button className="icon-button" title={tr("gateway.refresh")} disabled={Boolean(busyId)} onClick={() => void refresh(gateway.id)}><RefreshCw size={14} className={busyId === gateway.id ? "spin" : ""} /></Button>
-              <Button className="icon-button" title={tr("gateway.edit")} disabled={Boolean(busyId)} onClick={() => edit(gateway)}><Pencil size={14} /></Button>
-              <Button className="icon-danger" title={tr("gateway.remove")} disabled={Boolean(busyId)} onClick={() => void remove(gateway.id)}><Trash2 size={14} /></Button>
+              <Button variant="ghost" size="icon" title={tr("gateway.refresh")} disabled={Boolean(busyId)} onClick={() => void refresh(gateway.id)}><RefreshCw size={14} className={busyId === gateway.id ? "animate-spin" : ""} /></Button>
+              <Button variant="ghost" size="icon" title={tr("gateway.edit")} disabled={Boolean(busyId)} onClick={() => edit(gateway)}><Pencil size={14} /></Button>
+              <Button variant="destructive" size="icon" title={tr("gateway.remove")} disabled={Boolean(busyId)} onClick={() => void remove(gateway.id)}><Trash2 size={14} /></Button>
             </div>
           </article>
         ))}

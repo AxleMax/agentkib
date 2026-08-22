@@ -148,11 +148,11 @@ export function QuotaPopover() {
     await api.openQuotaDashboard(provider?.id, item?.selector, configure);
   };
 
-  return <main className="quota-popover-shell">
-    <header className="quota-popover-head" data-tauri-drag-region>
+  return <main className="fixed inset-0 grid grid-rows-[48px_auto_minmax(0,1fr)_48px] overflow-hidden bg-background text-foreground">
+    <header className="flex items-center gap-2 border-b border-border px-3" data-tauri-drag-region>
       <strong>{tr("nav.quota")}</strong>
-      {snapshot && <span className={snapshot.freshness}>{snapshot.freshness === "stale" ? tr("quota.freshness.stale") : tr("quota.updated", { time: formatRelativeTime(snapshot.fetched_at) })}</span>}
-      <Button className="ghost icon-only" type="button" onClick={() => void refresh()} disabled={busy} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "spin" : ""} /></Button>
+      {snapshot && <span className={cn("ml-auto text-xs text-muted-foreground", snapshot.freshness === "stale" && "text-amber-600")}>{snapshot.freshness === "stale" ? tr("quota.freshness.stale") : tr("quota.updated", { time: formatRelativeTime(snapshot.fetched_at) })}</span>}
+      <Button variant="outline" size="icon" type="button" onClick={() => void refresh()} disabled={busy} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "animate-spin" : ""} /></Button>
     </header>
 
     {providers.length > 0 && <Tabs value={selectedId} onValueChange={setSelectedId}><TabsList className="h-auto w-full gap-1 overflow-x-auto border-b border-border bg-transparent p-2" variant="line" aria-label={tr("quota.providers")}>
@@ -164,17 +164,17 @@ export function QuotaPopover() {
       })}
     </TabsList></Tabs>}
 
-    <section className="quota-popover-content">
-      {!snapshot && <div className="quota-popover-empty"><Gauge size={25} /><strong>{busy ? tr("quota.refreshRunning") : tr("quota.empty")}</strong>{error && <small>{error}</small>}</div>}
-      {snapshot && !providers.length && <div className="quota-popover-empty"><Gauge size={25} /><strong>{tr("quota.popoverEmpty")}</strong><small>{tr("quota.popoverEmptyHint")}</small></div>}
+    <section className="overflow-y-auto p-4">
+      {!snapshot && <div className="grid min-h-[300px] place-content-center justify-items-center gap-2 text-center text-muted-foreground"><Gauge size={25} /><strong className="text-sm text-foreground">{busy ? tr("quota.refreshRunning") : tr("quota.empty")}</strong>{error && <small className="max-w-[270px] text-xs leading-relaxed">{error}</small>}</div>}
+      {snapshot && !providers.length && <div className="grid min-h-[300px] place-content-center justify-items-center gap-2 text-center text-muted-foreground"><Gauge size={25} /><strong className="text-sm text-foreground">{tr("quota.popoverEmpty")}</strong><small className="max-w-[270px] text-xs leading-relaxed">{tr("quota.popoverEmptyHint")}</small></div>}
       {selected && <>
-        <div className="quota-popover-provider"><ProviderIcon provider={selected} /><div><h1>{selected.name}</h1><span>{selected.identity?.account_email ?? selected.identity?.plan ?? "—"}</span></div></div>
-        <div className="quota-popover-windows">{windows.map((item, index) => <div key={item.key}>{item.accountLabel && <small className="quota-popover-account">{item.accountLabel}</small>}<QuotaWindowRow item={item} onOpen={() => void openDashboard(selected, false, index)} /></div>)}</div>
-        {selected.error && <Collapsible className="quota-inline-diagnostic partial"><CollapsibleTrigger>{tr("quota.partialData")}</CollapsibleTrigger><CollapsibleContent><pre>{selected.error}</pre></CollapsibleContent></Collapsible>}
+        <div className="flex items-center gap-2.5 pb-2"><ProviderIcon provider={selected} /><div className="min-w-0"><h1 className="m-0 text-lg">{selected.name}</h1><span className="mt-0.5 block truncate text-xs text-muted-foreground">{selected.identity?.account_email ?? selected.identity?.plan ?? "—"}</span></div></div>
+        <div>{windows.map((item, index) => <div key={item.key}>{item.accountLabel && <small className="mt-3 block text-xs text-muted-foreground">{item.accountLabel}</small>}<QuotaWindowRow item={item} onOpen={() => void openDashboard(selected, false, index)} /></div>)}</div>
+        {selected.error && <Collapsible className="mt-3 text-xs text-amber-600"><CollapsibleTrigger className="w-fit cursor-pointer bg-transparent">{tr("quota.partialData")}</CollapsibleTrigger><CollapsibleContent><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">{selected.error}</pre></CollapsibleContent></Collapsible>}
       </>}
     </section>
 
-    <footer className="quota-popover-footer">
+    <footer className="flex items-center justify-between border-t border-border px-2 py-1.5">
       <Button type="button" onClick={() => void openDashboard(selected)}><ExternalLink size={15} />{tr("quota.openDashboard")}</Button>
       <Button type="button" onClick={() => void openDashboard(selected, true)}><Settings2 size={15} />{tr("quota.popoverSettings")}</Button>
     </footer>
