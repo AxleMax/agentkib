@@ -15,7 +15,6 @@ const config = {
   test: { setupFiles: ["./src/test/test-setup.ts"] },
   build: {
     target: env.TAURI_ENV_PLATFORM === "windows" ? "chrome111" : "safari16.4",
-    minify: env.TAURI_ENV_DEBUG ? false : "esbuild" as const,
     sourcemap: Boolean(env.TAURI_ENV_DEBUG),
     rollupOptions: {
       output: {
