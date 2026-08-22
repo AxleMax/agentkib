@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { LoadingState } from "@/components/ui/loading-state";
-import { WorkspaceSessionsPage } from "../../../components/WorkspaceSessionsPage";
+import { WorkspaceSessionsPage } from "@/features/workspace/WorkspaceSessionsPage";
 import { api } from "../../../core/api";
 import { useAppStore } from "../../../stores/app-store";
-import { useWorkspaceStore } from "../../../stores/workspace-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 
 function WorkspaceSessionsRoute() {
   const navigate = useNavigate();

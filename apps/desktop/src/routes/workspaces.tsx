@@ -21,13 +21,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { useAppDialogs } from "../components/AppDialogProvider";
-import { WorkspaceStoragePage } from "../components/WorkspaceStoragePage";
+import { useAppDialogs } from "@/components/AppDialogProvider";
+import { WorkspaceStoragePage } from "@/features/workspace/WorkspaceStoragePage";
 import { api } from "../core/api";
-import { groupCatalogAssets, workspaceAssetCounts } from "../core/catalog";
+import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/catalog";
 import { formatRelativeTime, localizeMessage, tr } from "../core/i18n";
 import { useAppStore } from "../stores/app-store";
-import { useWorkspaceStore } from "../stores/workspace-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import {
   CircleAlert,
   ChevronRight,

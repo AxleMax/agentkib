@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { LoadingState } from "@/components/ui/loading-state";
-import { useWorkspaceStore } from "../../../stores/workspace-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { useMemo, useState } from "react";
-import { AssetCatalogPage } from "../../../components/AssetCatalogPage";
-import { groupWorkspaceAssets } from "../../../core/catalog";
+import { AssetCatalogPage } from "@/features/catalog/AssetCatalogPage";
+import { groupWorkspaceAssets } from "@/features/catalog/catalog";
 import { tr } from "../../../core/i18n";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";

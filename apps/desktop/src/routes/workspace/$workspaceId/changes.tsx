@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { LoadingState } from "@/components/ui/loading-state";
 import { api } from "../../../core/api";
-import { useWorkspaceStore } from "../../../stores/workspace-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { useEffect, useRef, useState } from "react";
 import { localizeMessage, tr } from "../../../core/i18n";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { diffLines } from "../../../core/diff";
+import { diffLines } from "@/features/workspace/diff";
 import type { AgentKind, ChangeSet, SessionHandoffLaunchRequest } from "../../../core/types";
 type ChangeSetOrigin = "standard" | "doctor" | "handoff";
 const agentLabels: Record<AgentKind, string> = {

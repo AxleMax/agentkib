@@ -25,11 +25,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LoadingState } from "@/components/ui/loading-state";
-import { AppSidebar, type SidebarEntry } from "../../../components/AppSidebar";
-import { useAppDialogs } from "../../../components/AppDialogProvider";
-import { WindowToolbar } from "../../../components/WindowToolbar";
+import { AppSidebar, type SidebarEntry } from "@/components/AppSidebar";
+import { useAppDialogs } from "@/components/AppDialogProvider";
+import { WindowToolbar } from "@/components/WindowToolbar";
 import { useAppStore } from "../../../stores/app-store";
-import { useWorkspaceStore } from "../../../stores/workspace-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { api } from "../../../core/api";
 import { localizeMessage, tr } from "../../../core/i18n";
 import { normalizePlatform } from "../../../core/platform";
@@ -41,7 +41,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { WorkspaceOpenWith } from "../../../components/WorkspaceOpenWith";
+import { WorkspaceOpenWith } from "@/features/workspace/WorkspaceOpenWith";
 import { Copy, MoreHorizontal, RefreshCw } from "lucide-react";
 function WorkspaceActions({
   workspace,

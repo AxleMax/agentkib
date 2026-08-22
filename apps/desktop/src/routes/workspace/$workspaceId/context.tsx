@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { LoadingState } from "@/components/ui/loading-state";
-import { useWorkspaceStore } from "../../../stores/workspace-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../../core/api";
 import { localizeMessage, tr } from "../../../core/i18n";

@@ -1,0 +1,729 @@
+import { Input } from "@/components/ui/input";
+import { SelectControl } from "@/components/ui/select-control";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Progress } from "@/components/ui/progress";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useEffect, useMemo, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { CircleAlert, ExternalLink, HardDrive, Pause, RefreshCw, Search, X } from "lucide-react";
+import { api } from "@/core/api";
+import { currentLocale, formatDateTime, localizeMessage, tr } from "@/core/i18n";
+import { squarifyTreemap } from "@/features/workspace/treemap";
+import type {
+  AgentKind,
+  RefreshJobStatus,
+  StorageNode,
+  StorageOverview,
+  WorkspaceStorage,
+  WorkspaceSummary,
+} from "@/core/types";
+import { cn } from "@/lib/utils";
+
+const agentLabels: Record<AgentKind, string> = {
+  codex: "Codex",
+  "claude-code": "Claude Code",
+  cursor: "Cursor",
+  "open-claw": "OpenClaw",
+  hermes: "Hermes",
+  "deepseek-harness": "DeepSeek Harness",
+};
+type StorageMetric = "allocated" | "regenerable" | "agent-assets";
+interface StorageLocation {
+  workspaceId: string;
+  node: StorageNode;
+}
+interface StorageSelection extends StorageLocation {
+  parentBytes: number;
+  workspaceBytes: number;
+}
+
+export function WorkspaceStoragePage({
+  workspaces,
+  job,
+}: {
+  workspaces: WorkspaceSummary[];
+  job?: RefreshJobStatus;
+}) {
+  const [overview, setOverview] = useState<StorageOverview>();
+  const [loaded, setLoaded] = useState(false);
+  const [query, setQuery] = useState("");
+  const [agent, setAgent] = useState<"all" | AgentKind>("all");
+  const [metric, setMetric] = useState<StorageMetric>("allocated");
+  const [trail, setTrail] = useState<StorageLocation[]>([]);
+  const [selected, setSelected] = useState<StorageSelection>();
+  const [expanding, setExpanding] = useState(false);
+  const [error, setError] = useState("");
+  const active = job?.state === "queued" || job?.state === "running";
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      unlisten = await listen<StorageOverview>("agentkib:storage-updated", (event) => {
+        if (!disposed) {
+          setOverview(event.payload);
+          setTrail([]);
+          setSelected(undefined);
+        }
+      });
+      try {
+        const cached = await api.storageOverview();
+        if (!disposed) setOverview(cached);
+      } catch (reason) {
+        if (!disposed) setError(localizeMessage(reason));
+      } finally {
+        if (!disposed) setLoaded(true);
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const tag = (event.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if (selected) setSelected(undefined);
+      else if (trail.length) setTrail((value) => value.slice(0, -1));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected, trail.length]);
+
+  const workspaceById = useMemo(
+    () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
+    [workspaces],
+  );
+  const storageById = useMemo(
+    () => new Map((overview?.workspaces ?? []).map((storage) => [storage.workspace_id, storage])),
+    [overview],
+  );
+  const workspaceNodes = useMemo(
+    () =>
+      (overview?.workspaces ?? [])
+        .filter((storage) => {
+          const workspace = workspaceById.get(storage.workspace_id);
+          const matchesAgent =
+            agent === "all" || workspace?.sources.some((source) => source.agent === agent);
+          return matchesAgent;
+        })
+        .map((storage) => ({
+          workspaceId: storage.workspace_id,
+          node: storage.root ?? legacyRoot(storage),
+        })),
+    [agent, overview, workspaceById],
+  );
+  const current = trail.at(-1);
+  const currentStorage = current ? storageById.get(current.workspaceId) : undefined;
+  const displayed = current
+    ? current.node.children.map((node) => ({ workspaceId: current.workspaceId, node }))
+    : workspaceNodes;
+  const values = displayed
+    .map((item) => ({
+      id: `${item.workspaceId}:${item.node.id}`,
+      value: metricBytes(item.node, metric),
+    }))
+    .filter((item) => item.value > 0);
+  const rects = squarifyTreemap(values);
+  const visibleById = new Map(
+    displayed.map((item) => [`${item.workspaceId}:${item.node.id}`, item]),
+  );
+  const parentBytes = current
+    ? metricBytes(current.node, metric)
+    : values.reduce((sum, item) => sum + item.value, 0);
+  const stale = Boolean(
+    overview?.last_scanned_at &&
+    Date.now() - new Date(overview.last_scanned_at).getTime() > 86_400_000,
+  );
+  const legacy = Boolean(
+    overview?.workspaces.some((storage) => storage.snapshot_version < 2 || !storage.root),
+  );
+  const hasCache = Boolean(overview?.scanned_workspace_count);
+  const estimated =
+    overview?.workspaces.some((item) => item.measurement === "logical-estimate") ?? false;
+  const coverage = overview?.total_workspace_count
+    ? Math.round((overview.scanned_workspace_count / overview.total_workspace_count) * 100)
+    : 0;
+
+  const start = async () => {
+    setError("");
+    try {
+      await api.requestRefresh("storage", true);
+    } catch (reason) {
+      setError(localizeMessage(reason));
+    }
+  };
+  const stop = async () => {
+    await api.cancelStorageScan();
+  };
+
+  const enter = async (location: StorageLocation) => {
+    if (location.node.kind === "root-files") return;
+    setSelected(undefined);
+    if (location.node.children.length) {
+      setTrail((value) => [...value, location]);
+      return;
+    }
+    if (!location.node.expandable && location.node.kind !== "aggregate") return;
+    const relativePath =
+      location.node.kind === "aggregate"
+        ? (current?.node.relative_path ?? "")
+        : location.node.relative_path;
+    setExpanding(true);
+    setError("");
+    try {
+      const node = await api.workspaceStorageChildren(location.workspaceId, relativePath);
+      if (location.node.kind === "aggregate" && current) {
+        setTrail((value) => [...value.slice(0, -1), { workspaceId: location.workspaceId, node }]);
+      } else {
+        setTrail((value) => [...value, { workspaceId: location.workspaceId, node }]);
+      }
+    } catch (reason) {
+      setError(`${tr("storage.expandFailed")}: ${localizeMessage(reason)}`);
+    } finally {
+      setExpanding(false);
+    }
+  };
+
+  const select = (location: StorageLocation) => {
+    const storage = storageById.get(location.workspaceId);
+    setSelected({
+      ...location,
+      parentBytes,
+      workspaceBytes: storage
+        ? metricStorageBytes(storage, metric)
+        : metricBytes(location.node, metric),
+    });
+  };
+
+  if (!loaded) return <LoadingState label={tr("common.loading")} />;
+
+  return (
+    <div className="min-w-0 space-y-4">
+      {hasCache && (
+        <div className="flex min-h-12 flex-wrap items-center gap-2">
+          <label className="flex max-w-[360px] flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3 text-muted-foreground">
+            <Search size={16} />
+            <Input
+              className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={tr("storage.searchPlaceholder")}
+            />
+          </label>
+          <SelectControl
+            aria-label={tr("workspace.allAgents")}
+            className="h-9 min-w-[150px]"
+            value={agent}
+            onChange={(event) => {
+              setAgent(event.target.value as typeof agent);
+              setTrail([]);
+              setSelected(undefined);
+            }}
+          >
+            <option value="all">{tr("workspace.allAgents")}</option>
+            {Object.entries(agentLabels).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </SelectControl>
+          <ToggleGroup
+            spacing={0}
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            value={[metric]}
+            onValueChange={(values) => {
+              const value = values[0];
+              if (value) {
+                setMetric(value as StorageMetric);
+                setSelected(undefined);
+              }
+            }}
+            aria-label={tr("storage.metricLabel")}
+          >
+            {(["allocated", "regenerable", "agent-assets"] as StorageMetric[]).map((value) => (
+              <ToggleGroupItem key={value} value={value} className="min-w-[84px]">
+                {tr(`storage.metric.${value}`)}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          {active ? (
+            <Button variant="outline" onClick={() => void stop()}>
+              <Pause size={14} />
+              {tr("storage.stopScan")}
+            </Button>
+          ) : (
+            <Button onClick={() => void start()}>
+              <RefreshCw size={14} />
+              {tr("storage.scanAgain")}
+            </Button>
+          )}
+        </div>
+      )}
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <CircleAlert size={16} />
+          {error}
+        </div>
+      )}
+      {hasCache && (
+        <Card className="grid grid-cols-2 divide-x divide-border overflow-hidden p-0 lg:grid-cols-4">
+          <Metric
+            label={tr("storage.allocated")}
+            value={formatBytes(overview?.allocated_bytes ?? 0)}
+            meta={estimated ? tr("storage.estimated") : undefined}
+          />
+          <Metric
+            label={tr("storage.regenerable")}
+            value={formatBytes(overview?.regenerable_bytes ?? 0)}
+          />
+          <Metric
+            label={tr("storage.agentAssets")}
+            value={formatBytes(overview?.agent_asset_bytes ?? 0)}
+          />
+          <Metric
+            label={tr("storage.coverage")}
+            value={`${overview?.scanned_workspace_count ?? 0} / ${overview?.total_workspace_count ?? workspaces.length}`}
+            meta={`${coverage}%`}
+          />
+        </Card>
+      )}
+      {active && (
+        <div className="flex min-h-10 items-center gap-3 rounded-lg border bg-card px-3 text-xs text-muted-foreground">
+          <span>{job?.state === "queued" ? tr("storage.waiting") : tr("storage.scanning")}</span>
+          <Progress
+            className="h-1.5"
+            value={
+              ((job?.progress_current ?? 0) / (job?.progress_total || workspaces.length || 1)) * 100
+            }
+          />
+          <strong className="text-foreground">
+            {job?.progress_current ?? 0} / {job?.progress_total ?? workspaces.length}
+          </strong>
+        </div>
+      )}
+      {hasCache && (stale || legacy) && (
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-amber-600">
+          {stale && (
+            <span className="inline-flex items-center gap-1.5">
+              <CircleAlert size={14} />
+              {tr("storage.stale")}
+            </span>
+          )}
+          {legacy && (
+            <span className="inline-flex items-center gap-1.5">
+              <CircleAlert size={14} />
+              {tr("storage.legacySnapshot")}
+            </span>
+          )}
+        </div>
+      )}
+      {!hasCache ? (
+        <EmptyState active={active} overview={overview} start={start} stop={stop} />
+      ) : (
+        <div
+          className={`grid min-h-[510px] gap-3.5 ${selected ? "lg:grid-cols-[minmax(0,1fr)_320px]" : "grid-cols-1"}`}
+        >
+          <Card className="min-w-0 overflow-hidden">
+            <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
+              <nav
+                className="flex min-w-0 items-center gap-1.5 overflow-hidden text-sm"
+                aria-label={tr("storage.location")}
+              >
+                <Button
+                  variant="bare"
+                  size="content"
+                  onClick={() => {
+                    setTrail([]);
+                    setSelected(undefined);
+                  }}
+                >
+                  {tr("storage.allWorkspaces")}
+                </Button>
+                {trail.map((item, index) => (
+                  <span
+                    className="flex min-w-0 items-center gap-1.5"
+                    key={`${item.workspaceId}:${item.node.id}`}
+                  >
+                    <b className="text-muted-foreground">/</b>
+                    <Button
+                      variant="bare"
+                      size="content"
+                      className="min-w-0 truncate"
+                      aria-current={index === trail.length - 1 ? "page" : undefined}
+                      onClick={() => {
+                        setTrail((value) => value.slice(0, index + 1));
+                        setSelected(undefined);
+                      }}
+                    >
+                      {nodeLabel(item.node)}
+                    </Button>
+                  </span>
+                ))}
+              </nav>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {expanding
+                  ? tr("storage.loadingDirectory")
+                  : overview?.last_scanned_at
+                    ? tr("storage.scannedAt", { time: formatDateTime(overview.last_scanned_at) })
+                    : ""}
+              </span>
+            </div>
+            {rects.length ? (
+              <div
+                className="relative min-h-[510px] overflow-hidden bg-background p-1"
+                role="tree"
+                aria-label={current ? nodeLabel(current.node) : tr("storage.allWorkspaces")}
+              >
+                {rects.map((rect) => {
+                  const location = visibleById.get(rect.id)!;
+                  const bytes = metricBytes(location.node, metric);
+                  const ratio = parentBytes > 0 ? bytes / parentBytes : 0;
+                  const area = rect.width * rect.height;
+                  const match = matchesNode(location.node, query);
+                  const hasDescendantMatch = containsMatch(location.node, query);
+                  const detail =
+                    area >= 500 ? "rich" : area >= 150 ? "medium" : area >= 42 ? "name" : "tiny";
+                  const kind = semanticKind(location.node);
+                  return (
+                    <Button
+                      variant="bare"
+                      size="content"
+                      key={rect.id}
+                      role="treeitem"
+                      aria-label={`${nodeLabel(location.node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`}
+                      className={cn(
+                        "absolute flex flex-col items-center justify-center gap-1 overflow-hidden rounded-md border p-2 text-center transition-colors duration-200",
+                        kind === "git" &&
+                          "border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800",
+                        kind === "agent" &&
+                          "border-primary/70 bg-primary text-primary-foreground hover:bg-primary/90",
+                        kind === "regenerable" &&
+                          "border-amber-300 bg-amber-100 text-amber-950 hover:bg-amber-200",
+                        kind === "aggregate" &&
+                          "border-border bg-muted text-foreground hover:bg-muted/80",
+                        kind === "normal" &&
+                          "border-border bg-muted/70 text-foreground hover:bg-muted",
+                        detail === "tiny" && "text-[10px]",
+                        detail === "name" && "text-[11px]",
+                        detail === "medium" && "text-xs",
+                        detail === "rich" && "text-sm",
+                        query.trim() && !hasDescendantMatch && "opacity-35 grayscale",
+                        query.trim() && match && "z-10 ring-2 ring-primary ring-offset-1",
+                        location.node.partial && "border-dashed",
+                      )}
+                      style={{
+                        left: `${rect.x}%`,
+                        top: `${rect.y}%`,
+                        width: `${rect.width}%`,
+                        height: `${rect.height}%`,
+                      }}
+                      title={`${nodeLabel(location.node)} · ${formatBytes(bytes)} · ${formatPercent(ratio)}`}
+                      onClick={() => select(location)}
+                      onDoubleClick={() => void enter(location)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void enter(location);
+                        }
+                      }}
+                    >
+                      {detail !== "tiny" && (
+                        <strong className="max-w-full truncate">{nodeLabel(location.node)}</strong>
+                      )}
+                      {(detail === "medium" || detail === "rich") && (
+                        <span className="text-[.9em] opacity-80">{formatBytes(bytes)}</span>
+                      )}
+                      {detail === "rich" && (
+                        <small className="text-[.82em] opacity-75">
+                          {formatPercent(ratio)} · {tr(`storage.type.${kind}`)}
+                        </small>
+                      )}
+                    </Button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="m-2 grid min-h-[390px] place-content-center justify-items-center gap-2 rounded-lg bg-muted text-sm text-muted-foreground">
+                <HardDrive size={26} />
+                <span>{tr("storage.noItemsForMetric")}</span>
+              </div>
+            )}
+          </Card>
+          {selected && (
+            <StorageInspector
+              selection={selected}
+              storage={storageById.get(selected.workspaceId)}
+              workspace={workspaceById.get(selected.workspaceId)}
+              metric={metric}
+              onClose={() => setSelected(undefined)}
+              onError={(reason) => setError(localizeMessage(reason))}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmptyState({
+  active,
+  overview,
+  start,
+  stop,
+}: {
+  active: boolean;
+  overview?: StorageOverview;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+}) {
+  return (
+    <Card className="grid min-h-[340px] place-content-center justify-items-center gap-2 p-6 text-center">
+      <HardDrive size={32} />
+      <h2 className="m-0 text-base font-semibold">
+        {active ? tr("storage.scanning") : tr("storage.emptyTitle")}
+      </h2>
+      {!active && (
+        <p className="m-0 max-w-[420px] text-sm text-muted-foreground">{tr("storage.emptyText")}</p>
+      )}
+      {overview?.workspaces.map((item) => (
+        <span
+          className="inline-flex items-center gap-1.5 text-xs text-amber-600"
+          key={item.workspace_id}
+        >
+          <CircleAlert size={13} />
+          {item.name} · {tr(item.error_key ?? "storage.scanUnavailable")}
+        </span>
+      ))}
+      {active ? (
+        <Button variant="outline" className="mt-2" onClick={() => void stop()}>
+          <Pause size={14} />
+          {tr("storage.stopScan")}
+        </Button>
+      ) : (
+        <Button className="mt-2" onClick={() => void start()}>
+          {tr("storage.startScan")}
+        </Button>
+      )}
+    </Card>
+  );
+}
+
+function Metric({ label, value, meta }: { label: string; value: string; meta?: string }) {
+  return (
+    <CardContent className="grid min-h-[72px] min-w-0 content-center gap-1 px-4 py-3">
+      <span className="truncate text-xs text-muted-foreground">{label}</span>
+      <strong className="truncate text-lg text-foreground">{value}</strong>
+      {meta && <small className="text-xs text-muted-foreground">{meta}</small>}
+    </CardContent>
+  );
+}
+
+function StorageInspector({
+  selection,
+  storage,
+  workspace,
+  metric,
+  onClose,
+  onError,
+}: {
+  selection: StorageSelection;
+  storage?: WorkspaceStorage;
+  workspace?: WorkspaceSummary;
+  metric: StorageMetric;
+  onClose: () => void;
+  onError: (reason: unknown) => void;
+}) {
+  const { node } = selection;
+  const agents =
+    workspace?.sources
+      .flatMap((source) => (source.agent ? [agentLabels[source.agent]] : []))
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join(" · ") || "—";
+  const fullPath = displayPath(storage?.path ?? "", node.relative_path);
+  const open = async () => {
+    try {
+      await api.openWorkspaceStoragePath(
+        selection.workspaceId,
+        node.kind === "aggregate" ? "" : node.relative_path,
+      );
+    } catch (reason) {
+      onError(reason);
+    }
+  };
+  return (
+    <Card className="min-w-0 overflow-hidden lg:max-h-full">
+      <div className="flex min-h-12 items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h2 className="m-0 text-base font-semibold">{nodeLabel(node)}</h2>
+          {node.partial && <Badge variant="outline">{tr("storage.partialNode")}</Badge>}
+        </div>
+        <Button variant="ghost" size="icon" aria-label={tr("common.close")} onClick={onClose}>
+          <X size={16} />
+        </Button>
+      </div>
+      <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-3 border-b border-border-subtle px-4 py-3">
+        <Fact label={tr("storage.allocated")} value={formatBytes(node.allocated_bytes)} />
+        <Fact label={tr("storage.logical")} value={formatBytes(node.logical_bytes)} />
+        <Fact
+          label={tr("storage.parentShare")}
+          value={formatPercent(
+            selection.parentBytes ? metricBytes(node, metric) / selection.parentBytes : 0,
+          )}
+        />
+        <Fact
+          label={tr("storage.workspaceShare")}
+          value={formatPercent(
+            selection.workspaceBytes ? metricBytes(node, metric) / selection.workspaceBytes : 0,
+          )}
+        />
+        <Fact label={tr("storage.regenerable")} value={formatBytes(node.regenerable_bytes)} />
+        <Fact label={tr("storage.agentAssets")} value={formatBytes(node.agent_asset_bytes)} />
+        <Fact label={tr("storage.files")} value={node.file_count.toLocaleString(currentLocale())} />
+        <Fact
+          label={tr("storage.directories")}
+          value={node.directory_count.toLocaleString(currentLocale())}
+        />
+        <Fact label={tr("storage.sourceAgents")} value={agents} />
+        <Fact label={tr("storage.itemType")} value={tr(`storage.type.${semanticKind(node)}`)} />
+      </dl>
+      {fullPath && (
+        <code
+          className="mx-4 mb-3 block overflow-hidden rounded-md bg-muted px-2 py-2 text-xs text-muted-foreground [text-overflow:ellipsis] whitespace-nowrap"
+          title={fullPath}
+        >
+          {fullPath}
+        </code>
+      )}
+      {storage?.error_key && (
+        <div className="mx-4 mb-3 flex gap-2 rounded-md border border-amber-600/25 bg-amber-500/10 p-2 text-xs text-amber-600">
+          <CircleAlert size={14} />
+          <span>
+            {tr(storage.error_key)}
+            {storage.error_detail && (
+              <small className="mt-1 block text-muted-foreground">{storage.error_detail}</small>
+            )}
+          </span>
+        </div>
+      )}
+      {node.kind !== "aggregate" && (
+        <div className="px-4 pb-4">
+          <Button variant="outline" className="w-full justify-center" onClick={() => void open()}>
+            <ExternalLink size={14} />
+            {tr("storage.openLocation")}
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="m-0 mt-1 truncate text-xs text-foreground">{value}</dd>
+    </div>
+  );
+}
+
+function legacyRoot(storage: WorkspaceStorage): StorageNode {
+  const children = storage.breakdown.map((item) => ({
+    id: `legacy:${storage.workspace_id}:${item.relative_path || "root"}`,
+    name: item.kind === "root-files" ? tr("storage.rootFiles") : item.name,
+    relative_path: item.relative_path,
+    kind: item.kind === "root-files" ? ("root-files" as const) : ("directory" as const),
+    allocated_bytes: item.allocated_bytes,
+    logical_bytes: item.logical_bytes,
+    regenerable_bytes: item.regenerable_bytes,
+    agent_asset_bytes: item.agent_asset_bytes,
+    file_count: 0,
+    directory_count: 0,
+    child_count: 0,
+    children: [],
+    expandable: item.kind !== "root-files",
+    partial: true,
+  }));
+  return {
+    id: `workspace:${storage.workspace_id}`,
+    name: storage.name,
+    relative_path: "",
+    kind: "workspace",
+    allocated_bytes: storage.allocated_bytes,
+    logical_bytes: storage.logical_bytes,
+    regenerable_bytes: storage.regenerable_bytes,
+    agent_asset_bytes: storage.agent_asset_bytes,
+    file_count: storage.file_count,
+    directory_count: storage.directory_count,
+    child_count: children.length,
+    children,
+    expandable: true,
+    partial: true,
+  };
+}
+
+function nodeLabel(node: StorageNode) {
+  if (node.kind === "root-files") return tr("storage.rootFiles");
+  if (node.kind === "aggregate") return tr("storage.otherCount", { count: node.child_count });
+  return node.name;
+}
+
+function metricBytes(node: StorageNode, metric: StorageMetric) {
+  if (metric === "regenerable") return node.regenerable_bytes;
+  if (metric === "agent-assets") return node.agent_asset_bytes;
+  return node.allocated_bytes;
+}
+
+function metricStorageBytes(storage: WorkspaceStorage, metric: StorageMetric) {
+  if (metric === "regenerable") return storage.regenerable_bytes;
+  if (metric === "agent-assets") return storage.agent_asset_bytes;
+  return storage.allocated_bytes;
+}
+
+function semanticKind(node: StorageNode) {
+  if (node.kind === "aggregate") return "aggregate";
+  if (node.relative_path.split(/[\\/]/).includes(".git")) return "git";
+  if (node.allocated_bytes > 0 && node.agent_asset_bytes / node.allocated_bytes >= 0.5)
+    return "agent";
+  if (node.allocated_bytes > 0 && node.regenerable_bytes / node.allocated_bytes >= 0.8)
+    return "regenerable";
+  return "normal";
+}
+
+function matchesNode(node: StorageNode, query: string) {
+  const value = query.trim().toLowerCase();
+  return !value || `${node.name} ${node.relative_path}`.toLowerCase().includes(value);
+}
+
+function containsMatch(node: StorageNode, query: string): boolean {
+  return matchesNode(node, query) || node.children.some((child) => containsMatch(child, query));
+}
+
+function formatPercent(value: number) {
+  return new Intl.NumberFormat(currentLocale(), {
+    style: "percent",
+    maximumFractionDigits: value < 0.01 ? 1 : 0,
+  }).format(Math.max(0, value));
+}
+
+function displayPath(root: string, relativePath: string) {
+  if (!relativePath) return root;
+  const separator = root.includes("\\") ? "\\" : "/";
+  return `${root.replace(/[\\/]$/, "")}${separator}${relativePath.replaceAll(/[\\/]/g, separator)}`;
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const amount = value / 1024 ** index;
+  return `${new Intl.NumberFormat(currentLocale(), { maximumFractionDigits: amount >= 100 ? 0 : amount >= 10 ? 1 : 2 }).format(amount)} ${units[index]}`;
+}

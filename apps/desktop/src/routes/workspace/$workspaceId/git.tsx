@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { LoadingState } from "@/components/ui/loading-state";
-import { WorkspaceGitPage, type GitSubview } from "../../../components/WorkspaceGitPage";
-import { useWorkspaceStore } from "../../../stores/workspace-store";
+import { WorkspaceGitPage, type GitSubview } from "@/features/workspace/WorkspaceGitPage";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 
 type GitSearch = { gitSubview?: GitSubview };
 

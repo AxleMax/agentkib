@@ -7,7 +7,7 @@ import { tr } from "../core/i18n";
 import type { WorkspaceSummary } from "../core/types";
 
 const AgentsPageLazy = lazy(() =>
-  import("../components/AgentsPage").then(({ AgentsPage }) => ({ default: AgentsPage })),
+  import("@/features/agents/AgentsPage").then(({ AgentsPage }) => ({ default: AgentsPage })),
 );
 
 function AgentsRoute() {

@@ -7,10 +7,12 @@ import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router"
 import { useAppStore } from "../stores/app-store";
 import { api } from "../core/api";
 import { localizeMessage, tr } from "../core/i18n";
-import type { InsightsSection } from "../components/InsightsPage";
+import type { InsightsSection } from "@/features/insights/InsightsPage";
 
 const InsightsPageLazy = lazy(() =>
-  import("../components/InsightsPage").then(({ InsightsPage }) => ({ default: InsightsPage })),
+  import("@/features/insights/InsightsPage").then(({ InsightsPage }) => ({
+    default: InsightsPage,
+  })),
 );
 
 type InsightsSearch = { insightsSection?: InsightsSection };

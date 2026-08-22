@@ -4,13 +4,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "../core/api";
-import { GlobalSettings } from "../components/GlobalSettings";
+import { GlobalSettings } from "@/features/settings/GlobalSettings";
 import { localizeMessage, tr } from "../core/i18n";
 import { normalizePlatform } from "../core/platform";
-import { SettingsSidebar, type SettingsSection } from "../components/SettingsSidebar";
-import { WindowToolbar } from "../components/WindowToolbar";
+import { SettingsSidebar, type SettingsSection } from "@/features/settings/SettingsSidebar";
+import { WindowToolbar } from "@/components/WindowToolbar";
 import { useAppStore } from "../stores/app-store";
-import { useWorkspaceStore } from "../stores/workspace-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import type { CloseBehavior, RuntimeInfo } from "../core/types";
 
 type SettingsSearch = { settingsSection?: SettingsSection };

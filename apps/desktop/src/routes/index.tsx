@@ -1,8 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { GlobalHome } from "../app/AppShell";
+import { GlobalHome } from "../AppShell";
 import { api } from "../core/api";
-import { groupCatalogAssets, workspaceAssetCounts } from "../core/catalog";
+import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/catalog";
 import { useAppStore } from "../stores/app-store";
 import type { WorkspaceSummary } from "../core/types";
 

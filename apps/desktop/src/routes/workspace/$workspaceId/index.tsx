@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { LoadingState } from "@/components/ui/loading-state";
-import { useWorkspaceStore } from "../../../stores/workspace-store";
-import { AgentIcon } from "../../../components/AgentIcon";
-import { WorkspaceObsidianCard } from "../../../components/ObsidianIntegration";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
+import { AgentIcon } from "@/features/agents/AgentIcon";
+import { WorkspaceObsidianCard } from "@/features/obsidian/ObsidianIntegration";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

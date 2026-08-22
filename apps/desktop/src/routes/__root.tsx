@@ -1,8 +1,8 @@
 import { createRootRoute } from "@tanstack/react-router";
 import { z } from "zod";
-import { AppShell } from "../app/AppShell";
-import type { SettingsSection } from "../components/SettingsSidebar";
-import type { InsightsSection } from "../components/InsightsPage";
+import { AppShell } from "../AppShell";
+import type { SettingsSection } from "@/features/settings/SettingsSidebar";
+import type { InsightsSection } from "@/features/insights/InsightsPage";
 import type { AgentKind } from "../core/types";
 
 const quotaWindowSchema = z.object({

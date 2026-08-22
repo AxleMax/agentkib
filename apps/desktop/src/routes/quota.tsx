@@ -5,7 +5,7 @@ import { useAppStore } from "../stores/app-store";
 import type { QuotaWindowSelector } from "../core/types";
 
 const QuotaPageLazy = lazy(() =>
-  import("../components/QuotaPage").then(({ QuotaPage }) => ({ default: QuotaPage })),
+  import("@/features/quota/QuotaPage").then(({ QuotaPage }) => ({ default: QuotaPage })),
 );
 
 type QuotaSearch = { quotaProvider?: string; quotaWindow?: QuotaWindowSelector };

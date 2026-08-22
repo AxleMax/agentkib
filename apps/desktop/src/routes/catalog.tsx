@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AgentIcon } from "../components/AgentIcon";
-import { AssetCatalogPage } from "../components/AssetCatalogPage";
-import { useAppDialogs } from "../components/AppDialogProvider";
-import { MemoryCard } from "../components/MemoryCard";
+import { AgentIcon } from "@/features/agents/AgentIcon";
+import { AssetCatalogPage } from "@/features/catalog/AssetCatalogPage";
+import { useAppDialogs } from "@/components/AppDialogProvider";
+import { MemoryCard } from "@/features/catalog/MemoryCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,10 +16,10 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "../core/api";
-import { groupCatalogAssets } from "../core/catalog";
+import { groupCatalogAssets } from "@/features/catalog/catalog";
 import { formatDateTime, localizeMessage, tr } from "../core/i18n";
 import { useAppStore } from "../stores/app-store";
-import { useWorkspaceStore } from "../stores/workspace-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import {
   Boxes,
   Brain,
