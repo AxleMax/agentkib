@@ -1,9 +1,9 @@
 import { Button } from "@/components/ui/button";
 import type { ComponentType } from "react";
 import { ArrowLeft, Database, FolderSearch, PlugZap, Settings2, Stethoscope } from "lucide-react";
-import { tr } from "../i18n";
+import { tr } from "../core/i18n";
 import { cn } from "@/lib/utils";
-import type { AppPlatform } from "../platform";
+import type { AppPlatform } from "../core/platform";
 import { SidebarBrand } from "./SidebarBrand";
 
 export type SettingsSection = "general" | "discovery" | "integrations" | "privacy" | "diagnostics";

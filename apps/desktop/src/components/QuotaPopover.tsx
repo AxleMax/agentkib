@@ -5,11 +5,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { ExternalLink, Gauge, RefreshCw, Settings2 } from "lucide-react";
-import { api } from "../api";
-import { changeLocale, formatRelativeTime, localizeMessage, tr } from "../i18n";
-import { compareQuotaProviders, isQuotaProviderSupported, lowestRemaining, visibleQuotaWindows } from "../quota";
-import { applyTheme } from "../theme";
-import type { EffectiveTheme, QuotaPopoverPreferences, QuotaProvider, QuotaSnapshot, RefreshJobStatus } from "../types";
+import { api } from "../core/api";
+import { changeLocale, formatRelativeTime, localizeMessage, tr } from "../core/i18n";
+import { compareQuotaProviders, isQuotaProviderSupported, lowestRemaining, visibleQuotaWindows } from "../core/quota";
+import { applyTheme } from "../core/theme";
+import type { EffectiveTheme, QuotaPopoverPreferences, QuotaProvider, QuotaSnapshot, RefreshJobStatus } from "../core/types";
 import { ProviderIcon, QuotaWindowRow } from "./QuotaDisplay";
 import { cn } from "@/lib/utils";
 

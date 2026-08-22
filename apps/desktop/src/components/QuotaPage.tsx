@@ -9,9 +9,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Check, ChevronDown, CircleAlert, Gauge, RefreshCw, Search, Settings2, X } from "lucide-react";
-import { api } from "../api";
-import { formatRelativeTime, localizeMessage, tr } from "../i18n";
-import { normalizePlatform } from "../platform";
+import { api } from "../core/api";
+import { formatRelativeTime, localizeMessage, tr } from "../core/i18n";
+import { normalizePlatform } from "../core/platform";
 import { cn } from "@/lib/utils";
 import {
   compareQuotaProviders,
@@ -22,7 +22,7 @@ import {
   providerIsUnavailable,
   quotaSeverity,
   quotaWindowKey,
-} from "../quota";
+} from "../core/quota";
 import type {
   QuotaCollectorStatus,
   QuotaPopoverPreferences,
@@ -30,7 +30,7 @@ import type {
   QuotaSnapshot,
   QuotaWindowSelector,
   RefreshJobStatus,
-} from "../types";
+} from "../core/types";
 import { ProviderIcon, QuotaWindowRow } from "./QuotaDisplay";
 
 type QuotaFilter = "all" | "healthy" | "warning" | "unavailable";

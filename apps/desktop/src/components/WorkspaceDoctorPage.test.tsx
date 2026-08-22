@@ -2,12 +2,12 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api";
-import { initializeI18n } from "../i18n";
-import type { ContextDoctorReport, WorkspaceSummary } from "../types";
+import { api } from "../core/api";
+import { initializeI18n } from "../core/i18n";
+import type { ContextDoctorReport, WorkspaceSummary } from "../core/types";
 import { WorkspaceDoctorPage } from "./WorkspaceDoctorPage";
 
-vi.mock("../api", () => ({ api: { workspaceDoctorReport: vi.fn() } }));
+vi.mock("../core/api", () => ({ api: { workspaceDoctorReport: vi.fn() } }));
 
 const workspace: WorkspaceSummary = {
   id: "workspace",

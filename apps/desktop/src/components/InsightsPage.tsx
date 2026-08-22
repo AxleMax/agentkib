@@ -10,11 +10,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Activity, Award, Brain, CalendarCheck2, CalendarDays, Check, ChevronRight, CircleAlert, Flame, FolderGit2, GitCommitHorizontal, LockKeyhole, MessageSquareText, Moon, Network, PlugZap, RotateCcw, ShieldCheck, Sparkles, Workflow, X } from "lucide-react";
-import { api } from "../api";
-import { achievementReached, buildAchievementWallItems, selectDefaultTrackMilestone, type AchievementCategory, type AchievementTrack, type AchievementWallItem } from "../achievements";
-import { formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "../i18n";
-import { buildHeatmapMonthMarkers } from "../insights";
-import type { Achievement, AgentKind, AgentUsageBreakdown, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, ModelUsageBreakdown, RefreshJobStatus, RepositoryCommitBreakdown, WorkspaceSummary, WorkspaceUsageBreakdown } from "../types";
+import { api } from "../core/api";
+import { achievementReached, buildAchievementWallItems, selectDefaultTrackMilestone, type AchievementCategory, type AchievementTrack, type AchievementWallItem } from "../core/achievements";
+import { formatCompactNumber, formatDateTime, formatRelativeTime, localizeMessage, tr } from "../core/i18n";
+import { buildHeatmapMonthMarkers } from "../core/insights";
+import type { Achievement, AgentKind, AgentUsageBreakdown, HeatmapPoint, InsightsQuery, InsightsStatus, InsightsSummary, ModelUsageBreakdown, RefreshJobStatus, RepositoryCommitBreakdown, WorkspaceSummary, WorkspaceUsageBreakdown } from "../core/types";
 import { AgentIcon } from "./AgentIcon";
 import { cn } from "@/lib/utils";
 

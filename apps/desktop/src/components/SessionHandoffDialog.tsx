@@ -6,9 +6,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, Copy, FileOutput, ShieldCheck, Sparkles, X } from "lucide-react";
-import { api } from "../api";
-import { localizeMessage, tr } from "../i18n";
-import type { AgentKind, ConversationSessionSummary, HandoffFormat, PlannedSessionHandoff, SessionHandoffDraft, SessionHandoffPreparation, SessionHandoffRequest, WorkspaceSummary } from "../types";
+import { api } from "../core/api";
+import { localizeMessage, tr } from "../core/i18n";
+import type { AgentKind, ConversationSessionSummary, HandoffFormat, PlannedSessionHandoff, SessionHandoffDraft, SessionHandoffPreparation, SessionHandoffRequest, WorkspaceSummary } from "../core/types";
 
 const targets: Array<[AgentKind, string]> = [
   ["codex", "Codex"], ["claude-code", "Claude Code"], ["cursor", "Cursor"],

@@ -7,9 +7,9 @@ import { Card } from "@/components/ui/card";
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ExternalLink, FolderOpen, Link2, Unlink } from "lucide-react";
-import { api } from "../api";
-import { localizeMessage, tr } from "../i18n";
-import type { ObsidianIntegration } from "../types";
+import { api } from "../core/api";
+import { localizeMessage, tr } from "../core/i18n";
+import type { ObsidianIntegration } from "../core/types";
 
 function InstallationStatus({ integration }: { integration: ObsidianIntegration }) {
   const { installation } = integration;

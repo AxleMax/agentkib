@@ -3,9 +3,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Minus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
-import { api } from "../api";
-import { localizeMessage, tr } from "../i18n";
-import type { ContextDoctorReport, DoctorAssetStatus, WorkspaceSummary } from "../types";
+import { api } from "../core/api";
+import { localizeMessage, tr } from "../core/i18n";
+import type { ContextDoctorReport, DoctorAssetStatus, WorkspaceSummary } from "../core/types";
 import { AgentIcon } from "./AgentIcon";
 import { cn } from "@/lib/utils";
 

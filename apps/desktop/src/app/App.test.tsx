@@ -4,12 +4,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { AppDialogProvider } from "./components/AppDialogProvider";
-import { api } from "./api";
-import { diffLines } from "./diff";
-import { initializeI18n } from "./i18n";
+import { AppDialogProvider } from "../components/AppDialogProvider";
+import { api } from "../core/api";
+import { diffLines } from "../core/diff";
+import { initializeI18n } from "../core/i18n";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { RuntimeInfo } from "./types";
+import type { RuntimeInfo } from "../core/types";
 
 function testRuntime(trayAvailable: boolean): RuntimeInfo {
   return {
@@ -35,7 +35,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockImplementation((ev
   return Promise.resolve(() => tauriListeners.delete(event));
 }) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
-vi.mock("./api", () => ({
+vi.mock("../core/api", () => ({
   api: {
     workspaces: vi.fn().mockResolvedValue([]),
     agentInstallations: vi.fn().mockResolvedValue([]),

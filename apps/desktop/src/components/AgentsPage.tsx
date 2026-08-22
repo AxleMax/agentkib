@@ -8,8 +8,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useState } from "react";
 import { Bot, ChevronRight, CircleAlert, FileCode2, FolderGit2, PlugZap, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatRelativeTime, tr } from "../i18n";
-import type { AgentInstallation, AgentKind, CatalogAsset, InsightsStatus, RemoteGatewaySummary, WorkspaceSummary } from "../types";
+import { formatRelativeTime, tr } from "../core/i18n";
+import type { AgentInstallation, AgentKind, CatalogAsset, InsightsStatus, RemoteGatewaySummary, WorkspaceSummary } from "../core/types";
 import { AgentIcon } from "./AgentIcon";
 
 type AgentDetailSection = "overview" | "assets" | "workspaces" | "usage";

@@ -2,9 +2,9 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useEffect, useState } from "react";
 import { ChevronDown, Code2, FolderOpen, SquareTerminal } from "lucide-react";
-import { api } from "../api";
-import { localizeMessage, tr } from "../i18n";
-import type { WorkspaceOpener, WorkspaceSummary } from "../types";
+import { api } from "../core/api";
+import { localizeMessage, tr } from "../core/i18n";
+import type { WorkspaceOpener, WorkspaceSummary } from "../core/types";
 
 export function WorkspaceOpenWith({ workspace, onError }: { workspace: WorkspaceSummary; onError: (message: string) => void }) {
   const [openers, setOpeners] = useState<WorkspaceOpener[]>([]);

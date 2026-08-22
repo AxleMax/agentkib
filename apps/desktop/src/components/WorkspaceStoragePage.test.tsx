@@ -2,13 +2,13 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api";
-import { initializeI18n } from "../i18n";
-import type { StorageNode, StorageOverview, WorkspaceSummary } from "../types";
+import { api } from "../core/api";
+import { initializeI18n } from "../core/i18n";
+import type { StorageNode, StorageOverview, WorkspaceSummary } from "../core/types";
 import { WorkspaceStoragePage } from "./WorkspaceStoragePage";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
-vi.mock("../api", () => ({
+vi.mock("../core/api", () => ({
   api: {
     storageOverview: vi.fn(),
     requestRefresh: vi.fn(),

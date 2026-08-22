@@ -20,9 +20,9 @@ import {
   UserRound,
   Wrench,
 } from "lucide-react";
-import { api } from "../api";
+import { api } from "../core/api";
 import { AgentIcon } from "./AgentIcon";
-import { formatDateTime, formatRelativeTime, localizeMessage, tr } from "../i18n";
+import { formatDateTime, formatRelativeTime, localizeMessage, tr } from "../core/i18n";
 import type {
   AgentKind,
   ConversationEvent,
@@ -30,7 +30,7 @@ import type {
   ConversationSessionSummary,
   PlannedSessionHandoff,
   WorkspaceSummary,
-} from "../types";
+} from "../core/types";
 import { SessionHandoffDialog } from "./SessionHandoffDialog";
 
 type SessionFilter = "current" | "archived" | "metadata" | "all";

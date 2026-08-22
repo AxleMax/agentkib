@@ -4,7 +4,7 @@ import cursorIcon from "../assets/agent-icons/cursor.svg";
 import hermesIcon from "../assets/agent-icons/hermes.svg";
 import openClawIcon from "../assets/agent-icons/open-claw.svg";
 import deepSeekHarnessIcon from "../assets/agent-icons/deepseek-harness.svg";
-import type { AgentKind } from "../types";
+import type { AgentKind } from "../core/types";
 import { cn } from "@/lib/utils";
 
 const agentIcons: Record<AgentKind, string> = {

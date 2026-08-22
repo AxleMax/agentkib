@@ -1,6 +1,6 @@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { tr } from "../i18n";
-import type { QuotaCollectorStatus, QuotaSnapshot } from "../types";
+import { tr } from "../core/i18n";
+import type { QuotaCollectorStatus, QuotaSnapshot } from "../core/types";
 
 export function QuotaDiagnostics({ status }: { status?: QuotaCollectorStatus }) {
   if (!status) return <div className="px-4 py-3 text-xs text-muted-foreground">{tr("quota.statusUnavailable")}</div>;

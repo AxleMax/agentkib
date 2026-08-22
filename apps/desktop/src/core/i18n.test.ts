@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import enUS from "./locales/en-US.json";
-import jaJP from "./locales/ja-JP.json";
-import zhCN from "./locales/zh-CN.json";
-import zhTW from "./locales/zh-TW.json";
+import enUS from "../locales/en-US.json";
+import jaJP from "../locales/ja-JP.json";
+import zhCN from "../locales/zh-CN.json";
+import zhTW from "../locales/zh-TW.json";
 import { changeLocale, formatCompactNumber, initializeI18n, normalizeLocale, tr } from "./i18n";
 
 const dictionaries = { "en-US": enUS, "zh-CN": zhCN, "zh-TW": zhTW, "ja-JP": jaJP } as const;

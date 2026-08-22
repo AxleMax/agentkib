@@ -7,9 +7,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 import { ChevronRight, FileCode2, Library, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { tr } from "../i18n";
-import type { AgentKind, WorkspaceSummary } from "../types";
-import type { CatalogAssetGroup } from "../catalog";
+import { tr } from "../core/i18n";
+import type { AgentKind, WorkspaceSummary } from "../core/types";
+import type { CatalogAssetGroup } from "../core/catalog";
 
 const agentLabels: Record<AgentKind, string> = {
   codex: "Codex",

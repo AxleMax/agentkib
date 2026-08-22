@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAppDialogs } from "./AppDialogProvider";
 import { useState } from "react";
 import { Pencil, Plus, RefreshCw, Server, Trash2, X } from "lucide-react";
-import { api } from "../api";
-import { formatDateTime, localizeMessage, tr } from "../i18n";
-import type { RemoteGatewayAuthKind, RemoteGatewayInput, RemoteGatewayKind, RemoteGatewaySummary } from "../types";
+import { api } from "../core/api";
+import { formatDateTime, localizeMessage, tr } from "../core/i18n";
+import type { RemoteGatewayAuthKind, RemoteGatewayInput, RemoteGatewayKind, RemoteGatewaySummary } from "../core/types";
 
 const emptyGateway = (): RemoteGatewayInput => ({
   kind: "open-claw",

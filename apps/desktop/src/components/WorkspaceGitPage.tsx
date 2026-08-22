@@ -23,8 +23,8 @@ import {
   Search,
   Tags,
 } from "lucide-react";
-import { api } from "../api";
-import { formatDateTime, localizeMessage, tr } from "../i18n";
+import { api } from "../core/api";
+import { formatDateTime, localizeMessage, tr } from "../core/i18n";
 import type {
   GitCommitSummary,
   GitDiff,
@@ -35,7 +35,7 @@ import type {
   GitWorkingTreeChange,
   GitWorkspaceSummary,
   WorkspaceSummary,
-} from "../types";
+} from "../core/types";
 import { cn } from "@/lib/utils";
 
 type GitSection = "history" | "worktree";

@@ -1,8 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { tr } from "../i18n";
-import type { AppPlatform } from "../platform";
+import { tr } from "../core/i18n";
+import type { AppPlatform } from "../core/platform";
 
 export function WindowToolbar({ collapsed, onToggle, platform = "web", fullscreen = false }: { collapsed: boolean; onToggle: () => void; platform?: AppPlatform; fullscreen?: boolean }) {
   const label = tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar");

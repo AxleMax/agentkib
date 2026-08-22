@@ -3,13 +3,13 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initializeI18n } from "../i18n";
-import { api } from "../api";
-import type { ConversationSessionSummary, PlannedSessionHandoff, SessionHandoffPreparation, WorkspaceSummary } from "../types";
+import { initializeI18n } from "../core/i18n";
+import { api } from "../core/api";
+import type { ConversationSessionSummary, PlannedSessionHandoff, SessionHandoffPreparation, WorkspaceSummary } from "../core/types";
 import { WorkspaceSessionsPage } from "./WorkspaceSessionsPage";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
-vi.mock("../api", () => ({
+vi.mock("../core/api", () => ({
   api: {
     workspaceSessions: vi.fn(),
     workspaceSessionStatus: vi.fn(),

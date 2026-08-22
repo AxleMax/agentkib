@@ -1,8 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { Gauge } from "lucide-react";
-import { tr } from "../i18n";
-import { quotaSeverity, type QuotaDisplayWindow } from "../quota";
-import type { AgentKind, QuotaProvider } from "../types";
+import { tr } from "../core/i18n";
+import { quotaSeverity, type QuotaDisplayWindow } from "../core/quota";
+import type { AgentKind, QuotaProvider } from "../core/types";
 import { AgentIcon } from "./AgentIcon";
 import { cn } from "@/lib/utils";
 

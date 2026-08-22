@@ -9,10 +9,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { CircleAlert, ExternalLink, HardDrive, Pause, RefreshCw, Search, X } from "lucide-react";
-import { api } from "../api";
-import { currentLocale, formatDateTime, localizeMessage, tr } from "../i18n";
-import { squarifyTreemap } from "../treemap";
-import type { AgentKind, RefreshJobStatus, StorageNode, StorageOverview, WorkspaceStorage, WorkspaceSummary } from "../types";
+import { api } from "../core/api";
+import { currentLocale, formatDateTime, localizeMessage, tr } from "../core/i18n";
+import { squarifyTreemap } from "../core/treemap";
+import type { AgentKind, RefreshJobStatus, StorageNode, StorageOverview, WorkspaceStorage, WorkspaceSummary } from "../core/types";
 import { cn } from "@/lib/utils";
 
 const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes", "deepseek-harness": "DeepSeek Harness" };
