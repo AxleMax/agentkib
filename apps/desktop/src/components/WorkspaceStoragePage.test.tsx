@@ -102,7 +102,7 @@ describe("WorkspaceStoragePage", () => {
     fireEvent.doubleClick(await screen.findByRole("treeitem", { name: /Workspace/ }));
     fireEvent.change(screen.getByPlaceholderText("Search names or relative paths"), { target: { value: "src" } });
 
-    expect(screen.getByRole("treeitem", { name: /src/ })).toHaveClass("search-match");
-    expect(screen.getByRole("treeitem", { name: /target/ })).toHaveClass("search-dim");
+    expect(screen.getByRole("treeitem", { name: /src/ })).toHaveClass("ring-2", "ring-offset-1");
+    expect(screen.getByRole("treeitem", { name: /target/ })).toHaveClass("opacity-35", "grayscale");
   });
 });

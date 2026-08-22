@@ -413,9 +413,9 @@ export function App() {
                   <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">{selectedWorkspace.name}</h1>
                   <Badge variant={selectedWorkspace.status === "attention" ? "destructive" : "secondary"}>{workspaceStatusLabel(selectedWorkspace.status)}</Badge>
                 </div>
-                <button type="button" className="mt-1 flex max-w-full items-center gap-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground" onClick={() => void navigator.clipboard?.writeText(selectedWorkspace.path)} title={tr("workspace.copyPath")}>
+                <Button variant="bare" size="content" type="button" className="mt-1 flex max-w-full items-center gap-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground" onClick={() => void navigator.clipboard?.writeText(selectedWorkspace.path)} title={tr("workspace.copyPath")}>
                   <code className="truncate">{selectedWorkspace.path}</code><Copy size={13} className="shrink-0" />
-                </button>
+                </Button>
               </div>
             </div>
             <WorkspaceActions workspace={selectedWorkspace} onError={setMessage} onScan={() => load(project, manifest)} busy={busy} onReview={() => plan(false)} reviewDisabled={busy || !hasUnsavedDraft} />
@@ -816,7 +816,7 @@ function Overview({ workspace, scan, manifest }: { workspace: WorkspaceSummary; 
   return <div className="grid gap-5">
     {scan.warnings.map((warning) => <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-700" key={warning}><CircleAlert size={16} className="mt-0.5 shrink-0" /><span>{warning}</span></div>)}
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-xl border border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-      <button type="button" className="flex min-w-0 max-w-full items-center gap-2 text-left transition-colors hover:text-foreground" title={tr("workspace.copyPath")} onClick={() => void navigator.clipboard?.writeText(workspace.path)}><code className="truncate">{workspace.path}</code><Copy size={13} className="shrink-0" /></button>
+      <Button variant="bare" size="content" type="button" className="flex min-w-0 max-w-full items-center gap-2 text-left transition-colors hover:text-foreground" title={tr("workspace.copyPath")} onClick={() => void navigator.clipboard?.writeText(workspace.path)}><code className="truncate">{workspace.path}</code><Copy size={13} className="shrink-0" /></Button>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1"><span><strong className="mr-1.5 font-medium text-foreground">{tr("workspace.discoverySources")}</strong>{sources}</span><span><strong className="mr-1.5 font-medium text-foreground">{tr("workspace.lastScanLabel")}</strong>{workspace.last_scanned_at ? relativeTime(workspace.last_scanned_at) : tr("common.never")}</span></div>
     </div>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{stats.map(([label, value], index) => <Card className="rounded-xl border-border/70 shadow-sm" key={label}><CardContent className="grid min-h-[92px] content-center gap-1 px-4 py-3"><span className="text-xs font-medium text-muted-foreground">{label}</span><strong className={cn("text-lg tracking-tight", index === 0 && issueCount > 0 && "text-amber-700")}>{value}</strong></CardContent></Card>)}</div>

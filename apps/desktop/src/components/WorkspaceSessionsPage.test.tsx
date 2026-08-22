@@ -119,12 +119,12 @@ describe("WorkspaceSessionsPage", () => {
     await waitFor(() => expect(api.refreshWorkspaceSessions).toHaveBeenCalledWith("workspace", true));
     expect(api.workspaceSessions).not.toHaveBeenCalled();
     expect(screen.queryByText("Deleted ghost")).not.toBeInTheDocument();
-    expect(await screen.findByText("Current task")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Current task" })).toBeInTheDocument();
   });
 
   it("uses the same forced refresh for the manual refresh action", async () => {
     render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
-    expect(await screen.findByText("Current task")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Current task" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
 
@@ -146,7 +146,7 @@ describe("WorkspaceSessionsPage", () => {
     render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
     await waitFor(() => expect(screen.getByText("Current task")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: /All/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /All/ }));
     fireEvent.click(await screen.findByText("Old task"));
 
     expect(await screen.findByText("The original transcript is no longer available.")).toBeInTheDocument();
@@ -163,11 +163,11 @@ describe("WorkspaceSessionsPage", () => {
     await user.click(screen.getByRole("combobox", { name: "Agent filter" }));
     await user.click(await screen.findByRole("option", { name: "Claude Code" }));
 
-    expect(screen.getByRole("button", { name: /Current 0/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Metadata only 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Current 0/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Metadata only 1/ })).toBeInTheDocument();
     expect(screen.getByText("Historical records found: 1. Original transcripts are unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "View metadata" }));
-    expect(await screen.findByRole("button", { name: /Old task/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Old task" })).toBeInTheDocument();
   });
 
   it("does not access native history while indexing is disabled", async () => {

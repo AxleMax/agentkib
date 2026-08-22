@@ -119,6 +119,11 @@ vi.mock("../core/api", () => ({
 
 const storage = new Map<string, string>();
 const renderApp = () => render(<AppDialogProvider><App /></AppDialogProvider>);
+const waitForHome = async () => {
+  const home = await screen.findByRole("button", { name: "Home" });
+  await waitFor(() => expect(home).toHaveAttribute("aria-current", "page"));
+  return home;
+};
 beforeEach(async () => {
   storage.clear();
   tauriListeners.clear();
@@ -224,10 +229,10 @@ describe("AgentKib desktop", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-    expect(await screen.findByRole("heading", { name: "Home" })).toBeInTheDocument();
+    await waitForHome();
     await act(async () => { finishApply(); });
 
-    expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument();
+    await waitForHome();
     expect(api.scan).toHaveBeenCalledTimes(scanCount);
   });
 
@@ -321,7 +326,7 @@ describe("AgentKib desktop", () => {
 
   it("opens the global asset center without forcing folder selection", async () => {
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     expect(screen.getByText("No workspaces found")).toBeInTheDocument();
     expect(screen.queryByText("选择本地项目")).not.toBeInTheDocument();
   });
@@ -332,7 +337,7 @@ describe("AgentKib desktop", () => {
       providers: [{ agent: "open-claw", available: false, quality: "incomplete", imported_events: 0, error: "gateway offline" }],
     });
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     expect(screen.getByText("Everything is in order")).toBeInTheDocument();
     expect(screen.queryByText("gateway offline")).not.toBeInTheDocument();
   });
@@ -377,7 +382,7 @@ describe("AgentKib desktop", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Review repairs" }));
     await waitFor(() => expect(api.plan).toHaveBeenCalledWith("/tmp/first", expect.anything(), false));
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Workspaces" }).find((button) => button.classList.contains("breadcrumb"))!);
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Primary navigation" })).getByRole("button", { name: "Workspaces" }));
     fireEvent.click(await screen.findByRole("button", { name: /Second.*\/tmp\/second/ }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Second" })).toBeInTheDocument());
     await act(async () => finishPlan({
@@ -396,7 +401,7 @@ describe("AgentKib desktop", () => {
       id: "project", path: "/tmp/project", name: "Project", status: "healthy", asset_count: 0, warning_count: 0, sources: [],
     }]);
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     expect(screen.queryByText("Recent Activity")).not.toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*1/ }));
@@ -433,16 +438,18 @@ describe("AgentKib desktop", () => {
     renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /Workspaces\s*2/ }));
 
-    expect(await screen.findByText("2 workspaces")).toBeInTheDocument();
+    expect(screen.getAllByText("2 workspaces")).toHaveLength(2);
     expect(screen.getAllByText("Codex").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0);
-    expect(document.querySelectorAll(".workspace-status.attention")).toHaveLength(1);
-    expect(document.querySelector(".workspace-asset-count.is-zero")).toBeInTheDocument();
-    expect(document.querySelector(".workspace-asset-count.empty")).not.toBeInTheDocument();
+    const healthyRow = screen.getByRole("row", { name: /Healthy Project/ });
+    const attentionRow = screen.getByRole("row", { name: /Attention Project/ });
+    expect(within(healthyRow).getByText("0")).toBeInTheDocument();
+    expect(within(attentionRow).getByText("Needs attention")).toBeInTheDocument();
+    expect(within(attentionRow).getByText("3")).toBeInTheDocument();
 
     await user.click(screen.getByRole("combobox", { name: "All Agents" }));
     await user.click(await screen.findByRole("option", { name: "Claude Code" }));
-    expect(screen.getByText(/1 workspace/)).toBeInTheDocument();
+    expect(screen.getAllByText("1 workspaces")).toHaveLength(2);
     expect(screen.queryByText("Healthy Project")).not.toBeInTheDocument();
     expect(screen.getByText("Attention Project")).toBeInTheDocument();
 
@@ -485,7 +492,7 @@ describe("AgentKib desktop", () => {
 
   it("keeps low-frequency tasks out of the global navigation", async () => {
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     const navigation = within(screen.getByRole("navigation", { name: "Primary navigation" }));
     expect(navigation.getAllByRole("button").map((button) => button.textContent)).toEqual([
       "Home",
@@ -524,7 +531,7 @@ describe("AgentKib desktop", () => {
     expect(await screen.findByRole("heading", { name: "Agents" })).toBeInTheDocument();
 
     act(() => tauriListeners.get("agentkib:navigate")?.({ payload: { page: "settings", settings_section: "diagnostics" } }));
-    expect(await screen.findByRole("heading", { name: "Diagnostics" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Quota collector" })).toBeInTheDocument();
   });
 
   it("reuses the existing workspace picker for native menu commands", async () => {
@@ -622,10 +629,11 @@ describe("AgentKib desktop", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Git" }));
     fireEvent.click(await screen.findByRole("option", { name: /Commit subject Test/ }));
 
-    expect(await screen.findByText("Commit ccccccc")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    expect(await screen.findByText("Commit subject")).toBeInTheDocument();
+    expect(screen.getByText("ccccccc")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to Git" }));
     expect(await screen.findByPlaceholderText("Search commits or hashes")).toBeInTheDocument();
-    expect(screen.queryByText("Commit ccccccc")).not.toBeInTheDocument();
+    expect(screen.queryByText("ccccccc")).not.toBeInTheDocument();
   });
 
   it("treats the native quit request as a real app exit", async () => {
@@ -681,7 +689,7 @@ describe("AgentKib desktop", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Project \/tmp\/project/ }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Project" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(await screen.findByRole("heading", { name: "General" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Interface" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(await screen.findByRole("heading", { name: "Project" })).toBeInTheDocument();
   });
@@ -701,7 +709,7 @@ describe("AgentKib desktop", () => {
     expect(await screen.findByText("Activity Heatmap")).toBeInTheDocument();
     expect(screen.queryByText("Agent Usage")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Token" }));
+    fireEvent.click(within(screen.getByRole("tablist", { name: "Achievements" })).getByRole("tab", { name: "Token" }));
     expect(await screen.findByText("Agent Usage")).toBeInTheDocument();
     expect(screen.queryByText("Activity Heatmap")).not.toBeInTheDocument();
   });
@@ -764,57 +772,58 @@ describe("AgentKib desktop", () => {
   });
 
   it.each([
-    ["zh-CN", "首页", "没有发现可用工作区"],
-    ["zh-TW", "首頁", "找不到可用工作區"],
-    ["ja-JP", "ホーム", "ワークスペースが見つかりません"],
-    ["en-US", "Home", "No workspaces found"],
-  ] as const)("renders the home empty state in %s", async (locale, heading, emptyText) => {
+    ["zh-CN", "没有发现可用工作区"],
+    ["zh-TW", "找不到可用工作區"],
+    ["ja-JP", "ワークスペースが見つかりません"],
+    ["en-US", "No workspaces found"],
+  ] as const)("renders the home empty state in %s", async (locale, emptyText) => {
     await initializeI18n(locale);
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument());
-    expect(screen.getByText(emptyText)).toBeInTheDocument();
+    expect(await screen.findByText(emptyText)).toBeInTheDocument();
   });
 
   it("switches language immediately from Settings", async () => {
     const user = userEvent.setup();
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("combobox", { name: "Language" }));
     await user.click(await screen.findByRole("option", { name: "简体中文" }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: "常规" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "界面" })).toBeInTheDocument());
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
   it("switches appearance immediately without leaving Settings", async () => {
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Light" }));
 
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
     expect(document.documentElement.style.colorScheme).toBe("light");
-    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Settings navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Interface" })).toBeInTheDocument();
     expect(api.setThemePreference).toHaveBeenCalledWith("light");
   });
 
   it("uses the white app icon by default and switches it from Settings", async () => {
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(screen.getByRole("button", { name: "White" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Black" }));
 
     await waitFor(() => expect(api.setAppIconPreference).toHaveBeenCalledWith("black"));
-    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Settings navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Interface" })).toBeInTheDocument();
   });
 
   it("disables background hiding when the system tray is unavailable", async () => {
     const user = userEvent.setup();
     vi.mocked(api.runtime).mockResolvedValueOnce(testRuntime(false));
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(screen.getByText(/System tray unavailable/)).toBeInTheDocument();
@@ -833,7 +842,7 @@ describe("AgentKib desktop", () => {
 
   it("shows Obsidian as a neutral local integration in Settings", async () => {
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
     expect(await screen.findByRole("heading", { name: "Remote Gateways" })).toBeInTheDocument();
@@ -844,7 +853,7 @@ describe("AgentKib desktop", () => {
 
   it.runIf(["darwin", "windows"].includes(import.meta.env.TAURI_ENV_PLATFORM))("opens system file access settings from Data & Privacy", async () => {
     renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument());
+    await waitForHome();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Data & Privacy" }));
     fireEvent.click(screen.getByRole("button", { name: "Open Files & Folders" }));
@@ -854,13 +863,13 @@ describe("AgentKib desktop", () => {
 
   it("collapses the sidebar completely and restores the preference", async () => {
     const first = renderApp();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Home" })).toHaveAttribute("data-tauri-drag-region"));
+    await waitForHome();
     const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
-    expect(collapse.closest(".window-toolbar")).toHaveAttribute("data-tauri-drag-region");
+    expect(collapse.closest("[data-tauri-drag-region]")).toHaveAttribute("data-tauri-drag-region", "true");
     expect(collapse.closest(".brand")).toBeNull();
     fireEvent.click(collapse);
     expect(storage.get("agentkib.sidebar.collapsed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Expand sidebar" }).closest(".window-toolbar")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand sidebar" }).closest("[data-tauri-drag-region]")).toBeInTheDocument();
     first.unmount();
     renderApp();
     await waitFor(() => expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument());

@@ -30,7 +30,7 @@ describe("SelectControl", () => {
       toJSON: () => ({}),
     });
     await user.click(trigger);
-    await user.click(screen.getByRole("option", { name: "简体中文" }));
+    await user.click(await screen.findByRole("option", { name: "简体中文" }));
 
     expect(trigger).toHaveTextContent("简体中文");
   });

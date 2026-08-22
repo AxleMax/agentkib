@@ -13,7 +13,8 @@ describe("AgentIcon", () => {
       const { container } = render(<AgentIcon agent={agent} />);
       const icon = container.querySelector("img");
 
-      expect(icon?.getAttribute("src")).toContain(".svg");
+      expect(icon?.getAttribute("alt")).toBe("");
+      expect(icon?.getAttribute("src")).toMatch(/\.svg|^data:image\/svg\+xml/);
       expect(container.textContent).toBe("");
     },
   );
