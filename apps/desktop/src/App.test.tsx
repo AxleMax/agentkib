@@ -3,11 +3,14 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import { RouterProvider } from "@tanstack/react-router";
 import { AppDialogProvider } from "@/components/AppDialogProvider";
 import { api } from "./core/api";
 import { diffLines } from "@/features/workspace/diff";
 import { initializeI18n } from "./core/i18n";
+import { createAppRouter } from "./router";
+import { useAppStore } from "./stores/app-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { RuntimeInfo } from "./core/types";
 
@@ -47,7 +50,7 @@ vi.mock("@tauri-apps/api/event", () => ({
     }),
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
-vi.mock("../core/api", () => ({
+vi.mock("./core/api", () => ({
   api: {
     workspaces: vi.fn().mockResolvedValue([]),
     agentInstallations: vi.fn().mockResolvedValue([]),
@@ -291,12 +294,16 @@ vi.mock("../core/api", () => ({
 }));
 
 const storage = new Map<string, string>();
-const renderApp = () =>
-  render(
+const renderApp = () => {
+  useAppStore.getState().reset();
+  useWorkspaceStore.getState().resetWorkspace();
+  window.location.hash = "";
+  return render(
     <AppDialogProvider>
-      <App />
+      <RouterProvider router={createAppRouter()} />
     </AppDialogProvider>,
   );
+};
 const waitForHome = async () => {
   const home = await screen.findByRole("button", { name: "Home" });
   await waitFor(() => expect(home).toHaveAttribute("aria-current", "page"));

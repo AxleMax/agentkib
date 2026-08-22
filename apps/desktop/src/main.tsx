@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
+import { RouterProvider } from "@tanstack/react-router";
 import { AppDialogProvider } from "@/components/AppDialogProvider";
 import { QuotaPopover } from "@/features/quota/QuotaPopover";
 import { api } from "./core/api";
@@ -8,6 +8,7 @@ import { initializeI18n, normalizeLocale } from "./core/i18n";
 import { applyPlatformAttribute } from "./core/platform";
 import { applyTheme, systemTheme } from "./core/theme";
 import type { RuntimeInfo } from "./core/types";
+import { createAppRouter } from "./router";
 import { useAppStore } from "./stores/app-store";
 import "./styles.css";
 
@@ -28,11 +29,11 @@ async function bootstrap() {
   await initializeI18n(locale);
   if (bootstrapRuntime) useAppStore.getState().setRuntime(bootstrapRuntime);
   const surface = new URLSearchParams(window.location.search).get("surface");
+  const app =
+    surface === "quota-popover" ? <QuotaPopover /> : <RouterProvider router={createAppRouter()} />;
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
-      <AppDialogProvider>
-        {surface === "quota-popover" ? <QuotaPopover /> : <App />}
-      </AppDialogProvider>
+      <AppDialogProvider>{app}</AppDialogProvider>
     </StrictMode>,
   );
 }

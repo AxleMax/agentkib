@@ -125,48 +125,50 @@ function SettingsRoute() {
       )}
       <main
         className={cn(
-          "!col-start-2 !row-start-1 !min-h-0 !min-w-0 !h-full !overflow-x-hidden !overflow-y-auto !overscroll-contain !text-sm",
+          "!col-start-2 !row-start-1 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm",
           `settings-section-${section}`,
         )}
       >
         <header
           className={cn(
-            "page-header !sticky !top-0 !z-10 !flex !min-h-[58px] !h-[58px] !items-center !justify-between !border-b !border-[var(--page-header-border)] !bg-[var(--page-header-background)] !pr-7",
+            "page-header !z-10 !flex !min-h-[58px] !h-[58px] !flex-none !items-center !justify-between !border-b !border-[var(--page-header-border)] !bg-[var(--page-header-background)] !pr-7",
             sidebarCollapsed ? "!pl-[132px]" : "!pl-7",
           )}
           data-tauri-drag-region
         />
-        {message && (
-          <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-            <CircleAlert size={17} />
-            {message}
-          </div>
-        )}
-        <section
-          className={cn(
-            "mx-auto grid w-full max-w-[1180px] gap-5 px-7 pb-10 pt-[22px] max-[900px]:px-[18px]",
-            section === "general" && "pt-4",
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+          {message && (
+            <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              <CircleAlert size={17} />
+              {message}
+            </div>
           )}
-        >
-          <GlobalSettings
-            section={section}
-            runtime={runtime}
-            workspaces={workspaces}
-            discovery={discovery}
-            insightsStatus={insightsStatus}
-            quotaStatus={quotaStatus}
-            remoteGateways={remoteGateways}
-            scanRoots={scanRoots}
-            excluded={excluded}
-            activity={activity}
-            onAddRoot={addRoot}
-            onRemoveRoot={removeRoot}
-            onRestore={restoreExcluded}
-            onCloseBehaviorChanged={changeCloseBehavior}
-            onLocaleChanged={changeRuntime}
-            onRemoteGatewaysChanged={refreshRemoteGateways}
-          />
-        </section>
+          <section
+            className={cn(
+              "mx-auto grid w-full max-w-[1180px] gap-5 px-7 pb-10 pt-[22px] max-[900px]:px-[18px]",
+              section === "general" && "pt-4",
+            )}
+          >
+            <GlobalSettings
+              section={section}
+              runtime={runtime}
+              workspaces={workspaces}
+              discovery={discovery}
+              insightsStatus={insightsStatus}
+              quotaStatus={quotaStatus}
+              remoteGateways={remoteGateways}
+              scanRoots={scanRoots}
+              excluded={excluded}
+              activity={activity}
+              onAddRoot={addRoot}
+              onRemoveRoot={removeRoot}
+              onRestore={restoreExcluded}
+              onCloseBehaviorChanged={changeCloseBehavior}
+              onLocaleChanged={changeRuntime}
+              onRemoteGatewaysChanged={refreshRemoteGateways}
+            />
+          </section>
+        </div>
       </main>
     </div>
   );

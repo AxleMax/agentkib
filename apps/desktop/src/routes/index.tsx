@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { GlobalHome } from "../AppShell";
+import { GlobalHome } from "@/features/home/GlobalHome";
 import { api } from "../core/api";
 import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/catalog";
 import { useAppStore } from "../stores/app-store";

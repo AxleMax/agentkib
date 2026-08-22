@@ -293,9 +293,9 @@ function WorkspaceLayout() {
     sidebarCollapsed && "sidebar-collapsed !grid-cols-[0_minmax(0,1fr)]",
   );
   const mainClass =
-    "!col-start-2 !row-start-1 !min-h-0 !min-w-0 !h-full !overflow-x-hidden !overflow-y-auto !overscroll-contain !text-sm";
+    "!col-start-2 !row-start-1 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const pageHeaderClass = cn(
-    "page-header !sticky !top-0 !z-10 !flex !min-h-[58px] !h-[58px] !items-center !justify-between !border-b !border-[var(--page-header-border)] !bg-[var(--page-header-background)] !pr-7",
+    "page-header !z-10 !flex !min-h-[58px] !h-[58px] !flex-none !items-center !justify-between !border-b !border-[var(--page-header-border)] !bg-[var(--page-header-background)] !pr-7",
     sidebarCollapsed ? "!pl-[132px]" : "!pl-7",
   );
   const contentClass =
@@ -328,74 +328,78 @@ function WorkspaceLayout() {
       )}
       <main className={mainClass}>
         <header className={pageHeaderClass} data-tauri-drag-region />
-        {message && (
-          <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-            {message}
-          </div>
-        )}
-        <div className={cn(contentClass, "grid gap-4 pt-5")}>
-          <section className="flex flex-col gap-4 rounded-2xl border border-border/70 bg-card px-5 py-4 shadow-sm md:flex-row md:items-center md:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-foreground text-background">
-                <FolderGit2 size={21} />
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">
-                    {activeWorkspace.name}
-                  </h1>
-                  <Badge
-                    variant={activeWorkspace.status === "attention" ? "destructive" : "secondary"}
-                  >
-                    {workspaceStatusLabel(activeWorkspace.status)}
-                  </Badge>
-                </div>
-                <code className="mt-1 block truncate text-xs text-muted-foreground">
-                  {activeWorkspace.path}
-                </code>
-              </div>
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+          {message && (
+            <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {message}
             </div>
-            <WorkspaceActions
-              workspace={activeWorkspace}
-              onError={setMessage}
-              onScan={() => loadWorkspace(manifest)}
-              busy={busy}
-              onReview={() => plan(false)}
-              reviewDisabled={busy || !hasUnsavedDraft}
-            />
-          </section>
-          <nav
-            className="rounded-xl border border-border/70 bg-card px-2 shadow-sm"
-            aria-label={activeWorkspace.name}
-          >
-            <Tabs value={currentPage} onValueChange={(value) => navigateWorkspace(value as Page)}>
-              <TabsList
-                className="w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent px-0"
-                variant="line"
-              >
-                {workspaceTabs.map(([id, label, Icon]) => (
-                  <TabsTrigger
-                    className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm"
-                    key={id}
-                    value={id}
-                  >
-                    <Icon size={15} />
-                    {tr(label)}
-                    {id === "changes" && changeSet?.changes.length ? (
-                      <em>{changeSet.changes.length}</em>
-                    ) : null}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          </nav>
-          <section className={cn("min-w-0", currentPage === "git" && "min-h-[calc(100vh-170px)]")}>
-            {!scan || !manifest || busy ? (
-              <LoadingState label={tr("common.loading")} />
-            ) : (
-              <Outlet />
-            )}
-          </section>
+          )}
+          <div className={cn(contentClass, "grid gap-4 pt-5")}>
+            <section className="flex flex-col gap-4 rounded-2xl border border-border/70 bg-card px-5 py-4 shadow-sm md:flex-row md:items-center md:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-foreground text-background">
+                  <FolderGit2 size={21} />
+                </span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">
+                      {activeWorkspace.name}
+                    </h1>
+                    <Badge
+                      variant={activeWorkspace.status === "attention" ? "destructive" : "secondary"}
+                    >
+                      {workspaceStatusLabel(activeWorkspace.status)}
+                    </Badge>
+                  </div>
+                  <code className="mt-1 block truncate text-xs text-muted-foreground">
+                    {activeWorkspace.path}
+                  </code>
+                </div>
+              </div>
+              <WorkspaceActions
+                workspace={activeWorkspace}
+                onError={setMessage}
+                onScan={() => loadWorkspace(manifest)}
+                busy={busy}
+                onReview={() => plan(false)}
+                reviewDisabled={busy || !hasUnsavedDraft}
+              />
+            </section>
+            <nav
+              className="rounded-xl border border-border/70 bg-card px-2 shadow-sm"
+              aria-label={activeWorkspace.name}
+            >
+              <Tabs value={currentPage} onValueChange={(value) => navigateWorkspace(value as Page)}>
+                <TabsList
+                  className="w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent px-0"
+                  variant="line"
+                >
+                  {workspaceTabs.map(([id, label, Icon]) => (
+                    <TabsTrigger
+                      className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm"
+                      key={id}
+                      value={id}
+                    >
+                      <Icon size={15} />
+                      {tr(label)}
+                      {id === "changes" && changeSet?.changes.length ? (
+                        <em>{changeSet.changes.length}</em>
+                      ) : null}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </nav>
+            <section
+              className={cn("min-w-0", currentPage === "git" && "min-h-[calc(100vh-170px)]")}
+            >
+              {!scan || !manifest || busy ? (
+                <LoadingState label={tr("common.loading")} />
+              ) : (
+                <Outlet />
+              )}
+            </section>
+          </div>
         </div>
       </main>
     </div>
