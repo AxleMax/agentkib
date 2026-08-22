@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Activity, Award, Bot, Boxes, Brain, Check, ChevronRight, CircleAlert, Code2, Copy, ExternalLink, FileCode2, FolderGit2, Gauge, GitCommitHorizontal, GitCompareArrows, History, Home, LayoutDashboard, Library, MessageSquareText, MoreHorizontal, Pencil, PlugZap, RefreshCw, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
@@ -82,6 +83,7 @@ export function App() {
   const [appMode, setAppMode] = useState<AppMode>("main");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("agentkib.sidebar.collapsed") === "true");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [project, setProject] = useState(""); const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummary>();
   const selectedWorkspaceRef = useRef<{ id: string; path: string } | undefined>(undefined);
   selectedWorkspaceRef.current = selectedWorkspace ? { id: selectedWorkspace.id, path: selectedWorkspace.path } : undefined;
@@ -197,6 +199,33 @@ export function App() {
     return () => { disposed = true; window.clearTimeout(refreshReloadTimer); unlisten?.(); unlistenRefresh?.(); unlistenInsights?.(); unlistenGateways?.(); unlistenQuota?.(); unlistenNavigate?.(); unlistenMenuCommand?.(); unlistenTheme?.(); };
   }, []);
   useEffect(() => { localStorage.setItem("agentkib.sidebar.collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
+  useEffect(() => {
+    if (appPlatform !== "macos") return;
+
+    const appWindow = getCurrentWindow();
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    const syncFullscreen = async () => {
+      try {
+        const fullscreen = await appWindow.isFullscreen();
+        if (!disposed) setIsFullscreen(fullscreen);
+      } catch {
+        if (!disposed) setIsFullscreen(false);
+      }
+    };
+
+    void syncFullscreen();
+    void appWindow.onResized(() => { void syncFullscreen(); }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
   useEffect(() => {
     const refreshRuntime = () => {
       if (pendingRefreshKinds.current.delete("discovery")) void loadDiscoveryCache();
@@ -355,7 +384,7 @@ export function App() {
   const contentClass = "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[22px] max-[900px]:!px-[18px]";
   if (appMode === "settings") return (
     <div className={shellClass}>
-      <WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
+      <WindowToolbar platform={appPlatform} fullscreen={isFullscreen} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <SettingsSidebar active={settingsSection} collapsed={sidebarCollapsed} platform={appPlatform} onSelect={setSettingsSection} onBack={() => setAppMode("main")} />
       {!sidebarCollapsed && <Button className="fixed inset-0 z-20 cursor-default bg-transparent lg:hidden" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}
       <main className={cn(mainClass, `settings-section-${settingsSection}`)}>
@@ -369,7 +398,7 @@ export function App() {
   );
   if (selectedWorkspace && project && scan) return (
     <div className={shellClass}>
-      <WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
+      <WindowToolbar platform={appPlatform} fullscreen={isFullscreen} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <AppSidebar active="workspaces" entries={navigation} collapsed={sidebarCollapsed} platform={appPlatform} onNavigate={navigateGlobal} onSettings={openSettings} />
       {!sidebarCollapsed && <Button className="fixed inset-0 z-20 cursor-default bg-transparent lg:hidden" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}
       <main className={mainClass}>
@@ -413,7 +442,7 @@ export function App() {
   );
 
   const discoveryFailure = refreshJobs.find((job) => job.kind === "discovery" && job.state === "failed");
-  return <div className={shellClass}><WindowToolbar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} /><AppSidebar active={globalPage} entries={navigation} collapsed={sidebarCollapsed} platform={appPlatform} onNavigate={navigateGlobal} onSettings={openSettings} />{!sidebarCollapsed && <Button className="fixed inset-0 z-20 cursor-default bg-transparent lg:hidden" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}<main className={mainClass}><header className={pageHeaderClass} data-tauri-drag-region />{message && <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><CircleAlert size={17} />{message}</div>}{globalPage === "workspaces" && discoveryFailure?.error && <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><CircleAlert size={17} />{discoveryFailure.error}</div>}<section className={cn(contentClass, "")}>
+  return <div className={shellClass}><WindowToolbar platform={appPlatform} fullscreen={isFullscreen} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} /><AppSidebar active={globalPage} entries={navigation} collapsed={sidebarCollapsed} platform={appPlatform} onNavigate={navigateGlobal} onSettings={openSettings} />{!sidebarCollapsed && <Button className="fixed inset-0 z-20 cursor-default bg-transparent lg:hidden" type="button" aria-label={tr("common.closeSidebar")} onClick={() => setSidebarCollapsed(true)} />}<main className={mainClass}><header className={pageHeaderClass} data-tauri-drag-region />{message && <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><CircleAlert size={17} />{message}</div>}{globalPage === "workspaces" && discoveryFailure?.error && <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><CircleAlert size={17} />{discoveryFailure.error}</div>}<section className={cn(contentClass, "")}>
     {globalPage === "home" && <GlobalHome workspaces={workspaces} doctorSummaries={doctorSummaries} installations={installations} memories={globalMemories} discovery={discovery} activity={activity} insights={insightsSummary} uniqueAssetCount={groupedCatalog.filter((asset) => asset.scope === "workspace").length} assetCounts={assetCounts} onShowInsights={() => setGlobalPage("insights")} onShowWorkspaces={() => setGlobalPage("workspaces")} onShowAgents={() => setGlobalPage("agents")} onOpen={openWorkspace} onOpenDoctor={(workspace) => openWorkspace(workspace, "doctor")} onOpenAssets={(section) => { setAssetSection(section); setGlobalPage("catalog"); }} onAddRoot={async () => { await addScanRootFromDialog(); }} />}
     {globalPage === "workspaces" && <WorkspacesPage view={workspaceView} storageJob={refreshJobs.find((job) => job.kind === "storage")} workspaces={workspaces} assetCounts={assetCounts} discoveryRefreshing={discoveryRefreshing} onAddWorkspace={() => void selectProject()} onViewChange={setWorkspaceView} onOpen={openWorkspace} onRefreshDiscovery={refreshDiscovery} onRefreshWorkspace={async (id) => { await api.refreshWorkspace(id); await loadGlobal(); }} onExclude={async (id) => { if (!await dialogs.confirm({ description: tr("workspace.ignoreConfirm"), tone: "destructive" })) return; await api.excludeWorkspace(id); await loadGlobal(); }} />}
     {globalPage === "agents" && <DeferredPage><AgentsPageLazy installations={installations} assets={catalog.filter((asset) => asset.scope === "agent-home")} workspaces={workspaces} remoteGateways={remoteGateways} insightsStatus={insightsStatus} onOpen={openWorkspace} /></DeferredPage>}
@@ -582,12 +611,12 @@ function GlobalAssetsPage({ section, onSection, assets, workspaces, memories, ru
     </section>
     <section className="rounded-2xl border border-border bg-card px-3 shadow-sm">
       <Tabs value={section} onValueChange={(value) => onSection(value as AssetSection)}>
-        <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none bg-transparent p-0" variant="line" aria-label={tr("nav.assets")}>
-          <TabsTrigger className="flex-none gap-2 rounded-none px-3 py-3" value="instructions"><FileCode2 size={15} />{tr("assets.instructions")}<Badge variant="secondary" className="min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]">{instructionAssets.length}</Badge></TabsTrigger>
-          <TabsTrigger className="flex-none gap-2 rounded-none px-3 py-3" value="skills"><Sparkles size={15} />{tr("assets.skills")}<Badge variant="secondary" className="min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]">{skillAssets.length}</Badge></TabsTrigger>
-          <TabsTrigger className="flex-none gap-2 rounded-none px-3 py-3" value="mcp"><PlugZap size={15} />MCP<Badge variant="secondary" className="min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]">{connectionAssets.length}</Badge></TabsTrigger>
-          <TabsTrigger className="flex-none gap-2 rounded-none px-3 py-3" value="memory"><Brain size={15} />{tr("assets.memories")}<Badge variant="secondary" className={cn("min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]", pending && "border-amber-300 bg-amber-100 text-amber-800")} aria-label={pendingMemoryLabel} title={pendingMemoryLabel}>{memories.length}</Badge></TabsTrigger>
-          <TabsTrigger className="flex-none gap-2 rounded-none px-3 py-3" value="other"><Boxes size={15} />{tr("assets.hooksProfiles")}<Badge variant="secondary" className="min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]">{otherAssets.length}</Badge></TabsTrigger>
+        <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0" variant="line" aria-label={tr("nav.assets")}>
+          <TabsTrigger className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm" value="instructions"><FileCode2 size={15} />{tr("assets.instructions")}<Badge variant="secondary" className="min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]">{instructionAssets.length}</Badge></TabsTrigger>
+          <TabsTrigger className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm" value="skills"><Sparkles size={15} />{tr("assets.skills")}<Badge variant="secondary" className="min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]">{skillAssets.length}</Badge></TabsTrigger>
+          <TabsTrigger className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm" value="mcp"><PlugZap size={15} />MCP<Badge variant="secondary" className="min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]">{connectionAssets.length}</Badge></TabsTrigger>
+          <TabsTrigger className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm" value="memory"><Brain size={15} />{tr("assets.memories")}<Badge variant="secondary" className={cn("min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]", pending && "border-amber-300 bg-amber-100 text-amber-800")} aria-label={pendingMemoryLabel} title={pendingMemoryLabel}>{memories.length}</Badge></TabsTrigger>
+          <TabsTrigger className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm" value="other"><Boxes size={15} />{tr("assets.hooksProfiles")}<Badge variant="secondary" className="min-w-5 justify-center rounded-full px-1.5 py-0 text-[11px]">{otherAssets.length}</Badge></TabsTrigger>
         </TabsList>
       </Tabs>
     </section>
@@ -808,7 +837,7 @@ function Assets({ section, onSection, scan, manifest, onChange }: { section: Wor
   const addSkill = () => { if (!skillName.trim() || !skillPath.trim()) return; onChange({ ...manifest, skills: [...manifest.skills.filter((skill) => skill.name !== skillName.trim()), { name: skillName.trim(), path: skillPath.trim(), targets: [] }] }); setSkillName(""); setSkillPath(""); };
   const addConnection = () => { if (!connectionName.trim() || !endpoint.trim()) return; const common = { name: connectionName.trim(), env: {}, allow_tools: [] as string[], targets: [] as AgentKind[] }; const connection: ConnectionDefinition = transport === "stdio" ? { ...common, transport, command: endpoint.trim(), args: [] } : { ...common, transport, url: endpoint.trim() }; onChange({ ...manifest, connections: [...manifest.connections.filter((item) => item.name !== connection.name), connection] }); setConnectionName(""); setEndpoint(""); };
   const tabs: Array<[WorkspaceAssetSection, string, number]> = [["instructions", "assets.instructions", manifest.instructions.shared.trim() ? 1 : 0], ["skills", "assets.skills", manifest.skills.length], ["mcp", "MCP", manifest.connections.length], ["native", "assets.nativeAssets", nativeAssets.length]];
-  return <div className="grid gap-4 grid gap-4"><Tabs value={section} onValueChange={(value) => onSection(value as WorkspaceAssetSection)}><TabsList className="w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent" variant="line" aria-label={tr("nav.assets")}>{tabs.map(([value, label, count]) => <TabsTrigger className="flex-none rounded-none px-3" value={value} key={value}>{label === "MCP" ? label : tr(label)}<em>{count}</em></TabsTrigger>)}</TabsList></Tabs>
+  return <div className="grid gap-4"><Tabs value={section} onValueChange={(value) => onSection(value as WorkspaceAssetSection)}><TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0" variant="line" aria-label={tr("nav.assets")}>{tabs.map(([value, label, count]) => <TabsTrigger className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm" value={value} key={value}>{label === "MCP" ? label : tr(label)}<em>{count}</em></TabsTrigger>)}</TabsList></Tabs>
     {section === "instructions" && <Card className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">{!scan.manifest_exists && <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"><ShieldCheck size={16} /><strong>{tr("assets.sharedLayerEmpty")}</strong></div>}<Label className="grid gap-2 p-4">{tr("assets.sharedInstructions")}<Textarea value={manifest.instructions.shared} onChange={(event) => onChange({ ...manifest, instructions: { ...manifest.instructions, shared: event.target.value } })} /></Label></Card>}
     {section === "skills" && <Card className="rounded-xl border border-border bg-card shadow-sm overflow-hidden"><div className="grid gap-4">{manifest.skills.map((skill) => <span className="flex items-center justify-between gap-3 rounded-lg border border-border p-3" key={skill.name}><span><strong>{skill.name}</strong><small>{skill.path}</small></span><Button aria-label={tr("common.remove")} onClick={() => onChange({ ...manifest, skills: manifest.skills.filter((item) => item.name !== skill.name) })}><X size={13} /></Button></span>)}</div><div className="flex flex-wrap items-center gap-2 p-4"><Input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder={tr("assets.name")} /><Input value={skillPath} onChange={(event) => setSkillPath(event.target.value)} placeholder=".agents/skills/name" /><Button className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={addSkill}>{tr("common.add")}</Button></div></Card>}
     {section === "mcp" && <Card className="rounded-xl border border-border bg-card shadow-sm overflow-hidden"><div className="grid gap-4">{manifest.connections.map((connection) => <span className="flex items-center justify-between gap-3 rounded-lg border border-border p-3" key={connection.name}><span><strong>{connection.name}</strong><small>{connection.transport === "stdio" ? connection.command : connection.url}</small></span><Button aria-label={tr("common.remove")} onClick={() => onChange({ ...manifest, connections: manifest.connections.filter((item) => item.name !== connection.name) })}><X size={13} /></Button></span>)}</div><div className="flex flex-wrap items-center gap-2 p-4 grid-cols-[repeat(auto-fit,minmax(140px,1fr))]"><Input value={connectionName} onChange={(event) => setConnectionName(event.target.value)} placeholder={tr("assets.name")} /><SelectControl value={transport} onChange={(event) => setTransport(event.target.value as "stdio" | "http")}><option value="stdio">stdio</option><option value="http">HTTP</option></SelectControl><Input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder={transport === "stdio" ? "/absolute/path/to/server" : "https://…"} /><Button className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={addConnection}>{tr("common.add")}</Button></div></Card>}

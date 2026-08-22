@@ -62,7 +62,7 @@ export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPag
   }, [agent, assets, kind, ownership, query, workspaceId]);
   const selected = assets.find((asset) => asset.id === selectedId);
   const workspaceName = (id?: string) => workspaces.find((workspace) => workspace.id === id)?.name ?? "—";
-  const controlClass = "h-10 min-w-[145px] border-border bg-background text-sm text-foreground";
+  const controlClass = "h-10 w-[136px] min-w-0 border-border bg-background text-sm text-foreground";
 
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -72,7 +72,7 @@ export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPag
             <div className="min-w-0"><h2 className="text-base font-semibold tracking-tight text-foreground">{tr("catalog.asset")}</h2></div>
             <Badge variant="secondary" className="tabular-nums">{filtered.length} {tr("common.assets")}</Badge>
           </div>
-          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="grid gap-3 xl:grid-cols-[minmax(280px,1fr)_auto]">
             <label className="flex h-10 min-w-0 items-center gap-2 rounded-lg border border-border bg-background px-3 text-muted-foreground transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
               <Search size={16} aria-hidden="true" />
               <Input

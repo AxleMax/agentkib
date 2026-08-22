@@ -369,10 +369,10 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
   }
 
   return <div className="flex h-full min-h-0 flex-col gap-2">
-    <div className="flex min-h-[42px] items-center gap-2.5">
-      <Tabs value={section} onValueChange={(value) => value === "history" ? showHistory() : showWorktree()}><TabsList className="w-fit justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent" variant="line" aria-label={tr("git.sectionLabel")}>
-        <TabsTrigger className="flex-none rounded-none px-3" value="history"><History size={14} />{tr("git.history")}</TabsTrigger>
-        <TabsTrigger className="flex-none rounded-none px-3" value="worktree"><FileCode2 size={14} />{tr("git.worktree")} {summary?.changes.length ? <em>{summary.changes.length}</em> : null}</TabsTrigger>
+    <div className="flex min-h-11 items-center gap-2.5 border-b border-border">
+      <Tabs className="min-w-0 flex-1" value={section} onValueChange={(value) => value === "history" ? showHistory() : showWorktree()}><TabsList className="w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent px-0" variant="line" aria-label={tr("git.sectionLabel")}>
+        <TabsTrigger className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm" value="history"><History size={15} />{tr("git.history")}</TabsTrigger>
+        <TabsTrigger className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm" value="worktree"><FileCode2 size={15} />{tr("git.worktree")} {summary?.changes.length ? <em>{summary.changes.length}</em> : null}</TabsTrigger>
       </TabsList></Tabs>
       {summary && <div className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground"><GitBranch size={14} /><strong className="max-w-44 truncate text-foreground">{summary.head ?? tr("git.detached")}</strong>{summary.upstream && <span className="max-w-48 truncate max-[760px]:hidden">{summary.upstream}</span>}{(summary.ahead > 0 || summary.behind > 0) && <span className="max-[760px]:hidden">↑{summary.ahead} ↓{summary.behind}</span>}{summary.stash_count > 0 && <span className="max-[760px]:hidden">{tr("git.stashes", { count: summary.stash_count })}</span>}</div>}
       <Button variant="ghost" size="icon" className="shrink-0" onClick={() => void load()} disabled={loading} aria-label={tr("common.refresh")} title={tr("common.refresh")}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></Button>
