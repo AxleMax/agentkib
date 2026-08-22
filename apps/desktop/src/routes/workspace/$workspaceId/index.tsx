@@ -1,3 +1,48 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { LoadingState } from "@/components/ui/loading-state";
+import { useWorkspaceStore } from "../../../stores/workspace-store";
+import { AgentIcon } from "../../../components/AgentIcon";
+import { WorkspaceObsidianCard } from "../../../components/ObsidianIntegration";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { CircleAlert, Copy, FolderGit2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { formatRelativeTime, tr } from "../../../core/i18n";
+import type { AgentKind, Manifest, WorkspaceScan, WorkspaceSummary } from "../../../core/types";
+const agentLabels: Record<AgentKind, string> = { codex: "Codex", "claude-code": "Claude Code", cursor: "Cursor", "open-claw": "OpenClaw", hermes: "Hermes", "deepseek-harness": "DeepSeek Harness" };
+function workspaceStatusLabel(status: WorkspaceSummary["status"]) { return tr(`status.workspace.${status}`); }
+function relativeTime(value: string) { return formatRelativeTime(value); }
+function Overview({ workspace, scan, manifest }: { workspace: WorkspaceSummary; scan: WorkspaceScan; manifest: Manifest }) {
+  const configuredAgents = scan.agents.filter((agent) => agent.detected || agent.warnings.length > 0);
+  const unconfiguredAgents = scan.agents.filter((agent) => !agent.detected && agent.warnings.length === 0);
+  const issueCount = scan.warnings.length + scan.agents.reduce((total, agent) => total + agent.warnings.length, 0);
+  const sharedAssets = (manifest.instructions.shared.trim() ? 1 : 0) + manifest.instructions.scoped.length + manifest.skills.length + manifest.connections.length;
+  const sources = workspace.sources.flatMap((source) => source.agent ? [agentLabels[source.agent]] : []).filter((value, index, values) => values.indexOf(value) === index).join(" · ") || tr("workspace.source.manual");
+  const stats = [[tr("overview.health"), workspaceStatusLabel(issueCount ? "attention" : "healthy")], [tr("overview.sharedAssets"), sharedAssets], [tr("overview.projectAgentConfigs"), scan.agents.filter((agent) => agent.detected).length], [tr("overview.realIssues"), issueCount]] as const;
+  const sourceRows = [[tr("assets.sharedInstructions"), manifest.instructions.shared.trim() ? 1 : 0], [tr("overview.sharedSkills"), manifest.skills.length], ["MCP", manifest.connections.length], [tr("overview.scopedRules"), manifest.instructions.scoped.length]] as const;
+  return <div className="grid gap-5">
+    {scan.warnings.map((warning) => <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-700" key={warning}><CircleAlert size={16} className="mt-0.5 shrink-0" /><span>{warning}</span></div>)}
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-xl border border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+      <Button variant="bare" size="content" type="button" className="flex min-w-0 max-w-full items-center gap-2 text-left transition-colors hover:text-foreground" title={tr("workspace.copyPath")} onClick={() => void navigator.clipboard?.writeText(workspace.path)}><code className="truncate">{workspace.path}</code><Copy size={13} className="shrink-0" /></Button>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1"><span><strong className="mr-1.5 font-medium text-foreground">{tr("workspace.discoverySources")}</strong>{sources}</span><span><strong className="mr-1.5 font-medium text-foreground">{tr("workspace.lastScanLabel")}</strong>{workspace.last_scanned_at ? relativeTime(workspace.last_scanned_at) : tr("common.never")}</span></div>
+    </div>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{stats.map(([label, value], index) => <Card className="rounded-xl border-border/70 shadow-sm" key={label}><CardContent className="grid min-h-[92px] content-center gap-1 px-4 py-3"><span className="text-xs font-medium text-muted-foreground">{label}</span><strong className={cn("text-lg tracking-tight", index === 0 && issueCount > 0 && "text-amber-700")}>{value}</strong></CardContent></Card>)}</div>
+    <div className="grid items-start gap-5 lg:grid-cols-[minmax(300px,.8fr)_minmax(420px,1.2fr)]">
+      <Card className="overflow-hidden rounded-2xl border-border/70 shadow-sm"><CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><CardTitle className="text-base">{tr("overview.publicSource")}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{tr("workspace.discoverySources")}: {sources}</p></div>{scan.manifest_exists && <Badge variant="outline">Schema v{manifest.schema_version}</Badge>}</CardHeader><CardContent className="p-0"><div className="divide-y divide-border/70">{sourceRows.map(([label, value]) => <div className="flex items-center justify-between gap-4 px-5 py-3.5" key={label}><span className="text-sm text-muted-foreground">{label}</span><strong className="text-sm tabular-nums text-foreground">{value}</strong></div>)}</div></CardContent></Card>
+      <Card className="overflow-hidden rounded-2xl border-border/70 shadow-sm"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-base">{tr("overview.projectAgentConfigs")}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{tr("overview.nativeAssets", { count: configuredAgents.reduce((total, agent) => total + agent.asset_count, 0) })}</p></CardHeader><CardContent className="p-0"><div className="divide-y divide-border/70">{configuredAgents.map((agent) => <div className="flex items-center gap-3 px-5 py-3.5" key={agent.agent}><AgentIcon agent={agent.agent} /><span className="min-w-0 flex-1"><strong className="block truncate text-sm">{agentLabels[agent.agent]}</strong><small className="mt-0.5 block text-xs text-muted-foreground">{tr("overview.nativeAssets", { count: agent.asset_count })}</small></span><Badge variant={agent.warnings.length ? "destructive" : "secondary"}>{tr(agent.warnings.length ? "status.workspace.attention" : "overview.detected")}</Badge></div>)}{!configuredAgents.length && <p className="px-5 py-5 text-xs text-muted-foreground">{tr("overview.noProjectAgentConfigs")}</p>}{unconfiguredAgents.length > 0 && <Collapsible className="px-5 py-3.5 text-xs text-muted-foreground"><CollapsibleTrigger>{tr("overview.otherAgents", { count: unconfiguredAgents.length })}</CollapsibleTrigger><CollapsibleContent className="mt-3 grid gap-2">{unconfiguredAgents.map((agent) => <div className="flex items-center gap-2" key={agent.agent}><AgentIcon agent={agent.agent} /><span>{agentLabels[agent.agent]}</span><span className="ml-auto">{tr("overview.noProjectConfig")}</span></div>)}</CollapsibleContent></Collapsible>}</div></CardContent></Card>
+    </div>
+    <WorkspaceObsidianCard workspaceId={workspace.id} />
+  </div>;
+}
 
-export const Route = createFileRoute("/workspace/$workspaceId/")({ component: () => null });
+
+
+function WorkspaceOverviewRoute() {
+  const { selectedWorkspace, scan, manifest } = useWorkspaceStore();
+  if (!selectedWorkspace || !scan || !manifest) return <LoadingState label="Loading…" />;
+  return <Overview workspace={selectedWorkspace} scan={scan} manifest={manifest} />;
+}
+
+export const Route = createFileRoute("/workspace/$workspaceId/")({ component: WorkspaceOverviewRoute });

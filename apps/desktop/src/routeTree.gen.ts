@@ -16,7 +16,7 @@ import { Route as InsightsRouteImport } from './routes/insights'
 import { Route as QuotaRouteImport } from './routes/quota'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as WorkspacesRouteImport } from './routes/workspaces'
-import { Route as WorkspaceWorkspaceIdRouteImport } from './routes/workspace/$workspaceId'
+import { Route as WorkspaceWorkspaceIdRouteRouteImport } from './routes/workspace/$workspaceId/route'
 import { Route as WorkspaceWorkspaceIdIndexRouteImport } from './routes/workspace/$workspaceId/index'
 import { Route as WorkspaceWorkspaceIdAssetsRouteImport } from './routes/workspace/$workspaceId/assets'
 import { Route as WorkspaceWorkspaceIdChangesRouteImport } from './routes/workspace/$workspaceId/changes'
@@ -60,51 +60,52 @@ const WorkspacesRoute = WorkspacesRouteImport.update({
   path: '/workspaces',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WorkspaceWorkspaceIdRoute = WorkspaceWorkspaceIdRouteImport.update({
-  id: '/workspace/$workspaceId',
-  path: '/workspace/$workspaceId',
-  getParentRoute: () => rootRouteImport,
-} as any)
+const WorkspaceWorkspaceIdRouteRoute =
+  WorkspaceWorkspaceIdRouteRouteImport.update({
+    id: '/workspace/$workspaceId',
+    path: '/workspace/$workspaceId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const WorkspaceWorkspaceIdIndexRoute =
   WorkspaceWorkspaceIdIndexRouteImport.update({
     id: '/',
     path: '/',
-    getParentRoute: () => WorkspaceWorkspaceIdRoute,
+    getParentRoute: () => WorkspaceWorkspaceIdRouteRoute,
   } as any)
 const WorkspaceWorkspaceIdAssetsRoute =
   WorkspaceWorkspaceIdAssetsRouteImport.update({
     id: '/assets',
     path: '/assets',
-    getParentRoute: () => WorkspaceWorkspaceIdRoute,
+    getParentRoute: () => WorkspaceWorkspaceIdRouteRoute,
   } as any)
 const WorkspaceWorkspaceIdChangesRoute =
   WorkspaceWorkspaceIdChangesRouteImport.update({
     id: '/changes',
     path: '/changes',
-    getParentRoute: () => WorkspaceWorkspaceIdRoute,
+    getParentRoute: () => WorkspaceWorkspaceIdRouteRoute,
   } as any)
 const WorkspaceWorkspaceIdContextRoute =
   WorkspaceWorkspaceIdContextRouteImport.update({
     id: '/context',
     path: '/context',
-    getParentRoute: () => WorkspaceWorkspaceIdRoute,
+    getParentRoute: () => WorkspaceWorkspaceIdRouteRoute,
   } as any)
 const WorkspaceWorkspaceIdDoctorRoute =
   WorkspaceWorkspaceIdDoctorRouteImport.update({
     id: '/doctor',
     path: '/doctor',
-    getParentRoute: () => WorkspaceWorkspaceIdRoute,
+    getParentRoute: () => WorkspaceWorkspaceIdRouteRoute,
   } as any)
 const WorkspaceWorkspaceIdGitRoute = WorkspaceWorkspaceIdGitRouteImport.update({
   id: '/git',
   path: '/git',
-  getParentRoute: () => WorkspaceWorkspaceIdRoute,
+  getParentRoute: () => WorkspaceWorkspaceIdRouteRoute,
 } as any)
 const WorkspaceWorkspaceIdSessionsRoute =
   WorkspaceWorkspaceIdSessionsRouteImport.update({
     id: '/sessions',
     path: '/sessions',
-    getParentRoute: () => WorkspaceWorkspaceIdRoute,
+    getParentRoute: () => WorkspaceWorkspaceIdRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -115,7 +116,7 @@ export interface FileRoutesByFullPath {
   '/quota': typeof QuotaRoute
   '/settings': typeof SettingsRoute
   '/workspaces': typeof WorkspacesRoute
-  '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRouteWithChildren
+  '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRouteRouteWithChildren
   '/workspace/$workspaceId/assets': typeof WorkspaceWorkspaceIdAssetsRoute
   '/workspace/$workspaceId/changes': typeof WorkspaceWorkspaceIdChangesRoute
   '/workspace/$workspaceId/context': typeof WorkspaceWorkspaceIdContextRoute
@@ -149,7 +150,7 @@ export interface FileRoutesById {
   '/quota': typeof QuotaRoute
   '/settings': typeof SettingsRoute
   '/workspaces': typeof WorkspacesRoute
-  '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRouteWithChildren
+  '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRouteRouteWithChildren
   '/workspace/$workspaceId/assets': typeof WorkspaceWorkspaceIdAssetsRoute
   '/workspace/$workspaceId/changes': typeof WorkspaceWorkspaceIdChangesRoute
   '/workspace/$workspaceId/context': typeof WorkspaceWorkspaceIdContextRoute
@@ -219,7 +220,7 @@ export interface RootRouteChildren {
   QuotaRoute: typeof QuotaRoute
   SettingsRoute: typeof SettingsRoute
   WorkspacesRoute: typeof WorkspacesRoute
-  WorkspaceWorkspaceIdRoute: typeof WorkspaceWorkspaceIdRouteWithChildren
+  WorkspaceWorkspaceIdRouteRoute: typeof WorkspaceWorkspaceIdRouteRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -277,7 +278,7 @@ declare module '@tanstack/react-router' {
       id: '/workspace/$workspaceId'
       path: '/workspace/$workspaceId'
       fullPath: '/workspace/$workspaceId'
-      preLoaderRoute: typeof WorkspaceWorkspaceIdRouteImport
+      preLoaderRoute: typeof WorkspaceWorkspaceIdRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/workspace/$workspaceId/': {
@@ -285,54 +286,54 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/workspace/$workspaceId/'
       preLoaderRoute: typeof WorkspaceWorkspaceIdIndexRouteImport
-      parentRoute: typeof WorkspaceWorkspaceIdRoute
+      parentRoute: typeof WorkspaceWorkspaceIdRouteRoute
     }
     '/workspace/$workspaceId/assets': {
       id: '/workspace/$workspaceId/assets'
       path: '/assets'
       fullPath: '/workspace/$workspaceId/assets'
       preLoaderRoute: typeof WorkspaceWorkspaceIdAssetsRouteImport
-      parentRoute: typeof WorkspaceWorkspaceIdRoute
+      parentRoute: typeof WorkspaceWorkspaceIdRouteRoute
     }
     '/workspace/$workspaceId/changes': {
       id: '/workspace/$workspaceId/changes'
       path: '/changes'
       fullPath: '/workspace/$workspaceId/changes'
       preLoaderRoute: typeof WorkspaceWorkspaceIdChangesRouteImport
-      parentRoute: typeof WorkspaceWorkspaceIdRoute
+      parentRoute: typeof WorkspaceWorkspaceIdRouteRoute
     }
     '/workspace/$workspaceId/context': {
       id: '/workspace/$workspaceId/context'
       path: '/context'
       fullPath: '/workspace/$workspaceId/context'
       preLoaderRoute: typeof WorkspaceWorkspaceIdContextRouteImport
-      parentRoute: typeof WorkspaceWorkspaceIdRoute
+      parentRoute: typeof WorkspaceWorkspaceIdRouteRoute
     }
     '/workspace/$workspaceId/doctor': {
       id: '/workspace/$workspaceId/doctor'
       path: '/doctor'
       fullPath: '/workspace/$workspaceId/doctor'
       preLoaderRoute: typeof WorkspaceWorkspaceIdDoctorRouteImport
-      parentRoute: typeof WorkspaceWorkspaceIdRoute
+      parentRoute: typeof WorkspaceWorkspaceIdRouteRoute
     }
     '/workspace/$workspaceId/git': {
       id: '/workspace/$workspaceId/git'
       path: '/git'
       fullPath: '/workspace/$workspaceId/git'
       preLoaderRoute: typeof WorkspaceWorkspaceIdGitRouteImport
-      parentRoute: typeof WorkspaceWorkspaceIdRoute
+      parentRoute: typeof WorkspaceWorkspaceIdRouteRoute
     }
     '/workspace/$workspaceId/sessions': {
       id: '/workspace/$workspaceId/sessions'
       path: '/sessions'
       fullPath: '/workspace/$workspaceId/sessions'
       preLoaderRoute: typeof WorkspaceWorkspaceIdSessionsRouteImport
-      parentRoute: typeof WorkspaceWorkspaceIdRoute
+      parentRoute: typeof WorkspaceWorkspaceIdRouteRoute
     }
   }
 }
 
-interface WorkspaceWorkspaceIdRouteChildren {
+interface WorkspaceWorkspaceIdRouteRouteChildren {
   WorkspaceWorkspaceIdAssetsRoute: typeof WorkspaceWorkspaceIdAssetsRoute
   WorkspaceWorkspaceIdChangesRoute: typeof WorkspaceWorkspaceIdChangesRoute
   WorkspaceWorkspaceIdContextRoute: typeof WorkspaceWorkspaceIdContextRoute
@@ -342,18 +343,21 @@ interface WorkspaceWorkspaceIdRouteChildren {
   WorkspaceWorkspaceIdIndexRoute: typeof WorkspaceWorkspaceIdIndexRoute
 }
 
-const WorkspaceWorkspaceIdRouteChildren: WorkspaceWorkspaceIdRouteChildren = {
-  WorkspaceWorkspaceIdAssetsRoute: WorkspaceWorkspaceIdAssetsRoute,
-  WorkspaceWorkspaceIdChangesRoute: WorkspaceWorkspaceIdChangesRoute,
-  WorkspaceWorkspaceIdContextRoute: WorkspaceWorkspaceIdContextRoute,
-  WorkspaceWorkspaceIdDoctorRoute: WorkspaceWorkspaceIdDoctorRoute,
-  WorkspaceWorkspaceIdGitRoute: WorkspaceWorkspaceIdGitRoute,
-  WorkspaceWorkspaceIdSessionsRoute: WorkspaceWorkspaceIdSessionsRoute,
-  WorkspaceWorkspaceIdIndexRoute: WorkspaceWorkspaceIdIndexRoute,
-}
+const WorkspaceWorkspaceIdRouteRouteChildren: WorkspaceWorkspaceIdRouteRouteChildren =
+  {
+    WorkspaceWorkspaceIdAssetsRoute: WorkspaceWorkspaceIdAssetsRoute,
+    WorkspaceWorkspaceIdChangesRoute: WorkspaceWorkspaceIdChangesRoute,
+    WorkspaceWorkspaceIdContextRoute: WorkspaceWorkspaceIdContextRoute,
+    WorkspaceWorkspaceIdDoctorRoute: WorkspaceWorkspaceIdDoctorRoute,
+    WorkspaceWorkspaceIdGitRoute: WorkspaceWorkspaceIdGitRoute,
+    WorkspaceWorkspaceIdSessionsRoute: WorkspaceWorkspaceIdSessionsRoute,
+    WorkspaceWorkspaceIdIndexRoute: WorkspaceWorkspaceIdIndexRoute,
+  }
 
-const WorkspaceWorkspaceIdRouteWithChildren =
-  WorkspaceWorkspaceIdRoute._addFileChildren(WorkspaceWorkspaceIdRouteChildren)
+const WorkspaceWorkspaceIdRouteRouteWithChildren =
+  WorkspaceWorkspaceIdRouteRoute._addFileChildren(
+    WorkspaceWorkspaceIdRouteRouteChildren,
+  )
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -363,7 +367,7 @@ const rootRouteChildren: RootRouteChildren = {
   QuotaRoute: QuotaRoute,
   SettingsRoute: SettingsRoute,
   WorkspacesRoute: WorkspacesRoute,
-  WorkspaceWorkspaceIdRoute: WorkspaceWorkspaceIdRouteWithChildren,
+  WorkspaceWorkspaceIdRouteRoute: WorkspaceWorkspaceIdRouteRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

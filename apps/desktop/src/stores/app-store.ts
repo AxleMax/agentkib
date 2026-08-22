@@ -39,6 +39,7 @@ interface AppState {
   navigationRequest?: AppNavigationRequest;
   menuCommand?: AppMenuCommandRequest;
   refreshJobs: RefreshJobStatus[];
+  quotaConfigureRequest: number;
   globalError?: string;
 }
 
@@ -63,6 +64,7 @@ interface AppActions {
   setNavigationRequest: (value: Updater<AppNavigationRequest | undefined>) => void;
   setMenuCommand: (value: Updater<AppMenuCommandRequest | undefined>) => void;
   setRefreshJobs: (value: Updater<RefreshJobStatus[]>) => void;
+  setQuotaConfigureRequest: (value: Updater<number>) => void;
   setGlobalError: (value: Updater<string | undefined>) => void;
 }
 
@@ -81,6 +83,7 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   excluded: [],
   remoteGateways: [],
   refreshJobs: [],
+  quotaConfigureRequest: 0,
   reset: () => set({
     sidebarCollapsed: typeof localStorage === "undefined" ? false : localStorage.getItem("agentkib.sidebar.collapsed") === "true",
     isFullscreen: false,
@@ -101,6 +104,7 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
     navigationRequest: undefined,
     menuCommand: undefined,
     refreshJobs: [],
+    quotaConfigureRequest: 0,
     globalError: undefined,
   }),
   setSidebarCollapsed: (value) => set((state) => ({ sidebarCollapsed: resolve(value, state.sidebarCollapsed) })),
@@ -122,5 +126,6 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   setNavigationRequest: (value) => set((state) => ({ navigationRequest: resolve(value, state.navigationRequest) })),
   setMenuCommand: (value) => set((state) => ({ menuCommand: resolve(value, state.menuCommand) })),
   setRefreshJobs: (value) => set((state) => ({ refreshJobs: resolve(value, state.refreshJobs) })),
+  setQuotaConfigureRequest: (value) => set((state) => ({ quotaConfigureRequest: resolve(value, state.quotaConfigureRequest) })),
   setGlobalError: (value) => set((state) => ({ globalError: resolve(value, state.globalError) })),
 }));

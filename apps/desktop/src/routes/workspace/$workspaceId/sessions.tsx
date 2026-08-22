@@ -1,3 +1,18 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
+import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceSessionsPage } from "../../../components/WorkspaceSessionsPage";
+import { api } from "../../../core/api";
+import { useAppStore } from "../../../stores/app-store";
+import { useWorkspaceStore } from "../../../stores/workspace-store";
 
-export const Route = createFileRoute("/workspace/$workspaceId/sessions")({ component: () => null });
+function WorkspaceSessionsRoute() {
+  const navigate = useNavigate();
+  const { workspaceId } = useParams({ from: "/workspace/$workspaceId/sessions" });
+  const { runtime, installations, setRuntime } = useAppStore();
+  const { selectedWorkspace, scan, setChangeSet, setChangeSetOrigin, setHandoffLaunchRequest } = useWorkspaceStore();
+  if (!selectedWorkspace || !scan) return <LoadingState label="Loading…" />;
+  const targetAgents = Array.from(new Set([...scan.agents.filter((agent) => agent.detected).map((agent) => agent.agent), ...installations.filter((agent) => agent.installed).map((agent) => agent.agent)]));
+  return <WorkspaceSessionsPage workspace={selectedWorkspace} enabled={runtime?.session_index_enabled !== false} targetAgents={targetAgents} onRuntimeChanged={async (enabled) => { setRuntime(await api.setSessionIndexEnabled(enabled)); }} onHandoffPlanned={(planned) => { setChangeSet(planned.change_set); setHandoffLaunchRequest(planned.launch_request); setChangeSetOrigin("handoff"); void navigate({ to: "/workspace/$workspaceId/changes", params: { workspaceId } }); }} />;
+}
+
+export const Route = createFileRoute("/workspace/$workspaceId/sessions")({ component: WorkspaceSessionsRoute });
