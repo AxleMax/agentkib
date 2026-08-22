@@ -216,19 +216,29 @@ export function QuotaPage({
           : status?.error_key ? tr(status.error_key) : tr("quota.empty");
   const emptyDetail = refreshJob?.state === "failed" ? (error || refreshJob.error) : undefined;
 
-  return <div className="relative grid gap-4">
-    {error && snapshot && <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><CircleAlert size={16} />{error}</div>}
-    <Collapsible open={showPreferences} onOpenChange={setShowPreferences}>
-    <div className="grid min-h-12 grid-cols-[minmax(220px,1fr)_auto_auto] items-center gap-3 border-b border-border-subtle pb-2.5 max-[900px]:grid-cols-[minmax(0,1fr)_auto]">
-      <Label className="!flex !h-10 min-w-0 w-[min(360px,100%)] items-center gap-2 rounded-lg border border-border bg-card px-3 text-muted-foreground max-[900px]:col-span-2 max-[900px]:!w-full"><Search size={14} /><Input className="!border-0 !bg-transparent !px-0 !text-foreground !shadow-none placeholder:!text-muted-foreground focus-visible:!ring-0" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("quota.search")} /></Label>
-      <ToggleGroup className="w-fit max-w-full gap-0 overflow-x-auto rounded-none border-b border-border-subtle bg-transparent p-0" value={[filter]} onValueChange={(values) => { const value = values[0]; if (value) setFilter(value as QuotaFilter); }} aria-label={tr("quota.filterLabel")}>
-        {(["all", "healthy", "warning", "unavailable"] as QuotaFilter[]).map((value) => <ToggleGroupItem key={value} value={value} className="relative min-h-9 rounded-none bg-transparent px-3 text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-transparent data-[state=on]:font-semibold data-[state=on]:text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-transparent data-[state=on]:after:bg-primary">{tr(`quota.filter.${value}`)}</ToggleGroupItem>)}
-      </ToggleGroup>
-      <div className="flex min-w-0 items-center justify-end gap-2 max-[900px]:col-start-2">
-        {popoverSupported && <CollapsibleTrigger className="inline-flex min-h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button"><Settings2 size={15} />{tr("quota.popoverSettings")}</CollapsibleTrigger>}
-        {snapshot && refreshLabel && <Badge variant="secondary">{refreshLabel}</Badge>}
-        <Button variant="outline" size="icon" onClick={() => void refresh()} disabled={busy} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "animate-spin" : ""} /></Button>
+  return <div className="relative grid gap-5 pb-8">
+    <section className="grid gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm max-[900px]:p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-foreground text-background"><Gauge size={18} /></span>
+            <div className="min-w-0"><h1 className="truncate text-xl font-semibold tracking-tight">{tr("nav.quota")}</h1></div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {snapshot && refreshLabel && <Badge variant="secondary" className="hidden sm:inline-flex">{refreshLabel}</Badge>}
+          <Button variant="outline" size="icon" className="size-9 rounded-xl" onClick={() => void refresh()} disabled={busy} title={tr("quota.refresh")} aria-label={tr("quota.refresh")}><RefreshCw size={15} className={busy ? "animate-spin" : ""} /></Button>
+        </div>
       </div>
+      {error && snapshot && <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><CircleAlert size={16} />{error}</div>}
+    </section>
+    <Collapsible open={showPreferences} onOpenChange={setShowPreferences}>
+    <div className="grid gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm sm:grid-cols-[minmax(220px,1fr)_auto_auto] sm:items-center">
+      <Label className="!flex !h-10 min-w-0 items-center gap-2 rounded-xl border border-border bg-background px-3 text-muted-foreground"><Search size={14} /><Input className="!border-0 !bg-transparent !px-0 !text-foreground !shadow-none placeholder:!text-muted-foreground focus-visible:!ring-0" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("quota.search")} /></Label>
+      <ToggleGroup className="w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted/60 p-1 max-sm:w-full" value={[filter]} onValueChange={(values) => { const value = values[0]; if (value) setFilter(value as QuotaFilter); }} aria-label={tr("quota.filterLabel")}>
+        {(["all", "healthy", "warning", "unavailable"] as QuotaFilter[]).map((value) => <ToggleGroupItem key={value} value={value} className="min-h-8 flex-1 rounded-lg px-3 text-xs text-muted-foreground hover:bg-background/70 hover:text-foreground data-[state=on]:bg-background data-[state=on]:font-semibold data-[state=on]:text-foreground data-[state=on]:shadow-sm">{tr(`quota.filter.${value}`)}</ToggleGroupItem>)}
+      </ToggleGroup>
+      {popoverSupported && <CollapsibleTrigger className="inline-flex min-h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button"><Settings2 size={15} />{tr("quota.popoverSettings")}</CollapsibleTrigger>}
     </div>
 
     {popoverSupported && snapshot && <CollapsibleContent><QuotaDisplaySettings snapshot={snapshot} preferences={preferences} onChange={setPreferences} onClose={() => setShowPreferences(false)} /></CollapsibleContent>}
@@ -236,7 +246,10 @@ export function QuotaPage({
 
     {!snapshot && <div className="grid min-h-[240px] place-content-center justify-items-center gap-3 text-muted-foreground"><Gauge size={26} /><strong className="text-foreground">{emptyLabel}</strong>{emptyDetail && <small className="max-w-[520px] whitespace-pre-wrap text-center text-xs">{emptyDetail}</small>}<Button onClick={() => void refresh()} disabled={busy}>{tr("quota.refresh")}</Button></div>}
     {snapshot && <>
-      <ProviderTabs providers={providers} selectedId={selectedId} onSelect={setSelectedId} />
+      <section className="grid gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm max-[900px]:p-3">
+        <div className="flex items-center justify-between gap-3"><div><h2 className="text-base font-semibold tracking-tight">{tr("quota.providers")}</h2><div className="mt-1 flex items-center gap-2"><Badge variant="secondary">{providers.length}</Badge><span className="text-xs text-muted-foreground">{tr("quota.filterLabel")}</span></div></div><Badge variant="outline">{tr(`quota.freshness.${snapshot.freshness}`)}</Badge></div>
+        <ProviderTabs providers={providers} selectedId={selectedId} onSelect={setSelectedId} />
+      </section>
       {!providers.length && <div className="grid min-h-[180px] place-content-center text-sm text-muted-foreground">{tr("quota.noMatch")}</div>}
       {selected && <QuotaProviderDetail provider={selected} snapshot={snapshot} targetWindow={initialWindow} />}
     </>}
@@ -244,12 +257,12 @@ export function QuotaPage({
 }
 
 function ProviderTabs({ providers, selectedId, onSelect }: { providers: QuotaProvider[]; selectedId: string; onSelect: (id: string) => void }) {
-  return <Tabs value={selectedId} onValueChange={onSelect}><TabsList className="h-auto w-full items-stretch justify-start gap-2 overflow-x-auto rounded-none border-b border-border bg-transparent p-0" variant="line" aria-label={tr("quota.providers")}>
+  return <Tabs value={selectedId} onValueChange={onSelect}><TabsList className="h-auto w-full items-stretch justify-start gap-3 overflow-x-auto rounded-xl bg-transparent p-0" variant="line" aria-label={tr("quota.providers")}>
     {providers.map((provider) => {
       const remaining = lowestRemaining(provider);
       const unavailable = remaining === undefined;
       const severity = remaining === undefined ? undefined : quotaSeverity(remaining);
-      return <TabsTrigger key={provider.id} value={provider.id} className={cn("relative grid h-auto min-h-[84px] min-w-[188px] flex-none grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-2.5 gap-y-0.5 justify-start rounded-lg border border-border bg-card px-3 py-3 text-left", unavailable && "opacity-60")}>
+      return <TabsTrigger key={provider.id} value={provider.id} className={cn("relative grid h-auto min-h-[92px] min-w-[210px] flex-none grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-2.5 gap-y-0.5 justify-start rounded-xl border border-border bg-background px-3.5 py-3.5 text-left transition-colors hover:border-foreground/25 hover:bg-muted/30 data-[state=active]:border-foreground/45 data-[state=active]:bg-background data-[state=active]:shadow-sm", unavailable && "opacity-60")}>
         <ProviderIcon provider={provider} />
         <span className="min-w-0 grid gap-0.5"><strong className="truncate text-[13px]">{provider.name}</strong><small className="truncate text-[11px] text-muted-foreground">{provider.identity?.account_email ?? provider.identity?.plan ?? tr(unavailable ? "quota.unavailable" : "quota.available")}</small></span>
         {remaining === undefined ? <em className="text-[13px] font-bold not-italic">—</em> : <><em className={cn("text-[13px] font-bold not-italic", severity === "healthy" && "text-green-600", severity === "warning" && "text-amber-600", severity === "danger" && "text-red-600")}>{Math.round(remaining)}%</em><i className="absolute inset-x-3 bottom-2 h-1 overflow-hidden rounded-full bg-muted"><b className={cn("block h-full rounded-full bg-primary", severity === "warning" && "bg-amber-500", severity === "danger" && "bg-red-500")} style={{ width: `${remaining}%` }} /></i></>}
@@ -264,8 +277,8 @@ function QuotaProviderDetail({ provider, snapshot, targetWindow }: { provider: Q
   const accountGroups = provider.accounts.map((account) => ({ account, windows: windows.filter((item) => item.account?.id === account.id) }));
   const targetKey = targetWindow ? quotaWindowKey(targetWindow) : undefined;
   const unavailable = providerIsUnavailable(provider);
-  return <section className="w-full max-w-none overflow-hidden rounded-xl border border-border bg-card px-[22px] pb-[22px] max-[900px]:px-4">
-    <header className="-mx-[22px] grid min-h-[76px] grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border-subtle px-[22px] max-[900px]:mx-[-16px] max-[900px]:grid-cols-[auto_minmax(0,1fr)_auto] max-[900px]:px-4">
+  return <section className="w-full max-w-none overflow-hidden rounded-2xl border border-border bg-card px-5 pb-5 shadow-sm max-[900px]:px-4">
+    <header className="-mx-5 grid min-h-[82px] grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border px-5 max-[900px]:mx-[-16px] max-[900px]:grid-cols-[auto_minmax(0,1fr)_auto] max-[900px]:px-4">
       <ProviderIcon provider={provider} />
       <div className="min-w-0"><h2 className="text-[21px]">{provider.name}</h2><p className="mt-1 truncate text-xs text-muted-foreground">{[provider.identity?.account_email, provider.identity?.plan, provider.source].filter(Boolean).join(" · ") || tr("quota.identityUnavailable")}</p></div>
       <div className="grid justify-items-end gap-0.5 text-xs text-muted-foreground"><span className={cn(snapshot.freshness === "stale" && "text-amber-600", snapshot.freshness === "unavailable" && "text-red-600")}>{tr(`quota.freshness.${snapshot.freshness}`)}</span><time>{tr("quota.updated", { time: formatRelativeTime(snapshot.fetched_at) })}</time></div>

@@ -27,7 +27,7 @@ function shortPath(path: string) {
 
 function AssetIcon() {
   return (
-    <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-border/80 bg-primary/[0.06] text-foreground">
+    <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-muted/40 text-foreground">
       <FileCode2 size={17} />
     </span>
   );
@@ -62,20 +62,17 @@ export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPag
   }, [agent, assets, kind, ownership, query, workspaceId]);
   const selected = assets.find((asset) => asset.id === selectedId);
   const workspaceName = (id?: string) => workspaces.find((workspace) => workspace.id === id)?.name ?? "—";
-  const controlClass = "h-9 min-w-[145px] border-border bg-background text-sm text-foreground";
+  const controlClass = "h-10 min-w-[145px] border-border bg-background text-sm text-foreground";
 
   return (
-    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-      <Card className="min-w-0 overflow-hidden rounded-2xl border-border/80 bg-card shadow-sm">
-        <CardHeader className="gap-4 border-b border-border/80 px-4 py-4 sm:px-5">
+    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid min-w-0 gap-4">
+        <section className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{tr("nav.assets")}</p>
-              <h2 className="mt-1 text-lg font-semibold tracking-tight text-foreground">{tr("catalog.asset")}</h2>
-            </div>
-            <Badge variant="outline" className="tabular-nums">{filtered.length} {tr("common.assets")}</Badge>
+            <div className="min-w-0"><h2 className="text-base font-semibold tracking-tight text-foreground">{tr("catalog.asset")}</h2></div>
+            <Badge variant="secondary" className="tabular-nums">{filtered.length} {tr("common.assets")}</Badge>
           </div>
-          <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
             <label className="flex h-10 min-w-0 items-center gap-2 rounded-lg border border-border bg-background px-3 text-muted-foreground transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
               <Search size={16} aria-hidden="true" />
               <Input
@@ -107,11 +104,13 @@ export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPag
               </SelectControl>
             </div>
           </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table className="min-w-[720px]">
+        </section>
+        <Card className="min-w-0 overflow-hidden rounded-2xl border-border bg-card shadow-sm">
+          <CardHeader className="flex min-h-[58px] flex-row items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5"><div><h2 className="text-base font-semibold tracking-tight">{tr("catalog.asset")}</h2><p className="mt-0.5 text-xs text-muted-foreground">{filtered.length} {tr("common.assets")}</p></div></CardHeader>
+          <CardContent className="p-0">
+          <Table className="min-w-[720px] border-separate border-spacing-0 [&_th]:h-11 [&_th]:bg-muted/30 [&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-[.08em] [&_th]:text-muted-foreground [&_td]:h-[76px]">
             <TableHeader>
-              <TableRow className="bg-muted/25 hover:bg-muted/25">
+              <TableRow className="border-border hover:bg-transparent">
                 <TableHead>{tr("catalog.asset")}</TableHead>
                 {showKind && <TableHead>{tr("catalog.type")}</TableHead>}
                 <TableHead className="hidden md:table-cell">{tr("catalog.workspace")}</TableHead>
@@ -130,7 +129,7 @@ export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPag
                     role="button"
                     aria-selected={selectedId === asset.id}
                     data-state={selectedId === asset.id ? "selected" : undefined}
-                    className={cn("cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40", selectedId === asset.id && "bg-primary/[0.06] hover:bg-primary/[0.08]")}
+                    className={cn("cursor-pointer transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", selectedId === asset.id && "bg-muted/60 hover:bg-muted/70")}
                     onClick={() => setSelectedId(asset.id)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
@@ -169,8 +168,9 @@ export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPag
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
 
       {selected ? (
         <Card className="h-fit overflow-hidden rounded-2xl border-border/80 bg-card shadow-sm lg:sticky lg:top-4">
