@@ -59,6 +59,9 @@ importers:
       '@rolldown/binding-linux-x64-gnu':
         specifier: 1.2.5
         version: 1.2.5
+      '@tailwindcss/oxide-linux-x64-gnu':
+        specifier: 4.3.3
+        version: 4.3.3
       '@tailwindcss/vite':
         specifier: ^4.1.18
         version: 4.3.3(vite@8.2.2(@types/node@22.20.1)(jiti@2.7.0))
@@ -433,7 +436,6 @@ packages:
   '@rolldown/binding-linux-x64-gnu@1.2.5':
     resolution: {integrity: sha512-Mgj59/HTuYeK9Gz2MA+mBWKnHsAgkBSec15ZMb1st3oIfFbX7gCjOae7GydHhzcyQi9Z/7M1QuN9bR3oFqF0jQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [x64]
     os: [linux]
 
   '@rolldown/binding-linux-x64-musl@1.2.5':
@@ -2833,8 +2835,7 @@ snapshots:
   '@tailwindcss/oxide-linux-arm64-musl@4.3.3':
     optional: true
 
-  '@tailwindcss/oxide-linux-x64-gnu@4.3.3':
-    optional: true
+  '@tailwindcss/oxide-linux-x64-gnu@4.3.3': {}
 
   '@tailwindcss/oxide-linux-x64-musl@4.3.3':
     optional: true
