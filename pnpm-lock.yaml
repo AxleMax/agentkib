@@ -56,6 +56,9 @@ importers:
         specifier: ^1.4.0
         version: 1.4.0
     devDependencies:
+      '@rolldown/binding-linux-x64-gnu':
+        specifier: 1.2.5
+        version: 1.2.5
       '@tailwindcss/vite':
         specifier: ^4.1.18
         version: 4.3.3(vite@8.2.2(@types/node@22.20.1)(jiti@2.7.0))
@@ -2777,8 +2780,7 @@ snapshots:
   '@rolldown/binding-linux-s390x-gnu@1.2.5':
     optional: true
 
-  '@rolldown/binding-linux-x64-gnu@1.2.5':
-    optional: true
+  '@rolldown/binding-linux-x64-gnu@1.2.5': {}
 
   '@rolldown/binding-linux-x64-musl@1.2.5':
     optional: true
