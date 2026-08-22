@@ -84,15 +84,15 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
   };
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="flex flex-row items-center justify-between border-b border-border-subtle px-4 py-4">
+    <Card className="overflow-hidden rounded-2xl border-border/70 shadow-sm">
+      <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-5 py-4">
         <CardTitle className="text-base">{tr("gateway.title")}</CardTitle>
         <Button onClick={() => edit()}><Plus size={14} />{tr("gateway.add")}</Button>
       </CardHeader>
       <CardContent className="p-0">
-      {error && <div className="m-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className="mx-5 my-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</div>}
       {draft && (
-        <form className="grid gap-4 border-b border-border-subtle p-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+        <form className="grid gap-4 border-b border-border/60 bg-muted/10 p-5 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void save(); }}>
           <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.kind")}</span><SelectControl aria-label={tr("gateway.kind")} value={draft.kind} onChange={(event) => { const kind = event.target.value as RemoteGatewayKind; setDraft({ ...draft, kind, auth_kind: authKinds(kind)[0], name: draft.id ? draft.name : kind === "open-claw" ? "OpenClaw" : "Hermes" }); }}><option value="open-claw">OpenClaw</option><option value="hermes">Hermes</option></SelectControl></Label>
           <Label className="grid gap-1.5 text-xs text-muted-foreground"><span>{tr("gateway.name")}</span><Input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></Label>
           <Label className="grid gap-1.5 text-xs text-muted-foreground sm:col-span-2"><span>{tr("gateway.url")}</span><Input required type="url" value={draft.url} placeholder={draft.kind === "open-claw" ? "wss://gateway.example.com" : "https://hermes.example.com"} onChange={(event) => setDraft({ ...draft, url: event.target.value })} /></Label>
@@ -104,7 +104,7 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
       )}
       <div className="grid">
         {gateways.map((gateway) => (
-          <article className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-t border-border-subtle p-4 first:border-t-0" key={gateway.id}>
+          <article className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-t border-border/60 px-5 py-4 first:border-t-0" key={gateway.id}>
             <Server size={17} className="mt-0.5 text-primary" />
             <div className="grid min-w-0 gap-1.5">
               <div className="flex items-center gap-2"><strong className="text-sm">{gateway.name}</strong><Badge variant={gateway.state === "connected" ? "secondary" : "outline"}>{tr(`gateway.state.${gateway.state}`)}</Badge></div>
@@ -121,7 +121,7 @@ export function RemoteGatewaysSettings({ gateways, onChanged }: { gateways: Remo
             </div>
           </article>
         ))}
-        {!gateways.length && !draft && <div className="p-4 text-sm text-muted-foreground">{tr("gateway.empty")}</div>}
+        {!gateways.length && !draft && <div className="px-5 py-5 text-sm text-muted-foreground">{tr("gateway.empty")}</div>}
       </div>
       </CardContent>
     </Card>

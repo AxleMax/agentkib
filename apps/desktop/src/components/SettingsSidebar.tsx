@@ -29,15 +29,15 @@ export function SettingsSidebar({
   platform?: AppPlatform;
 }) {
   return (
-    <aside className={cn("relative z-20 col-start-1 row-start-1 flex h-full min-h-0 w-[var(--sidebar-width)] flex-col border-r border-sidebar-border bg-sidebar px-3 pb-3 transition-transform duration-150 group-[.sidebar-collapsed]:pointer-events-none group-[.sidebar-collapsed]:-translate-x-full", platform === "macos" || platform === "web" ? "pt-[54px]" : "pt-3")} aria-hidden={collapsed} inert={collapsed ? true : undefined}>
-      <div className="flex h-[38px] items-center gap-2">
-        <Button variant="bare" size="content" className="flex h-[34px] min-w-0 flex-1 items-center justify-start gap-2 rounded-[7px] px-2 text-left text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" type="button" onClick={onBack}>
+    <aside className={cn("relative z-20 col-start-1 row-start-1 flex h-full min-h-0 w-[var(--sidebar-width)] flex-col border-r border-sidebar-border bg-sidebar px-4 pb-4 transition-transform duration-150 group-[.sidebar-collapsed]:pointer-events-none group-[.sidebar-collapsed]:-translate-x-full", platform === "macos" || platform === "web" ? "pt-[54px]" : "pt-3")} aria-hidden={collapsed} inert={collapsed ? true : undefined}>
+      <div className="flex h-10 items-center">
+        <Button variant="bare" size="content" className="flex h-9 min-w-0 flex-1 items-center justify-start gap-2 rounded-xl px-3 text-left text-sm text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" type="button" onClick={onBack}>
           <ArrowLeft size={16} />{tr("settings.backToApp")}
         </Button>
       </div>
-      <nav className="mt-[22px] flex flex-col gap-[3px]" aria-label={tr("settings.navigation")}>
+      <nav className="mt-6 flex flex-col gap-1.5" aria-label={tr("settings.navigation")}>
         {sections.map(({ id, label, icon: Icon }) => (
-          <Button key={id} variant="bare" size="content" className={cn("flex min-h-[38px] w-full items-center justify-start gap-[11px] rounded-lg px-2.5 text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground", active === id && "bg-sidebar-accent text-sidebar-accent-foreground")} aria-current={active === id ? "page" : undefined} onClick={() => onSelect(id)}>
+          <Button key={id} variant="bare" size="content" className={cn("flex min-h-10 w-full items-center justify-start gap-3 rounded-xl px-3 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground", active === id && "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm")} aria-current={active === id ? "page" : undefined} onClick={() => onSelect(id)}>
             <Icon size={17} />{tr(label)}
           </Button>
         ))}
