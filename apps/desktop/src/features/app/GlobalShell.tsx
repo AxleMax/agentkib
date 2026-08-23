@@ -18,9 +18,7 @@ const globalNav: SidebarEntry<GlobalPage>[] = [
   { id: "insights", label: "nav.insights", icon: Award },
 ];
 
-export function createGlobalNavigation(
-  pendingMemoryCount: number,
-): SidebarEntry<GlobalPage>[] {
+export function createGlobalNavigation(pendingMemoryCount: number): SidebarEntry<GlobalPage>[] {
   return globalNav.map((entry) =>
     entry.id === "catalog" ? { ...entry, badge: pendingMemoryCount } : entry,
   );

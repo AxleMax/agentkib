@@ -65,6 +65,10 @@ export function useAppNavigation() {
   } = workspaceStore;
   const workspaceOpenRequest = useRef(0);
 
+  useEffect(() => {
+    localStorage.setItem("agentkib.sidebar.collapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
   const updateSearch = useCallback(
     (patch: Partial<AppSearch>) => {
       void navigate({
@@ -296,8 +300,7 @@ export function useAppNavigation() {
       next();
     }
   };
-  const openSettings = () =>
-    void navigate({ to: "/settings", search: (current) => current });
+  const openSettings = () => void navigate({ to: "/settings", search: (current) => current });
 
   useEffect(() => {
     if (!navigationRequest) return;

@@ -237,8 +237,8 @@ export function AppRuntimeBridge() {
 
   const hasUnsavedDraft = Boolean(
     workspaceStore.manifest &&
-      workspaceStore.baselineManifest &&
-      JSON.stringify(workspaceStore.manifest) !== workspaceStore.baselineManifest,
+    workspaceStore.baselineManifest &&
+    JSON.stringify(workspaceStore.manifest) !== workspaceStore.baselineManifest,
   );
   const hasAnyUnsavedDraft =
     hasUnsavedDraft || Object.keys(workspaceStore.workspaceDrafts).length > 0;

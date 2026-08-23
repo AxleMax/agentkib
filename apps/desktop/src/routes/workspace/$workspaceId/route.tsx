@@ -265,6 +265,10 @@ function WorkspaceLayout() {
   };
 
   const navigateWorkspace = (page: Page) => {
+    if (useWorkspaceStore.getState().applyingChanges) {
+      void dialogs.notify(tr("dialog.quit.changesApplying"));
+      return;
+    }
     const path =
       page === "overview" ? "/workspace/$workspaceId" : `/workspace/$workspaceId/${page}`;
     void navigate({
