@@ -24,6 +24,7 @@ interface AppState {
   isFullscreen: boolean;
   runtime?: RuntimeInfo;
   workspaces: WorkspaceSummary[];
+  workspacesLoaded: boolean;
   installations: AgentInstallation[];
   doctorSummaries: Record<string, ContextDoctorSummary>;
   catalog: CatalogAsset[];
@@ -49,6 +50,7 @@ interface AppActions {
   setIsFullscreen: (value: Updater<boolean>) => void;
   setRuntime: (value: Updater<RuntimeInfo | undefined>) => void;
   setWorkspaces: (value: Updater<WorkspaceSummary[]>) => void;
+  setWorkspacesLoaded: (value: Updater<boolean>) => void;
   setInstallations: (value: Updater<AgentInstallation[]>) => void;
   setDoctorSummaries: (value: Updater<Record<string, ContextDoctorSummary>>) => void;
   setCatalog: (value: Updater<CatalogAsset[]>) => void;
@@ -80,6 +82,7 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
       : localStorage.getItem("agentkib.sidebar.collapsed") === "true",
   isFullscreen: false,
   workspaces: [],
+  workspacesLoaded: false,
   installations: [],
   doctorSummaries: {},
   catalog: [],
@@ -99,6 +102,7 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
       isFullscreen: false,
       runtime: undefined,
       workspaces: [],
+      workspacesLoaded: false,
       installations: [],
       doctorSummaries: {},
       catalog: [],
@@ -123,6 +127,8 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
     set((state) => ({ isFullscreen: resolve(value, state.isFullscreen) })),
   setRuntime: (value) => set((state) => ({ runtime: resolve(value, state.runtime) })),
   setWorkspaces: (value) => set((state) => ({ workspaces: resolve(value, state.workspaces) })),
+  setWorkspacesLoaded: (value) =>
+    set((state) => ({ workspacesLoaded: resolve(value, state.workspacesLoaded) })),
   setInstallations: (value) =>
     set((state) => ({ installations: resolve(value, state.installations) })),
   setDoctorSummaries: (value) =>

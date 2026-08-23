@@ -113,7 +113,7 @@ function SettingsRoute() {
         collapsed={sidebarCollapsed}
         platform={platform}
         onSelect={setSection}
-        onBack={() => void navigate({ to: "/" })}
+        onBack={() => window.history.back()}
       />
       {!sidebarCollapsed && (
         <Button

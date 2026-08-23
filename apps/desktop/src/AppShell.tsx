@@ -7,6 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Award, Bot, CircleAlert, FolderGit2, Gauge, Home, Library } from "lucide-react";
 import { api } from "./core/api";
+import { refreshGlobalState } from "./core/global-state";
 import { cn } from "@/lib/utils";
 import { AppSidebar, type SidebarEntry } from "@/components/AppSidebar";
 import { type SettingsSection } from "@/features/settings/SettingsSidebar";
@@ -82,18 +83,14 @@ export function AppShell() {
     setRuntime,
     workspaces,
     setWorkspaces,
+    setWorkspacesLoaded,
     setInstallations,
     setDoctorSummaries,
     setCatalog,
     globalMemories,
-    setGlobalMemories,
-    setActivity,
-    setScanRoots,
-    setExcluded,
     setDiscovery,
     setRemoteGateways,
     setInsightsSummary,
-    setInsightsStatus,
     setQuotaStatus,
     navigationRequest,
     setNavigationRequest,
@@ -174,61 +171,7 @@ export function AppShell() {
   };
 
   const loadGlobal = async () => {
-    const nextRuntimePromise = useAppStore.getState().runtime
-      ? Promise.resolve(useAppStore.getState().runtime)
-      : api.runtime();
-    const [
-      nextWorkspaces,
-      nextInstallations,
-      nextCatalog,
-      nextMemories,
-      nextActivity,
-      nextRoots,
-      nextExcluded,
-      nextRuntime,
-      nextRemoteGateways,
-    ] = await Promise.all([
-      api.workspaces(),
-      api.agentInstallations(),
-      api.catalogAssets(),
-      api.globalMemories(),
-      api.activity(),
-      api.scanRoots(),
-      api.excludedWorkspaces(),
-      nextRuntimePromise,
-      api.remoteGateways(),
-    ]);
-    setWorkspaces(nextWorkspaces);
-    setInstallations(nextInstallations);
-    setCatalog(nextCatalog);
-    setGlobalMemories(nextMemories);
-    setActivity(nextActivity);
-    setScanRoots(nextRoots);
-    setExcluded(nextExcluded);
-    setRuntime(nextRuntime);
-    setRemoteGateways(nextRemoteGateways);
-    try {
-      const summaries = await api.workspaceDoctorSummaries(
-        nextWorkspaces.map((workspace) => workspace.id),
-      );
-      setDoctorSummaries(
-        Object.fromEntries(summaries.map((summary) => [summary.workspace_id, summary])),
-      );
-    } catch {
-      setDoctorSummaries({});
-    }
-    try {
-      const [summary, status] = await Promise.all([api.insightsSummary(), api.insightsStatus()]);
-      setInsightsSummary(summary);
-      setInsightsStatus(status);
-    } catch {
-      /* 首次迁移或后台采集尚未完成时显示空状态。 */
-    }
-    try {
-      setQuotaStatus(await api.quotaCollectorStatus());
-    } catch {
-      /* Sidecar 尚未准备时由诊断页展示不可用状态。 */
-    }
+    await refreshGlobalState(useAppStore.getState().runtime);
   };
 
   const loadDiscoveryCache = async () => {
@@ -238,6 +181,7 @@ export function AppShell() {
       api.catalogAssets(),
     ]);
     setWorkspaces(nextWorkspaces);
+    setWorkspacesLoaded(true);
     setInstallations(nextInstallations);
     setCatalog(nextCatalog);
     try {
@@ -525,7 +469,7 @@ export function AppShell() {
     if (
       route.kind !== "workspace" ||
       selectedWorkspace?.id === workspaceRouteId ||
-      !workspaces.length ||
+      !useAppStore.getState().workspacesLoaded ||
       !workspaceRouteId
     )
       return;

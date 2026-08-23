@@ -138,7 +138,14 @@ function WorkspaceLayout() {
   const app = useAppStore();
   const workspaceState = useWorkspaceStore();
   const workspace = app.workspaces.find((item) => item.id === workspaceId);
-  const { sidebarCollapsed, setSidebarCollapsed, isFullscreen, setRuntime, globalMemories } = app;
+  const {
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    isFullscreen,
+    setRuntime,
+    globalMemories,
+    workspacesLoaded,
+  } = app;
   const {
     project,
     selectedWorkspace,
@@ -163,7 +170,9 @@ function WorkspaceLayout() {
     resetWorkspace,
   } = workspaceState;
   const currentPage = getPage(location.pathname);
-  const activeWorkspace = selectedWorkspace?.id === workspaceId ? selectedWorkspace : workspace;
+  const activeWorkspace =
+    workspace ??
+    (!workspacesLoaded && selectedWorkspace?.id === workspaceId ? selectedWorkspace : undefined);
   const hasUnsavedDraft = Boolean(
     manifest && baselineManifest && JSON.stringify(manifest) !== baselineManifest,
   );
@@ -301,7 +310,15 @@ function WorkspaceLayout() {
   const contentClass =
     "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[22px] max-[900px]:!px-[18px]";
 
-  if (!activeWorkspace) return <LoadingState label={tr("common.loading")} />;
+  if (!activeWorkspace) {
+    return workspacesLoaded ? (
+      <div className="grid h-full min-h-[240px] place-items-center p-8 text-sm text-muted-foreground">
+        {tr("workspace.notFound")}
+      </div>
+    ) : (
+      <LoadingState label={tr("common.loading")} />
+    );
+  }
   return (
     <div className={shellClass}>
       <WindowToolbar
@@ -393,7 +410,7 @@ function WorkspaceLayout() {
             <section
               className={cn("min-w-0", currentPage === "git" && "min-h-[calc(100vh-170px)]")}
             >
-              {!scan || !manifest || busy ? (
+              {!scan || (currentPage !== "doctor" && !manifest) || busy ? (
                 <LoadingState label={tr("common.loading")} />
               ) : (
                 <Outlet />

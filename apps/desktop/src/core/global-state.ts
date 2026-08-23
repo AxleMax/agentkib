@@ -1,0 +1,77 @@
+import { api } from "./api";
+import type { RuntimeInfo } from "./types";
+import { useAppStore } from "../stores/app-store";
+
+export async function refreshGlobalState(currentRuntime?: RuntimeInfo) {
+  const nextRuntimePromise = currentRuntime ? Promise.resolve(currentRuntime) : api.runtime();
+  const [
+    workspaces,
+    installations,
+    catalog,
+    globalMemories,
+    activity,
+    scanRoots,
+    excluded,
+    runtime,
+    remoteGateways,
+  ] = await Promise.all([
+    api.workspaces(),
+    api.agentInstallations(),
+    api.catalogAssets(),
+    api.globalMemories(),
+    api.activity(),
+    api.scanRoots(),
+    api.excludedWorkspaces(),
+    nextRuntimePromise,
+    api.remoteGateways(),
+  ]);
+
+  let doctorSummaries = {};
+  try {
+    const summaries = await api.workspaceDoctorSummaries(
+      workspaces.map((workspace) => workspace.id),
+    );
+    doctorSummaries = Object.fromEntries(
+      summaries.map((summary) => [summary.workspace_id, summary]),
+    );
+  } catch {
+    /* 首次迁移或后台扫描尚未完成时显示空状态。 */
+  }
+
+  let insightsSummary;
+  let insightsStatus;
+  try {
+    [insightsSummary, insightsStatus] = await Promise.all([
+      api.insightsSummary(),
+      api.insightsStatus(),
+    ]);
+  } catch {
+    /* 首次迁移或后台采集尚未完成时显示空状态。 */
+  }
+
+  let quotaStatus;
+  try {
+    quotaStatus = await api.quotaCollectorStatus();
+  } catch {
+    /* Sidecar 尚未准备时由诊断页展示不可用状态。 */
+  }
+
+  const state = {
+    workspaces,
+    workspacesLoaded: true,
+    installations,
+    catalog,
+    globalMemories,
+    activity,
+    scanRoots,
+    excluded,
+    runtime,
+    remoteGateways,
+    doctorSummaries,
+    insightsSummary,
+    insightsStatus,
+    quotaStatus,
+  };
+  useAppStore.setState(state);
+  return state;
+}

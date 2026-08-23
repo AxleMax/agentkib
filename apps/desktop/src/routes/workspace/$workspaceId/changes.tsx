@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router"
 import { LoadingState } from "@/components/ui/loading-state";
 import { api } from "../../../core/api";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
+import { refreshGlobalState } from "../../../core/global-state";
 import { useEffect, useRef, useState } from "react";
 import { localizeMessage, tr } from "../../../core/i18n";
 import { Button } from "@/components/ui/button";
@@ -374,7 +375,8 @@ function WorkspaceChangesRoute() {
         setChangeSet(undefined);
         if (!keepLaunchRequest) setHandoffLaunchRequest(undefined);
         try {
-          await reload();
+          const runtime = await reload();
+          await refreshGlobalState(runtime);
         } catch (error) {
           setMessage(String(error));
         }
