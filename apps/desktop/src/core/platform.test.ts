@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyPlatformAttribute, normalizePlatform, primaryShortcutModifier, usesSystemTrayWording } from "./platform";
+import {
+  applyPlatformAttribute,
+  normalizePlatform,
+  primaryShortcutModifier,
+  usesSystemTrayWording,
+} from "./platform";
 
 describe("desktop platform marker", () => {
   beforeEach(() => {

@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 
@@ -7,7 +8,7 @@ const runtime = globalThis as typeof globalThis & { process?: { env?: Record<str
 const env = runtime.process?.env ?? {};
 
 const config = {
-  plugins: [react(), tailwindcss()],
+  plugins: [tanstackRouter({ target: "react", autoCodeSplitting: true }), react(), tailwindcss()],
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src") } },
   clearScreen: false,
   server: { port: 1420, strictPort: true },

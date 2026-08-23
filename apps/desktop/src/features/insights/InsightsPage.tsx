@@ -1,0 +1,1110 @@
+import { SelectControl } from "@/components/ui/select-control";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { listen } from "@tauri-apps/api/event";
+import {
+  Activity,
+  Award,
+  Brain,
+  CalendarCheck2,
+  CalendarDays,
+  Check,
+  ChevronRight,
+  CircleAlert,
+  Flame,
+  FolderGit2,
+  GitCommitHorizontal,
+  LockKeyhole,
+  MessageSquareText,
+  Moon,
+  Network,
+  PlugZap,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  Workflow,
+  X,
+} from "lucide-react";
+import { api } from "@/core/api";
+import {
+  achievementReached,
+  buildAchievementWallItems,
+  selectDefaultTrackMilestone,
+  type AchievementCategory,
+  type AchievementTrack,
+  type AchievementWallItem,
+} from "@/features/insights/achievements";
+import {
+  formatCompactNumber,
+  formatDateTime,
+  formatRelativeTime,
+  localizeMessage,
+  tr,
+} from "@/core/i18n";
+import { buildHeatmapMonthMarkers } from "@/features/insights/insights";
+import type {
+  Achievement,
+  AgentKind,
+  AgentUsageBreakdown,
+  HeatmapPoint,
+  InsightsQuery,
+  InsightsStatus,
+  InsightsSummary,
+  ModelUsageBreakdown,
+  RefreshJobStatus,
+  RepositoryCommitBreakdown,
+  WorkspaceSummary,
+  WorkspaceUsageBreakdown,
+} from "@/core/types";
+import { AgentIcon } from "@/features/agents/AgentIcon";
+import { cn } from "@/lib/utils";
+
+type HeatmapMetric = "tokens" | "my_commits" | "all_commits" | "attributed_commits" | "sessions";
+export type InsightsSection = "overview" | "tokens" | "commits" | "milestones" | "sources";
+
+const agentLabels: Record<AgentKind, string> = {
+  codex: "Codex",
+  "claude-code": "Claude Code",
+  cursor: "Cursor",
+  "open-claw": "OpenClaw",
+  hermes: "Hermes",
+  "deepseek-harness": "DeepSeek Harness",
+};
+
+export function InsightsPage({
+  section,
+  workspaces,
+  onSummary,
+}: {
+  section: InsightsSection;
+  workspaces: WorkspaceSummary[];
+  onSummary: (summary: InsightsSummary) => void;
+}) {
+  const [agent, setAgent] = useState<"all" | AgentKind>("all");
+  const [workspaceId, setWorkspaceId] = useState("all");
+  const [repository, setRepository] = useState("all");
+  const [range, setRange] = useState<"52w" | "year">("52w");
+  const [metric, setMetric] = useState<HeatmapMetric>("tokens");
+  const [summary, setSummary] = useState<InsightsSummary>();
+  const [points, setPoints] = useState<HeatmapPoint[]>([]);
+  const [agents, setAgents] = useState<AgentUsageBreakdown[]>([]);
+  const [models, setModels] = useState<ModelUsageBreakdown[]>([]);
+  const [workspaceUsage, setWorkspaceUsage] = useState<WorkspaceUsageBreakdown[]>([]);
+  const [repositories, setRepositories] = useState<RepositoryCommitBreakdown[]>([]);
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [status, setStatus] = useState<InsightsStatus>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [initializing, setInitializing] = useState(true);
+  const pendingRefresh = useRef(false);
+  const requestSequence = useRef(0);
+  const query = useMemo<InsightsQuery>(() => {
+    const today = new Date();
+    const from =
+      range === "year"
+        ? new Date(today.getFullYear(), 0, 1)
+        : new Date(today.getFullYear(), today.getMonth(), today.getDate() - 363);
+    const tokenView = section === "overview" || section === "tokens";
+    const commitView = section === "overview" || section === "commits";
+    return {
+      from: localDate(from),
+      to: localDate(today),
+      agent: tokenView && agent !== "all" ? agent : undefined,
+      workspace_id: tokenView && workspaceId !== "all" ? workspaceId : undefined,
+      repository_group_id: commitView && repository !== "all" ? repository : undefined,
+    };
+  }, [agent, workspaceId, repository, range, section]);
+  const loadInsights = useCallback(async () => {
+    const sequence = ++requestSequence.current;
+    setError("");
+    try {
+      const view = await api.insightsView(query);
+      if (sequence !== requestSequence.current) return;
+      setSummary(view.summary);
+      setPoints(view.heatmap);
+      setAgents(view.agents);
+      setModels(view.models);
+      setWorkspaceUsage(view.workspaces);
+      setRepositories(view.repositories);
+      setAchievements(view.achievements);
+      setStatus(view.status);
+      setBusy(view.status.running);
+      onSummary(view.summary);
+    } catch (reason) {
+      if (sequence === requestSequence.current) setError(localizeMessage(reason));
+    } finally {
+      if (sequence === requestSequence.current) setInitializing(false);
+    }
+  }, [onSummary, query]);
+  useEffect(() => {
+    void loadInsights();
+  }, [loadInsights]);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void listen<RefreshJobStatus>("agentkib:refresh-state", (event) => {
+      if (disposed) return;
+      if (event.payload.kind !== "insights") return;
+      if (event.payload.state === "queued" || event.payload.state === "running") setBusy(true);
+      if (event.payload.state === "succeeded") {
+        setBusy(false);
+        if (document.visibilityState === "visible") void loadInsights();
+        else pendingRefresh.current = true;
+      }
+      if (event.payload.state === "failed") {
+        setBusy(false);
+        setError(event.payload.error ?? tr("errors.generic"));
+      }
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [loadInsights]);
+  useEffect(() => {
+    const refreshVisibleInsights = () => {
+      if (!pendingRefresh.current) return;
+      pendingRefresh.current = false;
+      void loadInsights();
+    };
+    window.addEventListener("focus", refreshVisibleInsights);
+    return () => window.removeEventListener("focus", refreshVisibleInsights);
+  }, [loadInsights]);
+  const metricLabels: Record<HeatmapMetric, string> = {
+    tokens: "Token",
+    my_commits: tr("insights.myCommits"),
+    all_commits: tr("insights.allCommits"),
+    attributed_commits: tr("insights.attributedCommits"),
+    sessions: tr("common.sessions"),
+  };
+  const max = Math.max(1, ...points.map((point) => point[metric]));
+  const padding = points.length ? new Date(`${points[0].date}T00:00:00`).getDay() : 0;
+  const repositoryOptions = [
+    ...new Map(
+      workspaces
+        .filter((value) => value.repository_group_id)
+        .map((value) => [value.repository_group_id!, value.name]),
+    ).entries(),
+  ];
+  const showTokenFilters = section === "overview" || section === "tokens";
+  const showCommitFilters = section === "overview" || section === "commits";
+  const showRange = !["milestones", "sources"].includes(section);
+  const filterClass = "!h-10 !min-w-[150px] !rounded-lg !border-border !bg-card !text-foreground";
+
+  if (initializing) return <LoadingState label={tr("common.loading")} />;
+
+  return (
+    <div className="relative grid gap-5">
+      <section className="grid gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm max-[900px]:p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-foreground text-background">
+              <Award size={18} />
+            </span>
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-semibold tracking-tight">
+                {tr(`insights.section.${section}`)}
+              </h1>
+            </div>
+          </div>
+          {busy && <Badge variant="secondary">{tr("tray.refreshInsights")}</Badge>}
+        </div>
+        {error && (
+          <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <CircleAlert size={16} />
+            {error}
+          </div>
+        )}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {showTokenFilters && (
+            <SelectControl
+              className={filterClass}
+              aria-label={tr("workspace.allAgents")}
+              value={agent}
+              onChange={(event) => setAgent(event.target.value as typeof agent)}
+            >
+              <option value="all">{tr("workspace.allAgents")}</option>
+              {Object.entries(agentLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+          {showTokenFilters && (
+            <SelectControl
+              className={filterClass}
+              aria-label={tr("workspace.all")}
+              value={workspaceId}
+              onChange={(event) => setWorkspaceId(event.target.value)}
+            >
+              <option value="all">{tr("workspace.all")}</option>
+              {workspaces.map((value) => (
+                <option key={value.id} value={value.id}>
+                  {value.name}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+          {showCommitFilters && (
+            <SelectControl
+              className={filterClass}
+              aria-label={tr("insights.allRepositories")}
+              value={repository}
+              onChange={(event) => setRepository(event.target.value)}
+            >
+              <option value="all">{tr("insights.allRepositories")}</option>
+              {repositoryOptions.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+          {showRange && (
+            <SelectControl
+              className={filterClass}
+              aria-label={tr("insights.range52w")}
+              value={range}
+              onChange={(event) => setRange(event.target.value as typeof range)}
+            >
+              <option value="52w">{tr("insights.range52w")}</option>
+              <option value="year">{tr("insights.rangeYear")}</option>
+            </SelectControl>
+          )}
+        </div>
+      </section>
+      {!summary && (
+        <Card>
+          <Empty
+            icon={Award}
+            title={tr("insights.preparing")}
+            text={tr("insights.preparingText")}
+          />
+        </Card>
+      )}
+      {summary && section === "overview" && (
+        <>
+          <div className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[560px]:grid-cols-1">
+            <AchievementMetric
+              icon={Sparkles}
+              label={tr("insights.totalToken")}
+              value={formatCompact(summary.total_tokens)}
+              detail={
+                summary.coverage_from ? `${summary.coverage_from} — ${summary.coverage_to}` : ""
+              }
+            />
+            <AchievementMetric
+              icon={GitCommitHorizontal}
+              label={tr("insights.myCommits")}
+              value={formatCompact(summary.my_commits)}
+              detail={tr("insights.allActivity", { count: formatCompact(summary.all_commits) })}
+            />
+            <AchievementMetric
+              icon={CalendarDays}
+              label={tr("insights.activeDays")}
+              value={`${summary.active_days} ${tr("common.days")}`}
+              detail={tr("insights.recordedSessions", {
+                count: formatCompact(summary.session_count),
+              })}
+            />
+            <AchievementMetric
+              icon={Flame}
+              label={tr("insights.currentStreak")}
+              value={`${summary.current_streak} ${tr("common.days")}`}
+              detail={tr("insights.longestStreak", { count: summary.longest_streak })}
+            />
+          </div>
+          <Card className="overflow-hidden border-border bg-card shadow-sm">
+            <CardHeader className="flex min-h-[62px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-3">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">
+                  {tr("insights.heatmap")}
+                </h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">{metricLabels[metric]}</p>
+              </div>
+              <Badge variant="outline">
+                {showRange
+                  ? range === "year"
+                    ? tr("insights.rangeYear")
+                    : tr("insights.range52w")
+                  : tr("nav.insights")}
+              </Badge>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Tabs value={metric} onValueChange={(value) => setMetric(value as HeatmapMetric)}>
+                <TabsList
+                  className="w-fit max-w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent px-5"
+                  variant="line"
+                  aria-label={tr("insights.heatmap")}
+                >
+                  {(Object.keys(metricLabels) as HeatmapMetric[]).map((value) => (
+                    <TabsTrigger className="flex-none rounded-none px-3" key={value} value={value}>
+                      {metricLabels[value]}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              <div className="overflow-x-auto px-5 pb-4 pt-4">
+                <HeatmapMonths points={points} padding={padding} />
+                <div className="grid w-max grid-flow-col grid-rows-[repeat(7,11px)] auto-cols-[11px] gap-1">
+                  {Array.from({ length: padding }, (_, index) => (
+                    <span
+                      className="invisible block size-[11px] rounded-[3px]"
+                      key={`padding-${index}`}
+                    />
+                  ))}
+                  {points.map((point) => {
+                    const value = point[metric];
+                    const level = value ? Math.max(1, Math.ceil((value / max) * 4)) : 0;
+                    return (
+                      <span
+                        key={point.date}
+                        className={heatmapCellClass(level)}
+                        title={`${point.date} · ${metricLabels[metric]} ${formatCompact(value)}`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-1 border-t border-border px-5 py-3 text-[10px] text-muted-foreground">
+                <span>{tr("insights.less")}</span>
+                {[0, 1, 2, 3, 4].map((level) => (
+                  <i key={level} className={heatmapCellClass(level)} />
+                ))}
+                <span>{tr("insights.more")}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+      {summary && section === "tokens" && (
+        <>
+          <Card>
+            <CardHeader className="flex min-h-[52px] items-center border-b border-border px-4 py-3">
+              <h2 className="m-0 text-base font-semibold">{tr("insights.agentUsage")}</h2>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border">
+                {agents.map((value) => (
+                  <div
+                    className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3"
+                    key={value.agent}
+                  >
+                    <AgentIcon agent={value.agent} />
+                    <span className="grid min-w-0 gap-0.5">
+                      <strong className="truncate text-sm">{agentLabels[value.agent]}</strong>
+                      <small className="text-xs text-muted-foreground">
+                        {value.session_count} {tr("common.sessions")}
+                      </small>
+                    </span>
+                    <div className="grid justify-items-end">
+                      <strong className="text-sm tabular-nums">
+                        {formatCompact(value.total_tokens)}
+                      </strong>
+                      <small className="text-xs text-muted-foreground">Token</small>
+                    </div>
+                  </div>
+                ))}
+                {!agents.length && (
+                  <p className="px-4 py-6 text-sm text-muted-foreground">
+                    {tr("insights.noToken")}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <BreakdownPanel
+              title={tr("insights.modelUsage")}
+              values={models.map((value) => ({
+                key: value.model,
+                label: value.model,
+                detail: `${value.session_count} ${tr("common.sessions")}`,
+                value: value.total_tokens,
+              }))}
+            />
+            <BreakdownPanel
+              title={tr("insights.workspaceUsage")}
+              values={workspaceUsage.map((value) => ({
+                key: value.workspace_id ?? "unlinked",
+                label: value.name,
+                detail: `${value.session_count} ${tr("common.sessions")}`,
+                value: value.total_tokens,
+              }))}
+            />
+          </div>
+        </>
+      )}
+      {summary && section === "commits" && (
+        <Card>
+          <CardHeader className="flex min-h-[52px] items-center border-b border-border px-4 py-3">
+            <h2 className="m-0 text-base font-semibold">{tr("insights.repositoryCommits")}</h2>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="divide-y divide-border">
+              {repositories.slice(0, 20).map((value) => (
+                <div
+                  className="flex items-center justify-between gap-4 px-4 py-3"
+                  key={value.repository_group_id}
+                >
+                  <span className="grid min-w-0 gap-0.5">
+                    <strong className="truncate text-sm">{value.name}</strong>
+                    <small className="text-xs text-muted-foreground">
+                      {tr("insights.repositoryDetail", {
+                        all: value.all_commits,
+                        attributed: value.attributed_commits,
+                      })}
+                    </small>
+                  </span>
+                  <strong className="text-sm tabular-nums">{value.my_commits}</strong>
+                </div>
+              ))}
+              {!repositories.length && (
+                <p className="px-4 py-6 text-sm text-muted-foreground">
+                  {tr("insights.noCommits")}
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      {section === "milestones" && <AchievementWall achievements={achievements} />}
+      {section === "sources" && (
+        <Card>
+          <CardHeader className="flex min-h-[52px] items-center justify-between border-b border-border px-4 py-3">
+            <h2 className="m-0 text-base font-semibold">{tr("insights.providers")}</h2>
+            <Badge variant="outline">
+              {status?.refreshed_at
+                ? tr("home.updated", { time: formatRelativeTime(status.refreshed_at) })
+                : tr("insights.notRefreshed")}
+            </Badge>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="divide-y divide-border">
+              {status?.providers.map((provider) => (
+                <ProviderRow key={provider.agent} provider={provider} />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function HeatmapMonths({ points, padding }: { points: HeatmapPoint[]; padding: number }) {
+  const columns = Math.max(1, Math.ceil((padding + points.length) / 7));
+  const markers = buildHeatmapMonthMarkers(
+    points,
+    padding,
+    document.documentElement.lang || "en-US",
+  );
+  return (
+    <div
+      className="mb-2 grid min-h-3.5 w-max grid-flow-col auto-cols-[11px] gap-1 text-[10px] text-muted-foreground"
+      style={{ gridTemplateColumns: `repeat(${columns}, 11px)` }}
+    >
+      {markers.map((marker) => (
+        <span
+          className="whitespace-nowrap"
+          key={marker.key}
+          style={{ gridColumn: marker.column, gridRow: 1 }}
+        >
+          {marker.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function heatmapCellClass(level: number) {
+  return cn(
+    "block size-[11px] rounded-[3px]",
+    level === 0 && "bg-muted",
+    level === 1 && "bg-primary/35",
+    level === 2 && "bg-primary/55",
+    level === 3 && "bg-primary/75",
+    level === 4 && "bg-primary",
+  );
+}
+
+const milestoneIcons: Record<AchievementCategory, typeof Activity> = {
+  token: Sparkles,
+  session: MessageSquareText,
+  commit: GitCommitHorizontal,
+  "active-days": CalendarCheck2,
+  streak: Flame,
+  workspaces: FolderGit2,
+  agents: Network,
+};
+const specialAchievementIcons: Record<string, typeof Activity> = {
+  "special-first-changeset": ShieldCheck,
+  "special-first-memory": Brain,
+  "special-shared-workspace": Network,
+  "special-exact-attribution": GitCommitHorizontal,
+  "special-remote-handshake": PlugZap,
+  "special-night-owl": Moon,
+  "special-comeback": RotateCcw,
+  "special-same-day-delivery": Workflow,
+};
+
+function AchievementWall({ achievements }: { achievements: Achievement[] }) {
+  const [selected, setSelected] = useState<AchievementWallItem>();
+  if (!achievements.length)
+    return (
+      <Card>
+        <Empty icon={Award} title={tr("insights.preparing")} />
+      </Card>
+    );
+  const items = buildAchievementWallItems(achievements);
+  const tracks = items.filter((item) => item.kind === "track");
+  const specials = items.filter((item) => item.kind === "special");
+  const completedMilestones = tracks.reduce((count, item) => count + item.track.completed, 0);
+  const milestoneCount = tracks.reduce((count, item) => count + item.track.milestones.length, 0);
+  const completedSpecials = specials.filter((item) => item.unlocked).length;
+  return (
+    <Card className="overflow-hidden border-border shadow-sm">
+      <CardHeader className="flex min-h-[64px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-3">
+        <div>
+          <div className="m-0 text-base font-semibold">{tr("insights.milestones")}</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {completedMilestones} / {milestoneCount}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 max-[520px]:items-end max-[520px]:flex-col">
+          <Badge variant="outline">
+            {tr("achievementWall.milestones", {
+              completed: completedMilestones,
+              total: milestoneCount,
+            })}
+          </Badge>
+          <Badge variant="outline">
+            {tr("achievementWall.specials", {
+              completed: completedSpecials,
+              total: specials.length,
+            })}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4 bg-muted/20 p-5 max-[760px]:grid-cols-2 max-[520px]:grid-cols-1">
+          {items.map((item) => (
+            <AchievementWallCard key={item.id} item={item} onOpen={() => setSelected(item)} />
+          ))}
+        </div>
+      </CardContent>
+      {selected && (
+        <AchievementDetailDialog
+          key={selected.id}
+          item={selected}
+          onClose={() => setSelected(undefined)}
+        />
+      )}
+    </Card>
+  );
+}
+
+function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOpen: () => void }) {
+  if (item.kind === "track") {
+    const Icon = milestoneIcons[item.track.category];
+    const title = tr(`achievements.${achievementTranslationKey(item.cover.code)}.title`);
+    return (
+      <Button
+        variant="bare"
+        size="content"
+        className={cn(
+          "group relative grid min-h-[156px] min-w-0 grid-cols-[38px_minmax(0,1fr)] grid-rows-[auto_auto_1fr_auto] gap-x-3 gap-y-1.5 rounded-[11px] border border-border bg-card p-4 text-left text-muted-foreground transition hover:-translate-y-px hover:border-foreground/20 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+          item.unlocked && "border-primary/30 bg-primary/5",
+        )}
+        onClick={onOpen}
+        aria-label={tr("achievementWall.openTrack", {
+          category: tr(`milestones.category.${item.track.category}`),
+        })}
+      >
+        <span
+          className={cn(
+            "row-span-2 grid size-[38px] place-items-center rounded-[10px] border border-border bg-background text-muted-foreground",
+            item.unlocked && "border-primary/25 bg-primary/10 text-primary",
+          )}
+        >
+          <Icon size={20} />
+        </span>
+        <span className="self-end truncate text-xs font-semibold">
+          {tr(`milestones.category.${item.track.category}`)}
+        </span>
+        <strong className="self-start truncate text-base text-foreground">{title}</strong>
+        <small className="col-span-full self-center truncate text-xs">
+          {formatMilestoneValue(item.track.category, item.cover.threshold)}
+        </small>
+        <span
+          className={cn(
+            "col-span-full flex min-w-0 items-center justify-between gap-2 border-t border-border pt-2 text-xs",
+            item.unlocked && "text-primary",
+          )}
+        >
+          <span className="truncate">
+            {tr("milestones.completed", {
+              completed: item.track.completed,
+              total: item.track.milestones.length,
+            })}
+          </span>
+          <ChevronRight size={15} />
+        </span>
+      </Button>
+    );
+  }
+  const { achievement, secret, unlocked } = item.special;
+  const hidden = secret && !unlocked;
+  const Icon = hidden ? LockKeyhole : (specialAchievementIcons[achievement.code] ?? Award);
+  const title = hidden
+    ? tr("special.mystery")
+    : tr(`achievements.${achievementTranslationKey(achievement.code)}.title`);
+  const status = achievement.unlocked_at
+    ? tr("insights.unlockedAt", { date: formatDateTime(achievement.unlocked_at) })
+    : unlocked
+      ? tr("special.reachedDateUnknown")
+      : tr("milestones.locked");
+  return (
+    <Button
+      variant="bare"
+      size="content"
+      className={cn(
+        "group relative grid min-h-[156px] min-w-0 grid-cols-[38px_minmax(0,1fr)] grid-rows-[auto_auto_1fr_auto] gap-x-3 gap-y-1.5 rounded-[11px] border border-border bg-card p-4 text-left text-muted-foreground transition hover:-translate-y-px hover:border-foreground/20 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        unlocked && "border-primary/30 bg-primary/5",
+      )}
+      onClick={onOpen}
+      aria-label={tr("achievementWall.openSpecial", { title })}
+    >
+      <span
+        className={cn(
+          "row-span-2 grid size-[38px] place-items-center rounded-[10px] border border-border bg-background text-muted-foreground",
+          unlocked && "border-primary/25 bg-primary/10 text-primary",
+        )}
+      >
+        <Icon size={20} />
+      </span>
+      <span className="self-end truncate text-xs font-semibold">{tr("special.title")}</span>
+      <strong className="self-start truncate text-base text-foreground">{title}</strong>
+      <small className="col-span-full self-center truncate text-xs">{status}</small>
+      <span
+        className={cn(
+          "col-span-full flex min-w-0 items-center justify-between gap-2 border-t border-border pt-2 text-xs",
+          unlocked && "text-primary",
+        )}
+      >
+        <span className="truncate">
+          {unlocked ? tr("achievementWall.unlocked") : tr("milestones.locked")}
+        </span>
+        <ChevronRight size={15} />
+      </span>
+    </Button>
+  );
+}
+
+function AchievementDetailDialog({
+  item,
+  onClose,
+}: {
+  item: AchievementWallItem;
+  onClose: () => void;
+}) {
+  const title =
+    item.kind === "track"
+      ? tr(`milestones.category.${item.track.category}`)
+      : item.special.secret && !item.special.unlocked
+        ? tr("special.mystery")
+        : tr(`achievements.${achievementTranslationKey(item.special.achievement.code)}.title`);
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent
+        className="grid max-h-[min(940px,calc(100vh-40px))] w-[min(1100px,calc(100%-32px))] max-w-[min(1100px,calc(100%-32px))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-[14px] border-[var(--border-strong)] bg-card p-0 shadow-2xl sm:!max-w-[min(1100px,calc(100%-32px))] max-[760px]:max-h-[calc(100vh-24px)] max-[760px]:w-[calc(100%-24px)] max-[760px]:!max-w-[calc(100%-24px)]"
+        showCloseButton={false}
+      >
+        <DialogHeader className="flex min-h-[68px] flex-row items-center justify-between gap-4 border-b border-border px-5 py-3">
+          <div className="min-w-0">
+            <span className="mb-0.5 block text-xs font-semibold text-muted-foreground">
+              {item.kind === "track" ? tr("achievementWall.track") : tr("special.title")}
+            </span>
+            <DialogTitle id="achievement-dialog-title" className="truncate text-xl">
+              {title}
+            </DialogTitle>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label={tr("common.close")}>
+            <X size={17} />
+          </Button>
+        </DialogHeader>
+        {item.kind === "track" ? (
+          <AchievementTrackDetail track={item.track} />
+        ) : (
+          <SpecialAchievementDetail item={item} />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
+  const [selected, setSelected] = useState(() => selectDefaultTrackMilestone(track));
+  const progressPercent = Math.round(track.progressRatio * 100);
+  const selectedReached = achievementReached(selected);
+  const selectedCurrent = track.next?.code === selected.code;
+  const milestoneCount = Math.max(1, track.milestones.length);
+  return (
+    <div className="min-h-0 overflow-auto">
+      <div className="grid grid-cols-3 border-b border-border max-[760px]:grid-cols-1">
+        {[
+          [
+            tr("achievementWall.currentValue"),
+            formatMilestoneValue(track.category, track.progress),
+          ],
+          [
+            tr("achievementWall.completedStages"),
+            `${track.completed} / ${track.milestones.length}`,
+          ],
+          [
+            tr("achievementWall.nextTarget"),
+            track.next
+              ? formatMilestoneValue(track.category, track.next.threshold)
+              : tr("milestones.highest"),
+          ],
+        ].map(([label, value], index) => (
+          <span
+            className={cn(
+              "grid min-h-[68px] content-center gap-1 px-5 py-3",
+              index > 0 && "border-l border-border max-[760px]:border-l-0 max-[760px]:border-t",
+            )}
+            key={label}
+          >
+            <small className="text-xs text-muted-foreground">{label}</small>
+            <strong className="truncate text-sm text-foreground">{value}</strong>
+          </span>
+        ))}
+      </div>
+      <div className="overflow-hidden border-b border-border px-5 pb-4 pt-7">
+        <ToggleGroup
+          className="relative grid w-full min-w-0 gap-0 pb-2"
+          value={[selected.code]}
+          onValueChange={(values) => {
+            const next = track.milestones.find((milestone) => milestone.code === values[0]);
+            if (next) setSelected(next);
+          }}
+          style={{ gridTemplateColumns: `repeat(${milestoneCount}, minmax(0, 1fr))` }}
+        >
+          <Progress
+            value={progressPercent}
+            aria-label={tr("milestones.progress", {
+              category: tr(`milestones.category.${track.category}`),
+            })}
+            style={{ left: `${50 / milestoneCount}%`, right: `${50 / milestoneCount}%` }}
+            className="pointer-events-none absolute top-[11px] z-0 h-0.5 w-auto bg-border"
+          />
+          {track.milestones.map((milestone) => {
+            const reached = achievementReached(milestone);
+            const current = track.next?.code === milestone.code;
+            return (
+              <ToggleGroupItem
+                value={milestone.code}
+                className={cn(
+                  "relative z-1 grid h-auto min-h-[104px] min-w-0 items-start content-start justify-items-center gap-1.5 rounded-lg !bg-transparent px-1 text-center text-muted-foreground hover:!bg-transparent hover:text-foreground data-[state=on]:!bg-transparent focus-visible:ring-2 focus-visible:ring-ring",
+                  reached && "text-foreground",
+                  current && "text-primary",
+                )}
+                key={milestone.code}
+              >
+                <span
+                  className={cn(
+                    "grid size-[22px] place-items-center rounded-full border-2 border-[var(--border-strong)] bg-card text-muted-foreground",
+                    reached && "border-primary bg-[var(--accent-2)] text-white",
+                    current &&
+                      "border-primary shadow-[0_0_0_4px_color-mix(in_srgb,var(--primary)_14%,transparent)]",
+                  )}
+                >
+                  {reached ? <Check size={13} /> : ""}
+                </span>
+                <strong className="max-w-full whitespace-normal text-xs leading-tight">
+                  {formatMilestoneValue(track.category, milestone.threshold)}
+                </strong>
+                <small className="max-w-full whitespace-normal text-xs leading-tight">
+                  {tr(`achievements.${achievementTranslationKey(milestone.code)}.title`)}
+                </small>
+              </ToggleGroupItem>
+            );
+          })}
+        </ToggleGroup>
+      </div>
+      <section className="grid min-h-24 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5 gap-y-1.5 px-5 py-4 max-[760px]:grid-cols-1">
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className={cn(
+              "grid size-[30px] shrink-0 place-items-center rounded-full border border-border bg-muted text-muted-foreground",
+              selectedReached && "border-primary bg-[var(--accent-2)] text-white",
+              selectedCurrent && "border-primary",
+            )}
+          >
+            {selectedReached ? <Check size={14} /> : <LockKeyhole size={13} />}
+          </span>
+          <div className="min-w-0">
+            <small className="mb-0.5 block text-xs text-muted-foreground">
+              {tr("achievementWall.stageDetail")}
+            </small>
+            <h3 className="truncate text-base font-semibold text-foreground">
+              {tr(`achievements.${achievementTranslationKey(selected.code)}.title`)}
+            </h3>
+          </div>
+        </div>
+        <strong className="text-sm text-foreground">
+          {formatMilestoneValue(track.category, selected.threshold)}
+        </strong>
+        <p className="col-span-full m-0 pl-[41px] text-xs text-muted-foreground max-[760px]:pl-[41px]">
+          {selected.unlocked_at
+            ? tr("insights.unlockedAt", { date: formatDateTime(selected.unlocked_at) })
+            : selectedReached
+              ? tr("special.reachedDateUnknown")
+              : selectedCurrent
+                ? tr("milestones.currentProgress", {
+                    progress: formatMilestoneValue(track.category, track.progress),
+                  })
+                : tr("milestones.locked")}
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function SpecialAchievementDetail({
+  item,
+}: {
+  item: Extract<AchievementWallItem, { kind: "special" }>;
+}) {
+  const { achievement, secret, unlocked } = item.special;
+  const hidden = secret && !unlocked;
+  const key = achievementTranslationKey(achievement.code);
+  const Icon = hidden ? LockKeyhole : (specialAchievementIcons[achievement.code] ?? Award);
+  const title = hidden ? tr("special.mystery") : tr(`achievements.${key}.title`);
+  const status = achievement.unlocked_at
+    ? tr("insights.unlockedAt", { date: formatDateTime(achievement.unlocked_at) })
+    : unlocked
+      ? tr("special.reachedDateUnknown")
+      : tr("milestones.locked");
+  return (
+    <div className="grid justify-items-center px-7 pb-10 pt-9 text-center">
+      <span
+        className={cn(
+          "grid size-16 place-items-center rounded-2xl border border-border bg-muted text-muted-foreground",
+          unlocked && "border-primary/25 bg-primary/10 text-primary",
+        )}
+      >
+        <Icon size={28} />
+      </span>
+      <h3 className="mt-3.5 text-xl font-semibold text-foreground">{title}</h3>
+      <p className="my-2 max-w-[560px] text-sm leading-relaxed text-muted-foreground">
+        {hidden ? tr("achievementWall.secretCondition") : tr(`achievements.${key}.description`)}
+      </p>
+      <Badge variant="outline">{status}</Badge>
+    </div>
+  );
+}
+
+function ProviderRow({ provider }: { provider: NonNullable<InsightsStatus["providers"]>[number] }) {
+  const summary = provider.coverage_from
+    ? `${provider.coverage_from} — ${provider.coverage_to}`
+    : provider.error_key
+      ? localizeMessage({ key: provider.error_key, params: provider.error_params })
+      : provider.error
+        ? tr("insights.providerUnavailable")
+        : provider.available
+          ? undefined
+          : tr("insights.noData");
+  return (
+    <div className="flex items-start gap-3 px-4 py-3">
+      <AgentIcon agent={provider.agent} />
+      <span className="grid min-w-0 gap-1">
+        <strong className="text-sm">{agentLabels[provider.agent]}</strong>
+        {summary && <small className="text-xs text-muted-foreground">{summary}</small>}
+        {provider.error && (
+          <Collapsible>
+            <CollapsibleTrigger className="text-xs text-muted-foreground underline-offset-2 hover:underline">
+              {tr("common.details")}
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <pre className="mt-2 max-h-32 overflow-auto rounded-md bg-muted p-2 text-xs">
+                {provider.error}
+              </pre>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function AchievementMetric({
+  icon: Icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: ComponentType<{ size?: number; className?: string }>;
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <Card className="grid min-h-[136px] grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_auto_auto] gap-x-3 rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-foreground/20">
+      <span className="row-span-3 grid size-9 place-items-center rounded-xl bg-foreground text-background">
+        <Icon size={17} />
+      </span>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <strong className="text-[25px] tracking-[-.04em] text-foreground tabular-nums">
+        {value}
+      </strong>
+      <small className="truncate text-[11px] text-muted-foreground">{detail}</small>
+    </Card>
+  );
+}
+function BreakdownPanel({
+  title,
+  values,
+}: {
+  title: string;
+  values: Array<{ key: string; label: string; detail: string; value: number }>;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex min-h-[52px] items-center border-b border-border px-4 py-3">
+        <h2 className="m-0 text-base font-semibold">{title}</h2>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="divide-y divide-border">
+          {values.slice(0, 10).map((item) => (
+            <div className="flex items-center justify-between gap-4 px-4 py-3" key={item.key}>
+              <span className="grid min-w-0 gap-0.5">
+                <strong className="truncate text-sm">{metadataLabel(item.label)}</strong>
+                <small className="text-xs text-muted-foreground">{item.detail}</small>
+              </span>
+              <strong className="text-sm tabular-nums">{formatCompact(item.value)}</strong>
+            </div>
+          ))}
+          {!values.length && (
+            <p className="px-4 py-6 text-sm text-muted-foreground">{tr("insights.noRecords")}</p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+function Empty({
+  icon: Icon,
+  title,
+  text,
+}: {
+  icon: ComponentType<{ size?: number; className?: string }>;
+  title: string;
+  text?: string;
+}) {
+  return (
+    <div className="grid min-h-[92px] grid-cols-[auto_minmax(0,auto)] place-content-center items-center gap-x-2.5 gap-y-1 p-4 text-left text-muted-foreground">
+      <Icon className="row-span-2" size={28} />
+      <h3 className="m-0 text-[13px] font-semibold text-foreground">{title}</h3>
+      {text && <p className="m-0 max-w-[380px] leading-relaxed">{text}</p>}
+    </div>
+  );
+}
+function formatMilestoneValue(category: AchievementCategory, value: number) {
+  return tr(`milestones.value.${category}`, { value: formatCompact(value) });
+}
+function formatCompact(value: number) {
+  return formatCompactNumber(value);
+}
+function localDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+function metadataLabel(value: string) {
+  if (value === "__unknown_model__") return tr("insights.unknownModel");
+  if (value === "__unlinked_workspace__") return tr("insights.unlinkedWorkspace");
+  if (value === "仓库 Git 身份") return tr("settings.gitIdentityRepository");
+  if (value === "全局 Git 身份") return tr("settings.gitIdentityGlobal");
+  if (value === "历史邮箱别名") return tr("settings.gitIdentityAlias");
+  return value.startsWith("settings.gitIdentity") ? tr(value) : value;
+}
+function achievementTranslationKey(code: string) {
+  return (
+    (
+      {
+        "token-100000": "token_100k",
+        "token-1000000": "token_1m",
+        "token-10000000": "token_10m",
+        "token-100000000": "token_100m",
+        "token-1000000000": "token_1b",
+        "token-10000000000": "token_10b",
+        "token-100000000000": "token_100b",
+        "token-1000000000000": "token_1t",
+        "session-10": "session_10",
+        "session-50": "session_50",
+        "session-100": "session_100",
+        "session-500": "session_500",
+        "session-1000": "session_1000",
+        "session-5000": "session_5000",
+        "session-10000": "session_10000",
+        "commit-1": "commit_1",
+        "commit-10": "commit_10",
+        "commit-100": "commit_100",
+        "commit-1000": "commit_1000",
+        "commit-5000": "commit_5000",
+        "commit-10000": "commit_10000",
+        "active-days-7": "active_days_7",
+        "active-days-30": "active_days_30",
+        "active-days-100": "active_days_100",
+        "active-days-365": "active_days_365",
+        "active-days-1000": "active_days_1000",
+        "streak-3": "streak_3",
+        "streak-7": "streak_7",
+        "streak-14": "streak_14",
+        "streak-30": "streak_30",
+        "streak-60": "streak_60",
+        "streak-100": "streak_100",
+        "streak-180": "streak_180",
+        "streak-365": "streak_365",
+        "workspaces-1": "workspaces_1",
+        "workspaces-5": "workspaces_5",
+        "workspaces-10": "workspaces_10",
+        "workspaces-25": "workspaces_25",
+        "workspaces-50": "workspaces_50",
+        "workspaces-100": "workspaces_100",
+        "agents-1": "agents_1",
+        "agents-2": "agents_2",
+        "agents-3": "agents_3",
+        "agents-4": "agents_4",
+        "agents-5": "agents_5",
+        "special-first-changeset": "special_first_changeset",
+        "special-first-memory": "special_first_memory",
+        "special-shared-workspace": "special_shared_workspace",
+        "special-exact-attribution": "special_exact_attribution",
+        "special-remote-handshake": "special_remote_handshake",
+        "special-night-owl": "special_night_owl",
+        "special-comeback": "special_comeback",
+        "special-same-day-delivery": "special_same_day_delivery",
+      } as Record<string, string>
+    )[code] ?? code
+  );
+}

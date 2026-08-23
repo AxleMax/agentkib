@@ -52,12 +52,18 @@ export function currentLocale(): SupportedLocale {
 }
 
 export function tr(key: string, options?: Record<string, unknown>): string {
-  const translate = i18n.t as unknown as (translationKey: string, translationOptions?: TOptions) => unknown;
+  const translate = i18n.t as unknown as (
+    translationKey: string,
+    translationOptions?: TOptions,
+  ) => unknown;
   return String(translate(key, options as TOptions | undefined));
 }
 
 export function formatCompactNumber(value: number) {
-  return new Intl.NumberFormat(currentLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  return new Intl.NumberFormat(currentLocale(), {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
 }
 
 export function formatNumber(value: number) {
@@ -65,7 +71,10 @@ export function formatNumber(value: number) {
 }
 
 export function formatDateTime(value: string | Date) {
-  return new Intl.DateTimeFormat(currentLocale(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return new Intl.DateTimeFormat(currentLocale(), {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 export function formatRelativeTime(value: string | Date) {
@@ -83,7 +92,9 @@ export function localizeMessage(message: LocalizedMessage | string | unknown): s
   if (typeof message === "object" && message !== null && "key" in message) {
     const value = message as LocalizedMessage;
     const translated = tr(value.key, value.params);
-    return value.detail ? tr("errors.withDetail", { message: translated, detail: value.detail }) : translated;
+    return value.detail
+      ? tr("errors.withDetail", { message: translated, detail: value.detail })
+      : translated;
   }
   return String(message);
 }

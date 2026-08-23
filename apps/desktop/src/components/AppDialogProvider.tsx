@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   AlertDialog,
@@ -11,7 +20,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { tr } from "../core/i18n";
@@ -54,30 +70,42 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
   queueRef.current = queue;
   secretRequestRef.current = secretRequest;
 
-  useEffect(() => () => {
-    queueRef.current.forEach((request) => request.resolve(false));
-    queueRef.current = [];
-    secretRequestRef.current?.resolve(null);
-  }, []);
+  useEffect(
+    () => () => {
+      queueRef.current.forEach((request) => request.resolve(false));
+      queueRef.current = [];
+      secretRequestRef.current?.resolve(null);
+    },
+    [],
+  );
 
-  const enqueue = useCallback((kind: DialogRequest["kind"], options: string | DialogOptions) => (
-    new Promise<boolean>((resolve) => {
-      const normalized = typeof options === "string" ? { description: options } : options;
-      setQueue((current) => {
-        const next = [...current, { ...normalized, id: ++idRef.current, kind, resolve }];
-        queueRef.current = next;
-        return next;
-      });
-    })
-  ), []);
+  const enqueue = useCallback(
+    (kind: DialogRequest["kind"], options: string | DialogOptions) =>
+      new Promise<boolean>((resolve) => {
+        const normalized = typeof options === "string" ? { description: options } : options;
+        setQueue((current) => {
+          const next = [...current, { ...normalized, id: ++idRef.current, kind, resolve }];
+          queueRef.current = next;
+          return next;
+        });
+      }),
+    [],
+  );
 
-  const requestSecrets = useCallback((keys: string[]) => new Promise<Record<string, string> | null>((resolve) => {
-    if (!keys.length) { resolve({}); return; }
-    setSecretValues(Object.fromEntries(keys.map((key) => [key, ""])));
-    const request = { id: ++idRef.current, keys, resolve };
-    secretRequestRef.current = request;
-    setSecretRequest(request);
-  }), []);
+  const requestSecrets = useCallback(
+    (keys: string[]) =>
+      new Promise<Record<string, string> | null>((resolve) => {
+        if (!keys.length) {
+          resolve({});
+          return;
+        }
+        setSecretValues(Object.fromEntries(keys.map((key) => [key, ""])));
+        const request = { id: ++idRef.current, keys, resolve };
+        secretRequestRef.current = request;
+        setSecretRequest(request);
+      }),
+    [],
+  );
 
   const finishSecrets = useCallback((values: Record<string, string> | null, requestId: number) => {
     const current = secretRequestRef.current;
@@ -88,11 +116,16 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
     setSecretValues({});
   }, []);
 
-  const value = useMemo<AppDialogs>(() => ({
-    confirm: (options) => enqueue("confirm", options),
-    notify: async (options) => { await enqueue("notify", options); },
-    requestSecrets,
-  }), [enqueue, requestSecrets]);
+  const value = useMemo<AppDialogs>(
+    () => ({
+      confirm: (options) => enqueue("confirm", options),
+      notify: async (options) => {
+        await enqueue("notify", options);
+      },
+      requestSecrets,
+    }),
+    [enqueue, requestSecrets],
+  );
 
   const active = queue[0];
   const finish = useCallback((accepted: boolean, requestId: number) => {
@@ -106,38 +139,79 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
   return (
     <AppDialogContext.Provider value={value}>
       {children}
-      <AlertDialog open={Boolean(active)} onOpenChange={(open) => { if (!open && active) finish(false, active.id); }}>
-        {active && <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{active.title ?? tr(active.kind === "notify" ? "dialog.noticeTitle" : "dialog.confirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{active.description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            {active.kind === "confirm" && <AlertDialogCancel onClick={() => finish(false, active.id)}>{tr("common.cancel")}</AlertDialogCancel>}
-            <AlertDialogAction
-              className={active.tone === "warning" ? "border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300" : undefined}
-              variant={active.tone === "destructive" ? "destructive" : "default"}
-              onClick={() => finish(true, active.id)}
-            >
-              {tr(active.kind === "notify" ? "common.ok" : "common.confirm")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>}
+      <AlertDialog
+        open={Boolean(active)}
+        onOpenChange={(open) => {
+          if (!open && active) finish(false, active.id);
+        }}
+      >
+        {active && (
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {active.title ??
+                  tr(active.kind === "notify" ? "dialog.noticeTitle" : "dialog.confirmTitle")}
+              </AlertDialogTitle>
+              <AlertDialogDescription>{active.description}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              {active.kind === "confirm" && (
+                <AlertDialogCancel onClick={() => finish(false, active.id)}>
+                  {tr("common.cancel")}
+                </AlertDialogCancel>
+              )}
+              <AlertDialogAction
+                className={
+                  active.tone === "warning"
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300"
+                    : undefined
+                }
+                variant={active.tone === "destructive" ? "destructive" : "default"}
+                onClick={() => finish(true, active.id)}
+              >
+                {tr(active.kind === "notify" ? "common.ok" : "common.confirm")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        )}
       </AlertDialog>
-      <Dialog open={Boolean(secretRequest)} onOpenChange={(open) => { if (!open && secretRequest) finishSecrets(null, secretRequest.id); }}>
-        {secretRequest && <DialogContent className="w-[min(520px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>{tr("mcp.secretDialogTitle")}</DialogTitle>
-            <DialogDescription>{tr("mcp.secretDialogDescription")}</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            {secretRequest.keys.map((key) => <Label key={key}><span>{key}</span><Input type="password" autoComplete="off" value={secretValues[key] ?? ""} onChange={(event) => setSecretValues((current) => ({ ...current, [key]: event.target.value }))} /></Label>)}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => finishSecrets(null, secretRequest.id)}>{tr("common.cancel")}</Button>
-            <Button onClick={() => finishSecrets(secretValues, secretRequest.id)}>{tr("common.confirm")}</Button>
-          </DialogFooter>
-        </DialogContent>}
+      <Dialog
+        open={Boolean(secretRequest)}
+        onOpenChange={(open) => {
+          if (!open && secretRequest) finishSecrets(null, secretRequest.id);
+        }}
+      >
+        {secretRequest && (
+          <DialogContent className="w-[min(520px,calc(100vw-2rem))]">
+            <DialogHeader>
+              <DialogTitle>{tr("mcp.secretDialogTitle")}</DialogTitle>
+              <DialogDescription>{tr("mcp.secretDialogDescription")}</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4">
+              {secretRequest.keys.map((key) => (
+                <Label key={key}>
+                  <span>{key}</span>
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    value={secretValues[key] ?? ""}
+                    onChange={(event) =>
+                      setSecretValues((current) => ({ ...current, [key]: event.target.value }))
+                    }
+                  />
+                </Label>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => finishSecrets(null, secretRequest.id)}>
+                {tr("common.cancel")}
+              </Button>
+              <Button onClick={() => finishSecrets(secretValues, secretRequest.id)}>
+                {tr("common.confirm")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
       </Dialog>
     </AppDialogContext.Provider>
   );
