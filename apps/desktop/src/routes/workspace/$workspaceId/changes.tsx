@@ -364,9 +364,11 @@ function WorkspaceChangesRoute() {
     setMessage,
   } = useWorkspaceStore();
   const homePlanRequest = useRef(0);
+  const reloadRequest = useRef(0);
   useEffect(
     () => () => {
       homePlanRequest.current += 1;
+      reloadRequest.current += 1;
     },
     [workspaceId],
   );
@@ -388,12 +390,19 @@ function WorkspaceChangesRoute() {
     }
   };
   const reload = async () => {
+    const requestId = ++reloadRequest.current;
+    const targetProject = project;
+    const isCurrentRequest = () =>
+      requestId === reloadRequest.current &&
+      useWorkspaceStore.getState().selectedWorkspace?.id === workspaceId &&
+      useWorkspaceStore.getState().project === targetProject;
     const [scan, manifest, runtime] = await Promise.all([
-      api.scan(project),
-      api.manifest(project),
+      api.scan(targetProject),
+      api.manifest(targetProject),
       api.runtime(),
     ]);
-    setProject(project);
+    if (!isCurrentRequest()) return undefined;
+    setProject(targetProject);
     setScan(scan);
     setManifest(manifest);
     setBaselineManifest(JSON.stringify(manifest));
@@ -406,13 +415,18 @@ function WorkspaceChangesRoute() {
       launchRequest={handoffLaunchRequest}
       onPlanHome={() => void planHome()}
       onApplied={async (keepLaunchRequest) => {
+        const targetProject = project;
         setChangeSet(undefined);
         if (!keepLaunchRequest) setHandoffLaunchRequest(undefined);
         try {
           const runtime = await reload();
-          await refreshGlobalState(runtime);
+          if (runtime) await refreshGlobalState(runtime);
         } catch (error) {
-          setMessage(String(error));
+          if (
+            useWorkspaceStore.getState().selectedWorkspace?.id === workspaceId &&
+            useWorkspaceStore.getState().project === targetProject
+          )
+            setMessage(String(error));
         }
       }}
       onLaunchCompleted={() => setHandoffLaunchRequest(undefined)}

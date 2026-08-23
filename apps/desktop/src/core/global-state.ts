@@ -31,6 +31,9 @@ export async function refreshGlobalState(currentRuntime?: RuntimeInfo) {
   ]);
   const valueOr = <T>(result: PromiseSettledResult<T>, fallback: T): T =>
     result.status === "fulfilled" ? result.value : fallback;
+  if (workspacesResult.status === "rejected") {
+    throw workspacesResult.reason;
+  }
   const workspaces = valueOr(workspacesResult, previous.workspaces);
   const installations = valueOr(installationsResult, previous.installations);
   const catalog = valueOr(catalogResult, previous.catalog);

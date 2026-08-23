@@ -437,6 +437,10 @@ export function AppShell() {
       setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
   }, [hasUnsavedDraft, manifest, selectedWorkspace, setWorkspaceDrafts]);
   const leaveWorkspace = async (next: () => void) => {
+    if (useWorkspaceStore.getState().applyingChanges) {
+      await dialogs.notify(tr("dialog.quit.changesApplying"));
+      return;
+    }
     if (
       hasUnsavedDraft &&
       !(await dialogs.confirm({
@@ -445,6 +449,10 @@ export function AppShell() {
       }))
     )
       return;
+    if (useWorkspaceStore.getState().applyingChanges) {
+      await dialogs.notify(tr("dialog.quit.changesApplying"));
+      return;
+    }
     workspaceOpenRequest.current += 1;
     if (selectedWorkspace)
       setWorkspaceDrafts((drafts) => {
@@ -581,10 +589,14 @@ export function AppShell() {
   useEffect(() => {
     if (!navigationRequest) return;
     if (navigationRequest.page === "settings") {
-      void navigate({
-        to: "/settings",
-        search: { settingsSection: navigationRequest.settings_section ?? "general" } as never,
-      });
+      if (useWorkspaceStore.getState().applyingChanges) {
+        void dialogs.notify(tr("dialog.quit.changesApplying"));
+      } else {
+        void navigate({
+          to: "/settings",
+          search: { settingsSection: navigationRequest.settings_section ?? "general" } as never,
+        });
+      }
       setNavigationRequest(undefined);
       return;
     }
@@ -600,6 +612,7 @@ export function AppShell() {
     setNavigationRequest(undefined);
   }, [
     navigationRequest,
+    dialogs,
     navigateGlobal,
     navigateGlobalWithSearch,
     navigate,

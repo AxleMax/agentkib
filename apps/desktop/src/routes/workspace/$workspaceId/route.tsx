@@ -235,6 +235,10 @@ function WorkspaceLayout() {
   };
 
   const leaveWorkspace = async (next: () => void) => {
+    if (useWorkspaceStore.getState().applyingChanges) {
+      await dialogs.notify(tr("dialog.quit.changesApplying"));
+      return;
+    }
     if (
       hasUnsavedDraft &&
       !(await dialogs.confirm({
@@ -243,6 +247,10 @@ function WorkspaceLayout() {
       }))
     )
       return;
+    if (useWorkspaceStore.getState().applyingChanges) {
+      await dialogs.notify(tr("dialog.quit.changesApplying"));
+      return;
+    }
     setWorkspaceDrafts((drafts) => {
       const nextDrafts = { ...drafts };
       delete nextDrafts[workspaceId];
@@ -308,7 +316,13 @@ function WorkspaceLayout() {
         collapsed={sidebarCollapsed}
         platform={platform}
         onNavigate={navigateGlobal}
-        onSettings={() => void navigate({ to: "/settings" })}
+        onSettings={() => {
+          if (useWorkspaceStore.getState().applyingChanges) {
+            void dialogs.notify(tr("dialog.quit.changesApplying"));
+            return;
+          }
+          void navigate({ to: "/settings" });
+        }}
       />
       {!sidebarCollapsed && (
         <Button
