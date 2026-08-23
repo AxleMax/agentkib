@@ -135,7 +135,7 @@ describe("WorkspaceSessionsPage", () => {
   it("defaults to readable current sessions and reads the selected transcript on demand", async () => {
     render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText("Current task")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Current task" })).toBeInTheDocument());
     expect(screen.queryByText("Old task")).not.toBeInTheDocument();
     await waitFor(() => expect(api.sessionEvents).toHaveBeenCalledWith("current"));
     expect(await screen.findByText("Visible message")).toBeInTheDocument();
@@ -144,7 +144,7 @@ describe("WorkspaceSessionsPage", () => {
 
   it("shows archived metadata-only sessions without trying to read a missing transcript", async () => {
     render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
-    await waitFor(() => expect(screen.getByText("Current task")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Current task" })).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("tab", { name: /All/ }));
     fireEvent.click(await screen.findByText("Old task"));
@@ -155,7 +155,7 @@ describe("WorkspaceSessionsPage", () => {
 
   it("separates indexed records from readable transcripts and links to metadata", async () => {
     render(<WorkspaceSessionsPage workspace={workspace} enabled targetAgents={["codex", "claude-code"]} onRuntimeChanged={vi.fn()} onHandoffPlanned={vi.fn()} />);
-    await waitFor(() => expect(screen.getByText("Current task")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Current task" })).toBeInTheDocument());
 
     expect(screen.getByText("1 indexed · 1 readable")).toBeInTheDocument();
     expect(screen.getByText("1 indexed · 0 readable")).toBeInTheDocument();
