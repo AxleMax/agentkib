@@ -129,16 +129,23 @@ export function QuotaPage({
         return;
       }
       const { snapshot: initialSnapshot, job } = await load();
-      if (!disposed) setInitializing(false);
       if (
         requestedInitialRefresh.current ||
         (job && ["queued", "running", "backoff"].includes(job.state))
-      )
+      ) {
+        if (!disposed) setInitializing(false);
         return;
-      if (initialSnapshot?.freshness === "fresh") return;
+      }
+      if (initialSnapshot?.freshness === "fresh") {
+        if (!disposed) setInitializing(false);
+        return;
+      }
       requestedInitialRefresh.current = true;
       const receipt = await api.requestRefresh("quota", false);
-      if (!disposed) setRefreshJob(receipt.status);
+      if (!disposed) {
+        setRefreshJob(receipt.status);
+        setInitializing(false);
+      }
     })().catch((reason) => {
       if (!disposed) {
         setInitializing(false);

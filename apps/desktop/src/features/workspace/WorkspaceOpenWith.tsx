@@ -7,7 +7,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, Code2, FolderOpen, SquareTerminal } from "lucide-react";
 import { api } from "@/core/api";
 import { localizeMessage, tr } from "@/core/i18n";
@@ -22,15 +22,25 @@ export function WorkspaceOpenWith({
 }) {
   const [openers, setOpeners] = useState<WorkspaceOpener[]>([]);
   const [opening, setOpening] = useState(false);
+  const requestSequence = useRef(0);
 
-  const load = () =>
-    api
-      .workspaceOpeners(workspace.id)
-      .then(setOpeners)
-      .catch((reason) => onError(localizeMessage(reason)));
+  const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
+    try {
+      const nextOpeners = await api.workspaceOpeners(workspace.id);
+      if (sequence === requestSequence.current) setOpeners(nextOpeners);
+    } catch (reason) {
+      if (sequence === requestSequence.current) onError(localizeMessage(reason));
+    }
+  }, [onError, workspace.id]);
+
   useEffect(() => {
+    setOpeners([]);
     void load();
-  }, [workspace.id]);
+    return () => {
+      requestSequence.current += 1;
+    };
+  }, [load]);
   const preferred = openers.find((opener) => opener.preferred) ?? openers[0];
 
   const openWorkspace = async (openerId?: string) => {

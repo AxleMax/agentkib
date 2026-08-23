@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Activity,
@@ -105,6 +105,7 @@ export function InsightsPage({
   const [error, setError] = useState("");
   const [initializing, setInitializing] = useState(true);
   const pendingRefresh = useRef(false);
+  const requestSequence = useRef(0);
   const query = useMemo<InsightsQuery>(() => {
     const today = new Date();
     const from =
@@ -121,10 +122,12 @@ export function InsightsPage({
       repository_group_id: commitView && repository !== "all" ? repository : undefined,
     };
   }, [agent, workspaceId, repository, range, section]);
-  const loadInsights = async () => {
+  const loadInsights = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setError("");
     try {
       const view = await api.insightsView(query);
+      if (sequence !== requestSequence.current) return;
       setSummary(view.summary);
       setPoints(view.heatmap);
       setAgents(view.agents);
@@ -136,17 +139,19 @@ export function InsightsPage({
       setBusy(view.status.running);
       onSummary(view.summary);
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (sequence === requestSequence.current) setError(localizeMessage(reason));
     } finally {
-      setInitializing(false);
+      if (sequence === requestSequence.current) setInitializing(false);
     }
-  };
+  }, [onSummary, query]);
   useEffect(() => {
     void loadInsights();
-  }, [query]);
+  }, [loadInsights]);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     void listen<RefreshJobStatus>("agentkib:refresh-state", (event) => {
+      if (disposed) return;
       if (event.payload.kind !== "insights") return;
       if (event.payload.state === "queued" || event.payload.state === "running") setBusy(true);
       if (event.payload.state === "succeeded") {
@@ -159,10 +164,14 @@ export function InsightsPage({
         setError(event.payload.error ?? tr("errors.generic"));
       }
     }).then((dispose) => {
-      unlisten = dispose;
+      if (disposed) dispose();
+      else unlisten = dispose;
     });
-    return () => unlisten?.();
-  }, [query]);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [loadInsights]);
   useEffect(() => {
     const refreshVisibleInsights = () => {
       if (!pendingRefresh.current) return;
@@ -171,7 +180,7 @@ export function InsightsPage({
     };
     window.addEventListener("focus", refreshVisibleInsights);
     return () => window.removeEventListener("focus", refreshVisibleInsights);
-  }, [query]);
+  }, [loadInsights]);
   const metricLabels: Record<HeatmapMetric, string> = {
     tokens: "Token",
     my_commits: tr("insights.myCommits"),

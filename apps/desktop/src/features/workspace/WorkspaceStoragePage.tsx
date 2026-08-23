@@ -69,6 +69,10 @@ export function WorkspaceStoragePage({
           setSelected(undefined);
         }
       });
+      if (disposed) {
+        unlisten?.();
+        return;
+      }
       try {
         const cached = await api.storageOverview();
         if (!disposed) setOverview(cached);

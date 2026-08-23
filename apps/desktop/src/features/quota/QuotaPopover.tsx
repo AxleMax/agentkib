@@ -141,7 +141,8 @@ export function QuotaPopover() {
     };
     void listen<EffectiveTheme>("tauri://theme-changed", ({ payload }) => applyTheme(payload)).then(
       (dispose) => {
-        unlistenTheme = dispose;
+        if (disposed) dispose();
+        else unlistenTheme = dispose;
       },
     );
     window.addEventListener("focus", syncAppearance);

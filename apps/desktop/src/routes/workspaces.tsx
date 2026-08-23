@@ -122,6 +122,7 @@ function WorkspacesRoute() {
       setBaselineManifest(nextManifest ? JSON.stringify(nextManifest) : "");
       setRuntime(nextRuntime);
       setSelectedWorkspace(workspace);
+      setBusy(false);
       await navigate({
         to: nextManifest ? "/workspace/$workspaceId" : "/workspace/$workspaceId/doctor",
         params: { workspaceId: workspace.id },

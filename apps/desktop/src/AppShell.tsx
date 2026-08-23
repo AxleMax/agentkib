@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate, useSearch } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
@@ -123,28 +123,36 @@ export function AppShell() {
   const pendingRefreshKinds = useRef(new Set<string>());
   const quitPromptOpen = useRef(false);
   const workspaceOpenRequest = useRef(0);
-  const updateSearch = (patch: Partial<AppSearch>) => {
-    void navigate({
-      to: location.pathname as never,
-      search: (current) => ({ ...current, ...patch }) as never,
-    });
-  };
+  const updateSearch = useCallback(
+    (patch: Partial<AppSearch>) => {
+      void navigate({
+        to: location.pathname as never,
+        search: (current) => ({ ...current, ...patch }) as never,
+      });
+    },
+    [location.pathname, navigate],
+  );
   const navigateGlobalPage = (nextPage: GlobalPage) => {
     setPendingGlobalPage(nextPage);
     const path = nextPage === "home" ? "/" : `/${nextPage}`;
     void navigate({ to: path as never });
   };
-  const navigateWorkspacePageFor = (workspaceId: string, nextPage: Page) => {
-    const path =
-      nextPage === "overview" ? "/workspace/$workspaceId" : `/workspace/$workspaceId/${nextPage}`;
-    void navigate({ to: path as never, params: { workspaceId } as never });
-  };
+  const navigateWorkspacePageFor = useCallback(
+    (workspaceId: string, nextPage: Page) => {
+      const path =
+        nextPage === "overview" ? "/workspace/$workspaceId" : `/workspace/$workspaceId/${nextPage}`;
+      void navigate({ to: path as never, params: { workspaceId } as never });
+    },
+    [navigate],
+  );
   const setAppMode = (nextMode: "main" | "settings") => {
     if (nextMode === "settings") void navigate({ to: "/settings", search: (current) => current });
     else navigateGlobalPage(globalPage);
   };
-  const setGitSubview = (nextSubview: GitSubview | undefined) =>
-    updateSearch({ gitSubview: nextSubview });
+  const setGitSubview = useCallback(
+    (nextSubview: GitSubview | undefined) => updateSearch({ gitSubview: nextSubview }),
+    [updateSearch],
+  );
   useEffect(() => {
     if (pendingGlobalPage === routeGlobalPage) setPendingGlobalPage(undefined);
   }, [pendingGlobalPage, routeGlobalPage]);
@@ -220,6 +228,10 @@ export function AppShell() {
         unlisten = await listen<DiscoveryReport>("agentkib:discovery-updated", (event) => {
           setDiscovery(event.payload);
         });
+        if (disposed) {
+          unlisten?.();
+          return;
+        }
         unlistenRefresh = await listen<RefreshJobStatus>("agentkib:refresh-state", (event) => {
           setRefreshJobs((current) => [
             ...current.filter((job) => job.kind !== event.payload.kind),
@@ -236,27 +248,53 @@ export function AppShell() {
             }, 100);
           }
         });
+        if (disposed) {
+          unlistenRefresh?.();
+          return;
+        }
         unlistenInsights = await listen<InsightsSummary>("agentkib:insights-updated", (event) => {
           setInsightsSummary(event.payload);
         });
+        if (disposed) {
+          unlistenInsights?.();
+          return;
+        }
         unlistenGateways = await listen<RemoteGatewaySummary[]>(
           "agentkib:remote-gateways-updated",
           (event) => {
             setRemoteGateways(event.payload);
           },
         );
+        if (disposed) {
+          unlistenGateways?.();
+          return;
+        }
         unlistenQuota = await listen("agentkib:quota-updated", () => {
-          void api.quotaCollectorStatus().then(setQuotaStatus);
+          void api.quotaCollectorStatus().then((status) => {
+            if (!disposed) setQuotaStatus(status);
+          });
         });
+        if (disposed) {
+          unlistenQuota?.();
+          return;
+        }
         unlistenNavigate = await listen<AppNavigationRequest>("agentkib:navigate", (event) => {
           setNavigationRequest(event.payload);
         });
+        if (disposed) {
+          unlistenNavigate?.();
+          return;
+        }
         unlistenMenuCommand = await listen<AppMenuCommandRequest>(
           "agentkib:app-command",
           (event) => {
             setMenuCommand(event.payload);
           },
         );
+        if (disposed) {
+          unlistenMenuCommand?.();
+          return;
+        }
         unlistenTheme = await listen<EffectiveTheme>("tauri://theme-changed", (event) => {
           setRuntime((current) => {
             if (!current || current.theme_preference !== "system") return current;
@@ -264,6 +302,11 @@ export function AppShell() {
             return { ...current, effective_theme: event.payload };
           });
         });
+        if (disposed) {
+          unlistenTheme?.();
+          return;
+        }
+        if (disposed) return;
         const legacy = localStorage.getItem("agentkib.project");
         if (legacy) {
           await api.addWorkspace(legacy);
@@ -389,10 +432,10 @@ export function AppShell() {
       unlisten?.();
     };
   }, [dialogs]);
-  const persistWorkspaceDraft = () => {
+  const persistWorkspaceDraft = useCallback(() => {
     if (selectedWorkspace && manifest && hasUnsavedDraft)
       setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
-  };
+  }, [hasUnsavedDraft, manifest, selectedWorkspace, setWorkspaceDrafts]);
   const leaveWorkspace = async (next: () => void) => {
     if (
       hasUnsavedDraft &&
@@ -420,52 +463,74 @@ export function AppShell() {
     setBaselineManifest("");
     next();
   };
-  const openWorkspace = async (workspace: WorkspaceSummary, initialPage: Page = "overview") => {
-    const requestId = ++workspaceOpenRequest.current;
-    persistWorkspaceDraft();
-    setBusy(true);
-    setMessage("");
-    try {
-      const runtimePromise = useAppStore.getState().runtime
-        ? Promise.resolve(useAppStore.getState().runtime)
-        : api.runtime();
-      const [nextScan, nextRuntime] = await Promise.all([api.scan(workspace.path), runtimePromise]);
-      if (requestId !== workspaceOpenRequest.current) return;
-      let nextManifest: Manifest | undefined;
+  const openWorkspace = useCallback(
+    async (workspace: WorkspaceSummary, initialPage: Page = "overview") => {
+      const requestId = ++workspaceOpenRequest.current;
+      persistWorkspaceDraft();
+      setBusy(true);
+      setMessage("");
       try {
-        nextManifest = await api.manifest(workspace.path);
-      } catch (error) {
-        if (requestId === workspaceOpenRequest.current) setMessage(localizeMessage(error));
-      }
-      if (requestId !== workspaceOpenRequest.current) return;
-      setGitSubview(undefined);
-      setChangeSet(undefined);
-      setChangeSetOrigin("standard");
-      setHandoffLaunchRequest(undefined);
-      setProject(workspace.path);
-      setScan(nextScan);
-      setManifest(nextManifest ? (workspaceDrafts[workspace.id] ?? nextManifest) : undefined);
-      setBaselineManifest(nextManifest ? JSON.stringify(nextManifest) : "");
-      setRuntime(nextRuntime);
-      // Commit the route last so the workspace list remains visible while native scanning runs.
-      setSelectedWorkspace(workspace);
-      navigateWorkspacePageFor(workspace.id, nextManifest ? initialPage : "doctor");
-    } catch (error) {
-      if (requestId === workspaceOpenRequest.current) {
-        setSelectedWorkspace(workspace);
-        setProject("");
-        setScan(undefined);
-        setManifest(undefined);
+        const runtimePromise = useAppStore.getState().runtime
+          ? Promise.resolve(useAppStore.getState().runtime)
+          : api.runtime();
+        const [nextScan, nextRuntime] = await Promise.all([
+          api.scan(workspace.path),
+          runtimePromise,
+        ]);
+        if (requestId !== workspaceOpenRequest.current) return;
+        let nextManifest: Manifest | undefined;
+        try {
+          nextManifest = await api.manifest(workspace.path);
+        } catch (error) {
+          if (requestId === workspaceOpenRequest.current) setMessage(localizeMessage(error));
+        }
+        if (requestId !== workspaceOpenRequest.current) return;
+        setGitSubview(undefined);
         setChangeSet(undefined);
         setChangeSetOrigin("standard");
         setHandoffLaunchRequest(undefined);
-        setBaselineManifest("");
-        setMessage(localizeMessage(error));
+        setProject(workspace.path);
+        setScan(nextScan);
+        setManifest(nextManifest ? (workspaceDrafts[workspace.id] ?? nextManifest) : undefined);
+        setBaselineManifest(nextManifest ? JSON.stringify(nextManifest) : "");
+        setRuntime(nextRuntime);
+        // Commit the route last so the workspace list remains visible while native scanning runs.
+        setSelectedWorkspace(workspace);
+        navigateWorkspacePageFor(workspace.id, nextManifest ? initialPage : "doctor");
+      } catch (error) {
+        if (requestId === workspaceOpenRequest.current) {
+          setSelectedWorkspace(workspace);
+          setProject("");
+          setScan(undefined);
+          setManifest(undefined);
+          setChangeSet(undefined);
+          setChangeSetOrigin("standard");
+          setHandoffLaunchRequest(undefined);
+          setBaselineManifest("");
+          setMessage(localizeMessage(error));
+        }
+      } finally {
+        if (requestId === workspaceOpenRequest.current) setBusy(false);
       }
-    } finally {
-      if (requestId === workspaceOpenRequest.current) setBusy(false);
-    }
-  };
+    },
+    [
+      navigateWorkspacePageFor,
+      persistWorkspaceDraft,
+      setBaselineManifest,
+      setBusy,
+      setChangeSet,
+      setChangeSetOrigin,
+      setGitSubview,
+      setHandoffLaunchRequest,
+      setManifest,
+      setMessage,
+      setProject,
+      setRuntime,
+      setScan,
+      setSelectedWorkspace,
+      workspaceDrafts,
+    ],
+  );
   useEffect(() => {
     if (route.kind !== "workspace") workspaceOpenRequest.current += 1;
   }, [route.kind]);

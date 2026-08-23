@@ -175,6 +175,7 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
   const load = async () => {
     const sequence = ++historySequence.current;
     setLoading(true);
+    setLoadingMore(false);
     setError("");
     setSelectedFile(undefined);
     setDiffState({ status: "idle" });
@@ -336,18 +337,21 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
 
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
+    const sequence = historySequence.current;
+    const cursor = nextCursor;
     setLoadingMore(true);
     try {
       const page = await api.workspaceGitHistory(workspace.id, {
         ...historyQuery(),
-        cursor: nextCursor,
+        cursor,
       });
+      if (sequence !== historySequence.current) return;
       setCommits((current) => [...current, ...(page?.commits ?? [])]);
       setNextCursor(page?.next_cursor);
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (sequence === historySequence.current) setError(localizeMessage(reason));
     } finally {
-      setLoadingMore(false);
+      if (sequence === historySequence.current) setLoadingMore(false);
     }
   };
 

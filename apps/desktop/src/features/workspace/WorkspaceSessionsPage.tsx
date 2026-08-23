@@ -72,27 +72,34 @@ export function WorkspaceSessionsPage({
   const [showDetail, setShowDetail] = useState(false);
   const [showHandoff, setShowHandoff] = useState(false);
   const readSequence = useRef(0);
+  const cacheSequence = useRef(0);
 
   const reloadCache = async () => {
+    const sequence = ++cacheSequence.current;
     const [nextSessions, nextStatuses] = await Promise.all([
       api.workspaceSessions(workspace.id),
       api.workspaceSessionStatus(workspace.id),
     ]);
+    if (sequence !== cacheSequence.current) return;
     setSessions(nextSessions);
     setStatuses(nextStatuses);
   };
 
   const refresh = async (force: boolean) => {
+    const sequence = ++cacheSequence.current;
     setRefreshing(true);
     setError("");
     try {
       const nextSessions = await api.refreshWorkspaceSessions(workspace.id, force);
+      if (sequence !== cacheSequence.current) return;
       setSessions(nextSessions);
-      setStatuses(await api.workspaceSessionStatus(workspace.id));
+      const nextStatuses = await api.workspaceSessionStatus(workspace.id);
+      if (sequence !== cacheSequence.current) return;
+      setStatuses(nextStatuses);
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (sequence === cacheSequence.current) setError(localizeMessage(reason));
     } finally {
-      setRefreshing(false);
+      if (sequence === cacheSequence.current) setRefreshing(false);
     }
   };
 
@@ -109,25 +116,32 @@ export function WorkspaceSessionsPage({
     setSelectedId(undefined);
     setRefreshing(true);
     setError("");
+    const sequence = ++cacheSequence.current;
     void (async () => {
       unlisten = await listen<string>("agentkib:conversations-updated", (event) => {
         if (event.payload === workspace.id) void reloadCache();
       });
+      if (disposed) {
+        unlisten?.();
+        return;
+      }
       try {
         const nextSessions = await api.refreshWorkspaceSessions(workspace.id, true);
-        if (disposed) return;
+        if (disposed || sequence !== cacheSequence.current) return;
         const nextStatuses = await api.workspaceSessionStatus(workspace.id);
-        if (disposed) return;
+        if (disposed || sequence !== cacheSequence.current) return;
         setSessions(nextSessions);
         setStatuses(nextStatuses);
       } catch (reason) {
-        if (!disposed) setError(localizeMessage(reason));
+        if (!disposed && sequence === cacheSequence.current) setError(localizeMessage(reason));
       } finally {
-        if (!disposed) setRefreshing(false);
+        if (!disposed && sequence === cacheSequence.current) setRefreshing(false);
       }
     })();
     return () => {
       disposed = true;
+      cacheSequence.current += 1;
+      readSequence.current += 1;
       unlisten?.();
     };
   }, [workspace.id, enabled]);
@@ -165,6 +179,7 @@ export function WorkspaceSessionsPage({
   useEffect(() => {
     const sequence = ++readSequence.current;
     setEvents([]);
+    setLoadingEarlier(false);
     setNextCursor(undefined);
     setWarnings([]);
     setError("");
@@ -191,16 +206,20 @@ export function WorkspaceSessionsPage({
 
   const loadEarlier = async () => {
     if (!selected || !nextCursor) return;
+    const sequence = readSequence.current;
+    const selectedSessionId = selected.id;
+    const cursor = nextCursor;
     setLoadingEarlier(true);
     try {
-      const page = await api.sessionEvents(selected.id, nextCursor);
+      const page = await api.sessionEvents(selectedSessionId, cursor);
+      if (sequence !== readSequence.current) return;
       setEvents((current) => [...page.events, ...current]);
       setNextCursor(page.next_cursor);
       setWarnings((current) => [...new Set([...page.warnings, ...current])]);
     } catch (reason) {
-      setError(localizeMessage(reason));
+      if (sequence === readSequence.current) setError(localizeMessage(reason));
     } finally {
-      setLoadingEarlier(false);
+      if (sequence === readSequence.current) setLoadingEarlier(false);
     }
   };
 
