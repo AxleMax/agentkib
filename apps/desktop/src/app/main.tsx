@@ -1,14 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { AppDialogProvider } from "./components/AppDialogProvider";
-import { QuotaPopover } from "./components/QuotaPopover";
-import { api } from "./api";
-import { initializeI18n, normalizeLocale } from "./i18n";
-import { applyPlatformAttribute } from "./platform";
-import { applyTheme, systemTheme } from "./theme";
-import "./shadcn.css";
-import "./styles.css";
+import { AppDialogProvider } from "../components/AppDialogProvider";
+import { QuotaPopover } from "../components/QuotaPopover";
+import { api } from "../core/api";
+import { initializeI18n, normalizeLocale } from "../core/i18n";
+import { applyPlatformAttribute } from "../core/platform";
+import { applyTheme, systemTheme } from "../core/theme";
+import "../styles.css";
 
 applyPlatformAttribute(import.meta.env.TAURI_ENV_PLATFORM);
 

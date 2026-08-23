@@ -2,12 +2,12 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initializeI18n } from "../i18n";
-import type { WorkspaceSummary } from "../types";
+import { initializeI18n } from "../core/i18n";
+import type { WorkspaceSummary } from "../core/types";
 import { WorkspaceOpenWith } from "./WorkspaceOpenWith";
-import { api } from "../api";
+import { api } from "../core/api";
 
-vi.mock("../api", () => ({
+vi.mock("../core/api", () => ({
   api: {
     workspaceOpeners: vi.fn(),
     openWorkspaceWithApp: vi.fn(),

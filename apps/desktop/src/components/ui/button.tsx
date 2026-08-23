@@ -48,10 +48,21 @@ function Button({
   size = "default",
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  const legacyClasses = typeof className === "string" ? className : ""
+  const legacyVariant = legacyClasses.split(/\s+/).reduce<VariantProps<typeof buttonVariants>["variant"]>((current, token) => {
+    if (token === "ghost") return "outline"
+    if (token === "reject") return "destructive"
+    if (token === "icon-danger") return "destructive"
+    if (token === "link") return "link"
+    return current
+  }, "default")
+  const legacySize = legacyClasses.split(/\s+/).some((token) => token === "icon-button" || token === "icon-danger") ? "icon" : size
+  const cleanedClassName = legacyClasses.replace(/\b(primary|ghost|approve|reject|icon-button|icon-danger|link)\b/g, "").trim()
+
   return (
     <ButtonPrimitive
       data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(buttonVariants({ variant: variant === "default" ? legacyVariant : variant, size: legacySize, className: cleanedClassName }))}
       {...props}
     />
   )

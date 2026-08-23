@@ -12,10 +12,9 @@ const config = {
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   envPrefix: ["VITE_", "TAURI_ENV_"],
-  test: { setupFiles: ["./src/test-setup.ts"] },
+  test: { setupFiles: ["./src/test/test-setup.ts"] },
   build: {
     target: env.TAURI_ENV_PLATFORM === "windows" ? "chrome111" : "safari16.4",
-    minify: env.TAURI_ENV_DEBUG ? false : "esbuild" as const,
     sourcemap: Boolean(env.TAURI_ENV_DEBUG),
     rollupOptions: {
       output: {
