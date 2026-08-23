@@ -91,7 +91,7 @@ function Changes({
   changeSet?: ChangeSet;
   origin: ChangeSetOrigin;
   launchRequest?: SessionHandoffLaunchRequest;
-  onPlanHome: () => void;
+  onPlanHome: () => void | Promise<void>;
   onApplied: (keepLaunchRequest?: boolean) => void | Promise<void>;
   onLaunchCompleted: () => void;
   onRejected: () => void;
@@ -99,6 +99,7 @@ function Changes({
 }) {
   const [selected, setSelected] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [planningHome, setPlanningHome] = useState(false);
   const [error, setError] = useState("");
   const [homeApproved, setHomeApproved] = useState(false);
   const [appliedLaunchFailure, setAppliedLaunchFailure] = useState("");
@@ -187,8 +188,20 @@ function Changes({
       }
     });
   };
+  const planHome = async () => {
+    if (busy || planningHome) return;
+    setPlanningHome(true);
+    try {
+      await onPlanHome();
+    } finally {
+      if (active.current) setPlanningHome(false);
+    }
+  };
   const disabled =
-    busy || !changeSet.changes.length || (changeSet.requires_home_approval && !homeApproved);
+    busy ||
+    planningHome ||
+    !changeSet.changes.length ||
+    (changeSet.requires_home_approval && !homeApproved);
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(240px,.35fr)_minmax(0,1fr)]">
       <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
@@ -238,7 +251,8 @@ function Changes({
             <p>{tr("changes.homeQuestion")}</p>
             <Button
               className="border border-transparent bg-transparent text-foreground hover:bg-muted"
-              onClick={onPlanHome}
+              onClick={() => void planHome()}
+              disabled={busy || planningHome}
             >
               {tr("changes.includeHome")}
             </Button>
@@ -349,13 +363,28 @@ function WorkspaceChangesRoute() {
     setProject,
     setMessage,
   } = useWorkspaceStore();
+  const homePlanRequest = useRef(0);
+  useEffect(
+    () => () => {
+      homePlanRequest.current += 1;
+    },
+    [workspaceId],
+  );
   if (!project) return <LoadingState label="Loading…" />;
   const planHome = async () => {
     if (!manifest) return;
+    const requestId = ++homePlanRequest.current;
+    const targetProject = project;
+    const targetManifest = manifest;
+    const isCurrentRequest = () =>
+      requestId === homePlanRequest.current &&
+      useWorkspaceStore.getState().selectedWorkspace?.id === workspaceId &&
+      useWorkspaceStore.getState().project === targetProject;
     try {
-      setChangeSet(await api.plan(project, manifest, true));
+      const nextChangeSet = await api.plan(targetProject, targetManifest, true);
+      if (isCurrentRequest()) setChangeSet(nextChangeSet);
     } catch (error) {
-      setMessage(localizeMessage(error));
+      if (isCurrentRequest()) setMessage(localizeMessage(error));
     }
   };
   const reload = async () => {

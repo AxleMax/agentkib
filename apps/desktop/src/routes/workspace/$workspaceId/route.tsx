@@ -379,7 +379,7 @@ function WorkspaceLayout() {
             <section
               className={cn("min-w-0", currentPage === "git" && "min-h-[calc(100vh-170px)]")}
             >
-              {!scan || (currentPage !== "doctor" && !manifest) || busy ? (
+              {busy || (currentPage !== "doctor" && (!scan || !manifest)) ? (
                 <LoadingState label={tr("common.loading")} />
               ) : (
                 <Outlet />
