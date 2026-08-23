@@ -160,6 +160,7 @@ function WorkspaceLayout() {
     setChangeSetOrigin,
     setHandoffLaunchRequest,
     setBaselineManifest,
+    setWorkspaceDrafts,
     setBusy,
     setMessage,
     resetWorkspace,
@@ -242,6 +243,11 @@ function WorkspaceLayout() {
       }))
     )
       return;
+    setWorkspaceDrafts((drafts) => {
+      const nextDrafts = { ...drafts };
+      delete nextDrafts[workspaceId];
+      return nextDrafts;
+    });
     resetWorkspace();
     next();
   };

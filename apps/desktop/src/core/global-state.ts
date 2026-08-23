@@ -7,17 +7,18 @@ let refreshSequence = 0;
 export async function refreshGlobalState(currentRuntime?: RuntimeInfo) {
   const sequence = ++refreshSequence;
   const nextRuntimePromise = currentRuntime ? Promise.resolve(currentRuntime) : api.runtime();
+  const previous = useAppStore.getState();
   const [
-    workspaces,
-    installations,
-    catalog,
-    globalMemories,
-    activity,
-    scanRoots,
-    excluded,
-    runtime,
-    remoteGateways,
-  ] = await Promise.all([
+    workspacesResult,
+    installationsResult,
+    catalogResult,
+    globalMemoriesResult,
+    activityResult,
+    scanRootsResult,
+    excludedResult,
+    runtimeResult,
+    remoteGatewaysResult,
+  ] = await Promise.allSettled([
     api.workspaces(),
     api.agentInstallations(),
     api.catalogAssets(),
@@ -28,6 +29,17 @@ export async function refreshGlobalState(currentRuntime?: RuntimeInfo) {
     nextRuntimePromise,
     api.remoteGateways(),
   ]);
+  const valueOr = <T>(result: PromiseSettledResult<T>, fallback: T): T =>
+    result.status === "fulfilled" ? result.value : fallback;
+  const workspaces = valueOr(workspacesResult, previous.workspaces);
+  const installations = valueOr(installationsResult, previous.installations);
+  const catalog = valueOr(catalogResult, previous.catalog);
+  const globalMemories = valueOr(globalMemoriesResult, previous.globalMemories);
+  const activity = valueOr(activityResult, previous.activity);
+  const scanRoots = valueOr(scanRootsResult, previous.scanRoots);
+  const excluded = valueOr(excludedResult, previous.excluded);
+  const runtime = valueOr(runtimeResult, currentRuntime ?? previous.runtime);
+  const remoteGateways = valueOr(remoteGatewaysResult, previous.remoteGateways);
 
   let doctorSummaries = {};
   try {

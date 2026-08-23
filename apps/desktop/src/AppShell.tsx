@@ -558,13 +558,17 @@ export function AppShell() {
     const path = nextPage === "home" ? "/" : `/${nextPage}`;
     void navigate({ to: path as never, search: (current) => ({ ...current, ...patch }) as never });
   };
-  const navigateGlobal = (nextPage: GlobalPage, preserveQuotaSelection = false) => {
+  const navigateGlobal = (
+    nextPage: GlobalPage,
+    preserveQuotaSelection = false,
+    searchPatch: Partial<AppSearch> = {},
+  ) => {
     const next = () =>
       navigateGlobalWithSearch(
         nextPage,
         preserveQuotaSelection
-          ? { quotaProvider, quotaWindow }
-          : { quotaProvider: undefined, quotaWindow: undefined },
+          ? { quotaProvider, quotaWindow, ...searchPatch }
+          : { quotaProvider: undefined, quotaWindow: undefined, ...searchPatch },
       );
     if (selectedWorkspace) void leaveWorkspace(next);
     else {
@@ -585,7 +589,7 @@ export function AppShell() {
       return;
     }
     if (navigationRequest.page === "quota") {
-      navigateGlobalWithSearch("quota", {
+      navigateGlobal("quota", false, {
         quotaProvider: navigationRequest.provider,
         quotaWindow: navigationRequest.window,
       });
