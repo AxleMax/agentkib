@@ -122,6 +122,7 @@ export function AppShell() {
   } = workspaceStore;
   const pendingRefreshKinds = useRef(new Set<string>());
   const quitPromptOpen = useRef(false);
+  const workspaceOpenRequest = useRef(0);
   const updateSearch = (patch: Partial<AppSearch>) => {
     void navigate({
       to: location.pathname as never,
@@ -415,6 +416,7 @@ export function AppShell() {
       }))
     )
       return;
+    workspaceOpenRequest.current += 1;
     if (selectedWorkspace)
       setWorkspaceDrafts((drafts) => {
         const nextDrafts = { ...drafts };
@@ -433,6 +435,7 @@ export function AppShell() {
     next();
   };
   const openWorkspace = async (workspace: WorkspaceSummary, initialPage: Page = "overview") => {
+    const requestId = ++workspaceOpenRequest.current;
     persistWorkspaceDraft();
     setBusy(true);
     setMessage("");
@@ -441,12 +444,14 @@ export function AppShell() {
         ? Promise.resolve(useAppStore.getState().runtime)
         : api.runtime();
       const [nextScan, nextRuntime] = await Promise.all([api.scan(workspace.path), runtimePromise]);
+      if (requestId !== workspaceOpenRequest.current) return;
       let nextManifest: Manifest | undefined;
       try {
         nextManifest = await api.manifest(workspace.path);
       } catch (error) {
-        setMessage(localizeMessage(error));
+        if (requestId === workspaceOpenRequest.current) setMessage(localizeMessage(error));
       }
+      if (requestId !== workspaceOpenRequest.current) return;
       setGitSubview(undefined);
       setChangeSet(undefined);
       setChangeSetOrigin("standard");
@@ -460,11 +465,14 @@ export function AppShell() {
       setSelectedWorkspace(workspace);
       navigateWorkspacePageFor(workspace.id, nextManifest ? initialPage : "doctor");
     } catch (error) {
-      setMessage(localizeMessage(error));
+      if (requestId === workspaceOpenRequest.current) setMessage(localizeMessage(error));
     } finally {
-      setBusy(false);
+      if (requestId === workspaceOpenRequest.current) setBusy(false);
     }
   };
+  useEffect(() => {
+    if (route.kind !== "workspace") workspaceOpenRequest.current += 1;
+  }, [route.kind]);
   useEffect(() => {
     if (
       route.kind !== "workspace" ||
@@ -489,7 +497,11 @@ export function AppShell() {
           ? { quotaProvider, quotaWindow }
           : { quotaProvider: undefined, quotaWindow: undefined },
       );
-    selectedWorkspace ? void leaveWorkspace(next) : next();
+    if (selectedWorkspace) void leaveWorkspace(next);
+    else {
+      workspaceOpenRequest.current += 1;
+      next();
+    }
   };
   const openSettings = () => setAppMode("settings");
 

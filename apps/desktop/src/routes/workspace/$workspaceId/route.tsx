@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import {
   createFileRoute,
   Outlet,
@@ -157,8 +156,6 @@ function WorkspaceLayout() {
     baselineManifest,
     busy,
     message,
-    setProject,
-    setSelectedWorkspace,
     setScan,
     setManifest,
     setChangeSet,
@@ -176,42 +173,6 @@ function WorkspaceLayout() {
   const hasUnsavedDraft = Boolean(
     manifest && baselineManifest && JSON.stringify(manifest) !== baselineManifest,
   );
-
-  useEffect(() => {
-    if (!workspace || (selectedWorkspace?.id === workspaceId && project === workspace.path && scan))
-      return;
-    let disposed = false;
-    void (async () => {
-      setBusy(true);
-      setMessage("");
-      try {
-        const [nextScan, nextRuntime] = await Promise.all([
-          api.scan(workspace.path),
-          api.runtime(),
-        ]);
-        let nextManifest: Manifest | undefined;
-        try {
-          nextManifest = await api.manifest(workspace.path);
-        } catch (error) {
-          if (!disposed) setMessage(localizeMessage(error));
-        }
-        if (disposed) return;
-        setProject(workspace.path);
-        setScan(nextScan);
-        setManifest(nextManifest);
-        setBaselineManifest(nextManifest ? JSON.stringify(nextManifest) : "");
-        setRuntime(nextRuntime);
-        setSelectedWorkspace(workspace);
-      } catch (error) {
-        if (!disposed) setMessage(localizeMessage(error));
-      } finally {
-        if (!disposed) setBusy(false);
-      }
-    })();
-    return () => {
-      disposed = true;
-    };
-  }, [workspaceId, workspace?.path, selectedWorkspace?.id, project, scan]);
 
   const loadWorkspace = async (draft?: Manifest) => {
     if (!project) return;

@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 import { LoadingState } from "@/components/ui/loading-state";
 import { WorkspaceDoctorPage } from "@/features/workspace/WorkspaceDoctorPage";
 import { api } from "../../../core/api";
@@ -16,17 +17,30 @@ function WorkspaceDoctorRoute() {
     setHandoffLaunchRequest,
     setMessage,
   } = useWorkspaceStore();
+  const repairRequest = useRef(0);
+  useEffect(
+    () => () => {
+      repairRequest.current += 1;
+    },
+    [],
+  );
   if (!selectedWorkspace) return <LoadingState label="Loading…" />;
   const planRepairs = async () => {
     if (!project) return;
+    const requestId = ++repairRequest.current;
+    const targetProject = project;
     try {
-      const currentManifest = await api.manifest(project);
-      setChangeSet(await api.plan(project, currentManifest, false));
+      const currentManifest = await api.manifest(targetProject);
+      if (requestId !== repairRequest.current) return;
+      const nextChangeSet = await api.plan(targetProject, currentManifest, false);
+      if (requestId !== repairRequest.current) return;
+      if (useWorkspaceStore.getState().selectedWorkspace?.id !== workspaceId) return;
+      setChangeSet(nextChangeSet);
       setChangeSetOrigin("doctor");
       setHandoffLaunchRequest(undefined);
       void navigate({ to: "/workspace/$workspaceId/changes", params: { workspaceId } });
     } catch (error) {
-      setMessage(localizeMessage(error));
+      if (requestId === repairRequest.current) setMessage(localizeMessage(error));
     }
   };
   return <WorkspaceDoctorPage workspace={selectedWorkspace} onRepair={planRepairs} />;

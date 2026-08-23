@@ -339,6 +339,7 @@ function WorkspaceChangesRoute() {
     changeSet,
     changeSetOrigin,
     handoffLaunchRequest,
+    manifest,
     setChangeSet,
     setHandoffLaunchRequest,
     setApplyingChanges,
@@ -350,8 +351,12 @@ function WorkspaceChangesRoute() {
   } = useWorkspaceStore();
   if (!project) return <LoadingState label="Loading…" />;
   const planHome = async () => {
-    const manifest = await api.manifest(project);
-    setChangeSet(await api.plan(project, manifest, true));
+    if (!manifest) return;
+    try {
+      setChangeSet(await api.plan(project, manifest, true));
+    } catch (error) {
+      setMessage(localizeMessage(error));
+    }
   };
   const reload = async () => {
     const [scan, manifest, runtime] = await Promise.all([
