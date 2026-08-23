@@ -483,7 +483,7 @@ export function AppShell() {
       return;
     const workspace = workspaces.find((item) => item.id === workspaceRouteId);
     if (workspace) void openWorkspace(workspace, workspaceRoutePage ?? "overview");
-    else setMessage(tr("workspace.notFound"));
+    else setMessage(tr("common.notFound"));
   }, [route.kind, workspaceRouteId, workspaceRoutePage, selectedWorkspace?.id, workspaces]);
   const navigateGlobalWithSearch = (nextPage: GlobalPage, patch: Partial<AppSearch> = {}) => {
     const path = nextPage === "home" ? "/" : `/${nextPage}`;

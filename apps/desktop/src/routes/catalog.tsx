@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "../core/api";
+import { refreshGlobalState } from "../core/global-state";
 import { groupCatalogAssets } from "@/features/catalog/catalog";
 import { formatDateTime, localizeMessage, tr } from "../core/i18n";
 import { useAppStore } from "../stores/app-store";
@@ -71,9 +72,6 @@ function CatalogRoute() {
   const workspaces = useAppStore((state) => state.workspaces);
   const memories = useAppStore((state) => state.globalMemories);
   const runtime = useAppStore((state) => state.runtime);
-  const setCatalog = useAppStore((state) => state.setCatalog);
-  const setGlobalMemories = useAppStore((state) => state.setGlobalMemories);
-  const setWorkspaces = useAppStore((state) => state.setWorkspaces);
   const setRuntime = useAppStore((state) => state.setRuntime);
   const {
     setProject,
@@ -96,18 +94,9 @@ function CatalogRoute() {
     });
   };
   const reload = async () => {
-    const [nextAssets, nextMemories, nextWorkspaces, nextRuntime] = await Promise.all([
-      api.catalogAssets(),
-      api.globalMemories(),
-      api.workspaces(),
-      api.runtime(),
-    ]);
-    setCatalog(nextAssets);
-    setGlobalMemories(nextMemories);
-    setWorkspaces(nextWorkspaces);
-    setRuntime(nextRuntime);
+    await refreshGlobalState(useAppStore.getState().runtime);
   };
-  const openWorkspace = async (workspace: WorkspaceSummary) => {
+  const openWorkspace = async (workspace: WorkspaceSummary): Promise<boolean> => {
     setBusy(true);
     setMessage("");
     try {
@@ -130,9 +119,14 @@ function CatalogRoute() {
       setBaselineManifest(nextManifest ? JSON.stringify(nextManifest) : "");
       setRuntime(nextRuntime);
       setSelectedWorkspace(workspace);
-      await navigate({ to: "/workspace/$workspaceId", params: { workspaceId: workspace.id } });
+      await navigate({
+        to: nextManifest ? "/workspace/$workspaceId" : "/workspace/$workspaceId/doctor",
+        params: { workspaceId: workspace.id },
+      });
+      return Boolean(nextManifest);
     } catch (error) {
       setMessage(localizeMessage(error));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -144,7 +138,7 @@ function CatalogRoute() {
   const planMigration = async (project: string, planned: ChangeSet) => {
     const workspace = workspaces.find((item) => item.path === project);
     if (!workspace) return;
-    await openWorkspace(workspace);
+    if (!(await openWorkspace(workspace))) return;
     setChangeSet(planned);
     setChangeSetOrigin("standard");
     setHandoffLaunchRequest(undefined);

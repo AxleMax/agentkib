@@ -274,7 +274,7 @@ function WorkspaceLayout() {
   if (!activeWorkspace) {
     return workspacesLoaded ? (
       <div className="grid h-full min-h-[240px] place-items-center p-8 text-sm text-muted-foreground">
-        {tr("workspace.notFound")}
+        {tr("common.notFound")}
       </div>
     ) : (
       <LoadingState label={tr("common.loading")} />

@@ -24,6 +24,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { WorkspaceStoragePage } from "@/features/workspace/WorkspaceStoragePage";
 import { api } from "../core/api";
+import { refreshGlobalState } from "../core/global-state";
 import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/catalog";
 import { formatRelativeTime, localizeMessage, tr } from "../core/i18n";
 import { useAppStore } from "../stores/app-store";
@@ -60,7 +61,6 @@ function WorkspacesRoute() {
   const workspaces = useAppStore((state) => state.workspaces);
   const catalog = useAppStore((state) => state.catalog);
   const refreshJobs = useAppStore((state) => state.refreshJobs);
-  const setWorkspaces = useAppStore((state) => state.setWorkspaces);
   const setRuntime = useAppStore((state) => state.setRuntime);
   const {
     setProject,
@@ -111,7 +111,10 @@ function WorkspacesRoute() {
       setBaselineManifest(nextManifest ? JSON.stringify(nextManifest) : "");
       setRuntime(nextRuntime);
       setSelectedWorkspace(workspace);
-      await navigate({ to: "/workspace/$workspaceId", params: { workspaceId: workspace.id } });
+      await navigate({
+        to: nextManifest ? "/workspace/$workspaceId" : "/workspace/$workspaceId/doctor",
+        params: { workspaceId: workspace.id },
+      });
     } catch (error) {
       setMessage(localizeMessage(error));
     } finally {
@@ -129,7 +132,7 @@ function WorkspacesRoute() {
     try {
       setMessage("");
       const workspace = await api.addWorkspace(selected);
-      setWorkspaces(await api.workspaces());
+      await refreshGlobalState(useAppStore.getState().runtime);
       await openWorkspace(workspace);
     } catch (error) {
       setMessage(localizeMessage(error));
@@ -147,7 +150,7 @@ function WorkspacesRoute() {
   const refreshWorkspace = async (id: string) => {
     try {
       await api.refreshWorkspace(id);
-      setWorkspaces(await api.workspaces());
+      await refreshGlobalState(useAppStore.getState().runtime);
     } catch (error) {
       setMessage(localizeMessage(error));
     }
@@ -160,7 +163,7 @@ function WorkspacesRoute() {
       return;
     try {
       await api.excludeWorkspace(id);
-      setWorkspaces(await api.workspaces());
+      await refreshGlobalState(useAppStore.getState().runtime);
     } catch (error) {
       setMessage(localizeMessage(error));
     }
