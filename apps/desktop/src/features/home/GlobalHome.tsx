@@ -179,7 +179,7 @@ export function GlobalHome({
                 key={label}
                 onClick={onClick}
               >
-                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/8 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/8 text-primary transition-colors group-hover:bg-primary/12">
                   <Icon size={17} />
                 </span>
                 <span className="min-w-0">
