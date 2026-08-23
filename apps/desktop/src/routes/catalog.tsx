@@ -588,7 +588,11 @@ function McpHubPage({
         </div>
       </div>
       <McpServerEditor project={project} onSaved={load} />
-      <McpMigrationInventory project={project} onPlanned={onMigrationPlanned} />
+      <McpMigrationInventory
+        key={project ?? "global"}
+        project={project}
+        onPlanned={onMigrationPlanned}
+      />
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-5">
