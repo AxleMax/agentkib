@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -70,6 +71,7 @@ export function QuotaPage({
   const [refreshJob, setRefreshJob] = useState<RefreshJobStatus>();
   const [requestPending, setRequestPending] = useState(false);
   const [error, setError] = useState("");
+  const [initializing, setInitializing] = useState(true);
   const pendingRefresh = useRef(false);
   const requestedInitialRefresh = useRef(false);
 
@@ -127,6 +129,7 @@ export function QuotaPage({
         return;
       }
       const { snapshot: initialSnapshot, job } = await load();
+      if (!disposed) setInitializing(false);
       if (
         requestedInitialRefresh.current ||
         (job && ["queued", "running", "backoff"].includes(job.state))
@@ -137,7 +140,10 @@ export function QuotaPage({
       const receipt = await api.requestRefresh("quota", false);
       if (!disposed) setRefreshJob(receipt.status);
     })().catch((reason) => {
-      if (!disposed) setError(localizeMessage(reason));
+      if (!disposed) {
+        setInitializing(false);
+        setError(localizeMessage(reason));
+      }
     });
     return () => {
       disposed = true;
@@ -256,7 +262,9 @@ export function QuotaPage({
             : status?.error_key
               ? tr(status.error_key)
               : tr("quota.empty");
-  const emptyDetail = refreshJob?.state === "failed" ? error || refreshJob.error : undefined;
+  const emptyDetail = error || (refreshJob?.state === "failed" ? refreshJob.error : undefined);
+
+  if (initializing) return <LoadingState label={tr("common.loading")} />;
 
   return (
     <div className="relative grid gap-5 pb-8">

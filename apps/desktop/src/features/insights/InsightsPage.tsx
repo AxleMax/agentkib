@@ -1,6 +1,7 @@
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
@@ -102,6 +103,7 @@ export function InsightsPage({
   const [status, setStatus] = useState<InsightsStatus>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [initializing, setInitializing] = useState(true);
   const pendingRefresh = useRef(false);
   const query = useMemo<InsightsQuery>(() => {
     const today = new Date();
@@ -135,6 +137,8 @@ export function InsightsPage({
       onSummary(view.summary);
     } catch (reason) {
       setError(localizeMessage(reason));
+    } finally {
+      setInitializing(false);
     }
   };
   useEffect(() => {
@@ -188,6 +192,9 @@ export function InsightsPage({
   const showCommitFilters = section === "overview" || section === "commits";
   const showRange = !["milestones", "sources"].includes(section);
   const filterClass = "!h-10 !min-w-[150px] !rounded-lg !border-border !bg-card !text-foreground";
+
+  if (initializing) return <LoadingState label={tr("common.loading")} />;
+
   return (
     <div className="relative grid gap-5">
       <section className="grid gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm max-[900px]:p-4">
