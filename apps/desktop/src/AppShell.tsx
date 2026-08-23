@@ -151,6 +151,12 @@ export function AppShell() {
 
   const load = async (path = project, draft?: Manifest) => {
     if (!path) return;
+    const requestId = ++workspaceOpenRequest.current;
+    const targetWorkspaceId = selectedWorkspace?.id;
+    const isCurrentRequest = () =>
+      requestId === workspaceOpenRequest.current &&
+      useWorkspaceStore.getState().project === path &&
+      useWorkspaceStore.getState().selectedWorkspace?.id === targetWorkspaceId;
     setBusy(true);
     setMessage("");
     try {
@@ -159,15 +165,16 @@ export function AppShell() {
         api.manifest(path),
         api.runtime(),
       ]);
+      if (!isCurrentRequest()) return;
       setProject(path);
       setScan(nextScan);
       setManifest(draft ?? nextManifest);
       setBaselineManifest(JSON.stringify(nextManifest));
       setRuntime(nextRuntime);
     } catch (error) {
-      setMessage(localizeMessage(error));
+      if (isCurrentRequest()) setMessage(localizeMessage(error));
     } finally {
-      setBusy(false);
+      if (isCurrentRequest()) setBusy(false);
     }
   };
 
@@ -382,27 +389,6 @@ export function AppShell() {
       unlisten?.();
     };
   }, [dialogs]);
-  useEffect(() => {
-    if (!navigationRequest) return;
-    if (navigationRequest.page === "settings") {
-      void navigate({
-        to: "/settings",
-        search: { settingsSection: navigationRequest.settings_section ?? "general" } as never,
-      });
-      setNavigationRequest(undefined);
-      return;
-    }
-    if (navigationRequest.page === "quota") {
-      navigateGlobalWithSearch("quota", {
-        quotaProvider: navigationRequest.provider,
-        quotaWindow: navigationRequest.window,
-      });
-      if (navigationRequest.configure_popover) setQuotaConfigureRequest((value) => value + 1);
-    } else {
-      navigateGlobal(navigationRequest.page);
-    }
-    setNavigationRequest(undefined);
-  }, [navigationRequest]);
   const persistWorkspaceDraft = () => {
     if (selectedWorkspace && manifest && hasUnsavedDraft)
       setWorkspaceDrafts((drafts) => ({ ...drafts, [selectedWorkspace.id]: manifest }));
@@ -465,7 +451,17 @@ export function AppShell() {
       setSelectedWorkspace(workspace);
       navigateWorkspacePageFor(workspace.id, nextManifest ? initialPage : "doctor");
     } catch (error) {
-      if (requestId === workspaceOpenRequest.current) setMessage(localizeMessage(error));
+      if (requestId === workspaceOpenRequest.current) {
+        setSelectedWorkspace(workspace);
+        setProject("");
+        setScan(undefined);
+        setManifest(undefined);
+        setChangeSet(undefined);
+        setChangeSetOrigin("standard");
+        setHandoffLaunchRequest(undefined);
+        setBaselineManifest("");
+        setMessage(localizeMessage(error));
+      }
     } finally {
       if (requestId === workspaceOpenRequest.current) setBusy(false);
     }
@@ -484,7 +480,15 @@ export function AppShell() {
     const workspace = workspaces.find((item) => item.id === workspaceRouteId);
     if (workspace) void openWorkspace(workspace, workspaceRoutePage ?? "overview");
     else setMessage(tr("common.notFound"));
-  }, [route.kind, workspaceRouteId, workspaceRoutePage, selectedWorkspace?.id, workspaces]);
+  }, [
+    route.kind,
+    workspaceRouteId,
+    workspaceRoutePage,
+    selectedWorkspace?.id,
+    workspaces,
+    openWorkspace,
+    setMessage,
+  ]);
   const navigateGlobalWithSearch = (nextPage: GlobalPage, patch: Partial<AppSearch> = {}) => {
     const path = nextPage === "home" ? "/" : `/${nextPage}`;
     void navigate({ to: path as never, search: (current) => ({ ...current, ...patch }) as never });
@@ -504,6 +508,35 @@ export function AppShell() {
     }
   };
   const openSettings = () => setAppMode("settings");
+
+  useEffect(() => {
+    if (!navigationRequest) return;
+    if (navigationRequest.page === "settings") {
+      void navigate({
+        to: "/settings",
+        search: { settingsSection: navigationRequest.settings_section ?? "general" } as never,
+      });
+      setNavigationRequest(undefined);
+      return;
+    }
+    if (navigationRequest.page === "quota") {
+      navigateGlobalWithSearch("quota", {
+        quotaProvider: navigationRequest.provider,
+        quotaWindow: navigationRequest.window,
+      });
+      if (navigationRequest.configure_popover) setQuotaConfigureRequest((value) => value + 1);
+    } else {
+      navigateGlobal(navigationRequest.page);
+    }
+    setNavigationRequest(undefined);
+  }, [
+    navigationRequest,
+    navigateGlobal,
+    navigateGlobalWithSearch,
+    navigate,
+    setNavigationRequest,
+    setQuotaConfigureRequest,
+  ]);
 
   const refreshDiscovery = async () => {
     setMessage("");
@@ -549,7 +582,16 @@ export function AppShell() {
       void dialogs.confirm(tr("menu.refreshAllConfirm")).then((confirmed) => {
         if (confirmed) void requestRefreshKinds(["discovery", "insights", "gateways", "quota"]);
       });
-  }, [dialogs, menuCommand]);
+  }, [
+    dialogs,
+    menuCommand,
+    addScanRootFromDialog,
+    refreshCurrentView,
+    requestRefreshKinds,
+    selectProject,
+    setMenuCommand,
+    setSidebarCollapsed,
+  ]);
   const navigation = globalNav.map((entry) =>
     entry.id === "catalog"
       ? { ...entry, badge: globalMemories.filter((item) => item.status === "pending").length }

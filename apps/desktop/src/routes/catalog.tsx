@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { AgentIcon } from "@/features/agents/AgentIcon";
@@ -73,6 +73,7 @@ function CatalogRoute() {
   const memories = useAppStore((state) => state.globalMemories);
   const runtime = useAppStore((state) => state.runtime);
   const setRuntime = useAppStore((state) => state.setRuntime);
+  const openRequest = useRef(0);
   const {
     setProject,
     setSelectedWorkspace,
@@ -87,6 +88,13 @@ function CatalogRoute() {
     workspaceDrafts,
   } = useWorkspaceStore();
 
+  useEffect(
+    () => () => {
+      openRequest.current += 1;
+    },
+    [],
+  );
+
   const setSection = (nextSection: AssetSection) => {
     void navigate({
       to: "/catalog",
@@ -97,6 +105,7 @@ function CatalogRoute() {
     await refreshGlobalState(useAppStore.getState().runtime);
   };
   const openWorkspace = async (workspace: WorkspaceSummary): Promise<boolean> => {
+    const requestId = ++openRequest.current;
     setBusy(true);
     setMessage("");
     try {
@@ -104,12 +113,14 @@ function CatalogRoute() {
         ? Promise.resolve(useAppStore.getState().runtime)
         : api.runtime();
       const [nextScan, nextRuntime] = await Promise.all([api.scan(workspace.path), runtimePromise]);
+      if (requestId !== openRequest.current) return false;
       let nextManifest: Manifest | undefined;
       try {
         nextManifest = await api.manifest(workspace.path);
       } catch (error) {
-        setMessage(localizeMessage(error));
+        if (requestId === openRequest.current) setMessage(localizeMessage(error));
       }
+      if (requestId !== openRequest.current) return false;
       setChangeSet(undefined);
       setChangeSetOrigin("standard");
       setHandoffLaunchRequest(undefined);
@@ -125,10 +136,10 @@ function CatalogRoute() {
       });
       return Boolean(nextManifest);
     } catch (error) {
-      setMessage(localizeMessage(error));
+      if (requestId === openRequest.current) setMessage(localizeMessage(error));
       return false;
     } finally {
-      setBusy(false);
+      if (requestId === openRequest.current) setBusy(false);
     }
   };
   const openWorkspaceById = async (id: string) => {

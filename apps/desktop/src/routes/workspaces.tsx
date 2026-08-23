@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
@@ -62,6 +62,7 @@ function WorkspacesRoute() {
   const catalog = useAppStore((state) => state.catalog);
   const refreshJobs = useAppStore((state) => state.refreshJobs);
   const setRuntime = useAppStore((state) => state.setRuntime);
+  const openRequest = useRef(0);
   const {
     setProject,
     setSelectedWorkspace,
@@ -81,6 +82,13 @@ function WorkspacesRoute() {
   );
   const storageJob = refreshJobs.find((job) => job.kind === "storage");
 
+  useEffect(
+    () => () => {
+      openRequest.current += 1;
+    },
+    [],
+  );
+
   const setView = (nextView: WorkspaceView) => {
     void navigate({
       to: "/workspaces",
@@ -89,6 +97,7 @@ function WorkspacesRoute() {
   };
 
   const openWorkspace = async (workspace: WorkspaceSummary) => {
+    const requestId = ++openRequest.current;
     setBusy(true);
     setMessage("");
     try {
@@ -96,12 +105,14 @@ function WorkspacesRoute() {
         ? Promise.resolve(useAppStore.getState().runtime)
         : api.runtime();
       const [nextScan, nextRuntime] = await Promise.all([api.scan(workspace.path), runtimePromise]);
+      if (requestId !== openRequest.current) return;
       let nextManifest: Manifest | undefined;
       try {
         nextManifest = await api.manifest(workspace.path);
       } catch (error) {
-        setMessage(localizeMessage(error));
+        if (requestId === openRequest.current) setMessage(localizeMessage(error));
       }
+      if (requestId !== openRequest.current) return;
       setChangeSet(undefined);
       setChangeSetOrigin("standard");
       setHandoffLaunchRequest(undefined);
@@ -116,9 +127,9 @@ function WorkspacesRoute() {
         params: { workspaceId: workspace.id },
       });
     } catch (error) {
-      setMessage(localizeMessage(error));
+      if (requestId === openRequest.current) setMessage(localizeMessage(error));
     } finally {
-      setBusy(false);
+      if (requestId === openRequest.current) setBusy(false);
     }
   };
 

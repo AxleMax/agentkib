@@ -2,7 +2,10 @@ import { api } from "./api";
 import type { RuntimeInfo } from "./types";
 import { useAppStore } from "../stores/app-store";
 
+let refreshSequence = 0;
+
 export async function refreshGlobalState(currentRuntime?: RuntimeInfo) {
+  const sequence = ++refreshSequence;
   const nextRuntimePromise = currentRuntime ? Promise.resolve(currentRuntime) : api.runtime();
   const [
     workspaces,
@@ -38,8 +41,8 @@ export async function refreshGlobalState(currentRuntime?: RuntimeInfo) {
     /* 首次迁移或后台扫描尚未完成时显示空状态。 */
   }
 
-  let insightsSummary;
-  let insightsStatus;
+  let insightsSummary = useAppStore.getState().insightsSummary;
+  let insightsStatus = useAppStore.getState().insightsStatus;
   try {
     [insightsSummary, insightsStatus] = await Promise.all([
       api.insightsSummary(),
@@ -49,7 +52,7 @@ export async function refreshGlobalState(currentRuntime?: RuntimeInfo) {
     /* 首次迁移或后台采集尚未完成时显示空状态。 */
   }
 
-  let quotaStatus;
+  let quotaStatus = useAppStore.getState().quotaStatus;
   try {
     quotaStatus = await api.quotaCollectorStatus();
   } catch {
@@ -72,6 +75,6 @@ export async function refreshGlobalState(currentRuntime?: RuntimeInfo) {
     insightsStatus,
     quotaStatus,
   };
-  useAppStore.setState(state);
+  if (sequence === refreshSequence) useAppStore.setState(state);
   return state;
 }

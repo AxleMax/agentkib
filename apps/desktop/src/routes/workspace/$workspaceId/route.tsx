@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   createFileRoute,
   Outlet,
@@ -109,7 +110,6 @@ function workspaceStatusLabel(status: WorkspaceSummary["status"]) {
 
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
 type Page = "overview" | "sessions" | "git" | "assets" | "context" | "doctor" | "changes";
-type WorkspaceAssetSection = "instructions" | "skills" | "mcp" | "native";
 const platform = normalizePlatform(import.meta.env.TAURI_ENV_PLATFORM);
 const workspaceTabs = [
   ["overview", "nav.overview", LayoutDashboard],
@@ -151,8 +151,6 @@ function WorkspaceLayout() {
     scan,
     manifest,
     changeSet,
-    changeSetOrigin,
-    handoffLaunchRequest,
     baselineManifest,
     busy,
     message,
@@ -173,41 +171,65 @@ function WorkspaceLayout() {
   const hasUnsavedDraft = Boolean(
     manifest && baselineManifest && JSON.stringify(manifest) !== baselineManifest,
   );
+  const operationRequest = useRef(0);
+
+  useEffect(() => {
+    operationRequest.current += 1;
+    return () => {
+      operationRequest.current += 1;
+    };
+  }, [workspaceId]);
 
   const loadWorkspace = async (draft?: Manifest) => {
     if (!project) return;
+    const requestId = ++operationRequest.current;
+    const targetProject = project;
+    const isCurrentRequest = () =>
+      requestId === operationRequest.current &&
+      useWorkspaceStore.getState().selectedWorkspace?.id === workspaceId &&
+      useWorkspaceStore.getState().project === targetProject;
     setBusy(true);
     setMessage("");
     try {
       const [nextScan, nextManifest, nextRuntime] = await Promise.all([
-        api.scan(project),
-        api.manifest(project),
+        api.scan(targetProject),
+        api.manifest(targetProject),
         api.runtime(),
       ]);
+      if (!isCurrentRequest()) return;
       setScan(nextScan);
       setManifest(draft ?? nextManifest);
       setBaselineManifest(JSON.stringify(nextManifest));
       setRuntime(nextRuntime);
     } catch (error) {
-      setMessage(localizeMessage(error));
+      if (isCurrentRequest()) setMessage(localizeMessage(error));
     } finally {
-      setBusy(false);
+      if (isCurrentRequest()) setBusy(false);
     }
   };
 
   const plan = async (includeHome = false) => {
     if (!project || !manifest) return;
+    const requestId = ++operationRequest.current;
+    const targetProject = project;
+    const targetManifest = manifest;
+    const isCurrentRequest = () =>
+      requestId === operationRequest.current &&
+      useWorkspaceStore.getState().selectedWorkspace?.id === workspaceId &&
+      useWorkspaceStore.getState().project === targetProject;
     setBusy(true);
     setMessage("");
     try {
-      setChangeSet(await api.plan(project, manifest, includeHome));
+      const nextChangeSet = await api.plan(targetProject, targetManifest, includeHome);
+      if (!isCurrentRequest()) return;
+      setChangeSet(nextChangeSet);
       setChangeSetOrigin("standard");
       setHandoffLaunchRequest(undefined);
       navigateWorkspace("changes");
     } catch (error) {
-      setMessage(localizeMessage(error));
+      if (isCurrentRequest()) setMessage(localizeMessage(error));
     } finally {
-      setBusy(false);
+      if (isCurrentRequest()) setBusy(false);
     }
   };
 
@@ -237,20 +259,6 @@ function WorkspaceLayout() {
       search: (current) =>
         ({ ...current, ...(page === "git" ? {} : { gitSubview: undefined }) }) as never,
     });
-  };
-
-  const planDoctorRepairs = async () => {
-    if (!project) return;
-    try {
-      const currentManifest = await api.manifest(project);
-      const changes = await api.plan(project, currentManifest, false);
-      setChangeSet(changes);
-      setChangeSetOrigin("doctor");
-      setHandoffLaunchRequest(undefined);
-      navigateWorkspace("changes");
-    } catch (error) {
-      setMessage(localizeMessage(error));
-    }
   };
 
   const navigation = globalNav.map((entry) =>
