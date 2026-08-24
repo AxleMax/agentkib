@@ -123,6 +123,14 @@ Windows 的完整环境、启动、打包和安装说明见 [Windows 指南](doc
 
 安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。
 
+macOS 安装包目前尚未签名和公证。请先核对 Release 中的 SHA-256 校验文件，将 AgentKib 拖入“应用程序”后，再执行以下命令解除隔离属性：
+
+```bash
+xattr -cr /Applications/AgentKib.app
+```
+
+只应对从 AgentKib 官方 Releases 下载且校验通过的应用执行此命令。
+
 ---
 
 ## English
@@ -223,6 +231,14 @@ Optional Obsidian and OpenClaw/Hermes Remote Gateway integrations must be config
 | Windows ARM64 / Linux ARM64 | Preview; core compilation or tests plus preview packages |
 
 See the [Windows guide](docs/WINDOWS.md) for setup, development, packaging, installation, and usage. Maintainers can generate unsigned multi-platform preview packages with the [desktop package workflow](docs/RELEASE.md). Pull requests and ordinary pushes run checks without producing installers.
+
+The macOS package is not currently signed or notarized. Verify it against the SHA-256 file in the Release, drag AgentKib into Applications, and then remove its quarantine attributes:
+
+```bash
+xattr -cr /Applications/AgentKib.app
+```
+
+Only run this command for an app downloaded from the official AgentKib Releases page whose checksum you have verified.
 
 <a id="development"></a>
 
