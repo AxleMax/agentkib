@@ -81,5 +81,17 @@ notarization, Windows code signing, MSI packages, a macOS universal binary, or
 automatic updates. macOS Gatekeeper and Windows SmartScreen may therefore
 display warnings.
 
+After verifying the downloaded DMG against its `.sha256` file and copying
+AgentKib into Applications, macOS users must currently remove the quarantine
+attributes before opening the app:
+
+```bash
+xattr -cr /Applications/AgentKib.app
+```
+
+This command bypasses Gatekeeper's quarantine check. It must only be used for
+an AgentKib package downloaded from the official GitHub Release whose checksum
+has been verified.
+
 ARM64 Windows and Linux packages remain preview-only until they have been
 verified on representative hardware.

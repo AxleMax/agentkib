@@ -560,12 +560,21 @@ jobs:
             fi
             echo "Resuming existing draft release $RELEASE_TAG"
           else
+            release_notes=$(
+              cat <<'EOF'
+          > [!WARNING]
+          > macOS 安装包目前尚未签名和公证。核对 `.sha256` 校验文件并将 AgentKib 拖入“应用程序”后，请执行 `xattr -cr /Applications/AgentKib.app`。只应对从本 Release 下载且校验通过的应用执行此命令。
+          >
+          > The macOS package is not signed or notarized. After verifying its `.sha256` file and dragging AgentKib into Applications, run `xattr -cr /Applications/AgentKib.app`. Only use this command for the verified app downloaded from this Release.
+          EOF
+            )
             create_args=(
               release create "$RELEASE_TAG"
               --repo "$GITHUB_REPOSITORY"
               --target "$RELEASE_SHA"
               --title "AgentKib $RELEASE_TAG"
               --generate-notes
+              --notes "$release_notes"
               --verify-tag
               --draft
             )
