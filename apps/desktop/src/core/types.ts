@@ -761,12 +761,7 @@ export interface QuotaPopoverPreferences {
   hidden_providers: string[];
   hidden_windows: QuotaWindowSelector[];
 }
-export type AppMenuCommand =
-  | "add-workspace"
-  | "add-scan-root"
-  | "toggle-sidebar"
-  | "refresh-current"
-  | "refresh-all";
+export type AppMenuCommand = "add-workspace" | "add-scan-root" | "refresh-current" | "refresh-all";
 export interface AppMenuCommandRequest {
   command: AppMenuCommand;
 }

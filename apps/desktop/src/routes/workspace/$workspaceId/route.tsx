@@ -10,9 +10,11 @@ import {
   Award,
   Bot,
   Boxes,
+  Clock3,
   Code2,
   FolderGit2,
   Gauge,
+  GitBranch,
   GitCommitHorizontal,
   GitCompareArrows,
   Home,
@@ -31,10 +33,9 @@ import { WindowToolbar } from "@/components/WindowToolbar";
 import { useAppStore } from "../../../stores/app-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { api } from "../../../core/api";
-import { localizeMessage, tr } from "../../../core/i18n";
-import { normalizePlatform } from "../../../core/platform";
+import { formatRelativeTime, localizeMessage, tr } from "../../../core/i18n";
 import { cn } from "@/lib/utils";
-import type { Manifest, WorkspaceSummary } from "../../../core/types";
+import type { Manifest, WorkspaceScan, WorkspaceSummary } from "../../../core/types";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -108,9 +109,55 @@ function workspaceStatusLabel(status: WorkspaceSummary["status"]) {
   return tr(`status.workspace.${status}`);
 }
 
+function WorkspaceSummaryStrip({
+  workspace,
+  scan,
+}: {
+  workspace: WorkspaceSummary;
+  scan: WorkspaceScan;
+}) {
+  const metrics = [
+    { label: tr("common.assets"), value: workspace.asset_count, icon: Boxes },
+    {
+      label: tr("nav.agents"),
+      value: scan.agents.filter((agent) => agent.detected).length,
+      icon: Bot,
+    },
+    { label: tr("workspace.discoverySources"), value: workspace.sources.length, icon: GitBranch },
+    {
+      label: tr("workspace.lastScanLabel"),
+      value: workspace.last_active_at
+        ? formatRelativeTime(workspace.last_active_at)
+        : tr("common.never"),
+      icon: Clock3,
+    },
+  ];
+  return (
+    <div className="grid grid-cols-4 gap-3 max-[800px]:grid-cols-2">
+      {metrics.map(({ label, value, icon: Icon }) => (
+        <div
+          className="flex min-h-[76px] items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-[0_8px_24px_-20px_rgba(15,23,42,.45)]"
+          key={label}
+        >
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/8 text-primary">
+            <Icon size={17} />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-medium text-muted-foreground">
+              {label}
+            </span>
+            <strong className="mt-1 block truncate text-lg font-semibold tabular-nums tracking-[-.02em]">
+              {value}
+            </strong>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
 type Page = "overview" | "sessions" | "git" | "assets" | "context" | "doctor" | "changes";
-const platform = normalizePlatform(import.meta.env.TAURI_ENV_PLATFORM);
 const workspaceTabs = [
   ["overview", "nav.overview", LayoutDashboard],
   ["sessions", "nav.sessions", MessageSquareText],
@@ -137,14 +184,7 @@ function WorkspaceLayout() {
   const app = useAppStore();
   const workspaceState = useWorkspaceStore();
   const workspace = app.workspaces.find((item) => item.id === workspaceId);
-  const {
-    sidebarCollapsed,
-    setSidebarCollapsed,
-    isFullscreen,
-    setRuntime,
-    globalMemories,
-    workspacesLoaded,
-  } = app;
+  const { setRuntime, globalMemories, workspacesLoaded } = app;
   const {
     project,
     selectedWorkspace,
@@ -284,16 +324,9 @@ function WorkspaceLayout() {
       ? { ...entry, badge: globalMemories.filter((item) => item.status === "pending").length }
       : entry,
   );
-  const shellClass = cn(
-    "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden !grid-cols-[var(--sidebar-width)_minmax(0,1fr)] !grid-rows-[minmax(0,1fr)] !transition-[grid-template-columns] !duration-150",
-    sidebarCollapsed && "sidebar-collapsed !grid-cols-[0_minmax(0,1fr)]",
-  );
+  const shellClass = cn("group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden");
   const mainClass =
-    "!col-start-2 !row-start-1 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
-  const pageHeaderClass = cn(
-    "page-header !z-10 !flex !min-h-[58px] !h-[58px] !flex-none !items-center !justify-between !border-b !border-[var(--page-header-border)] !bg-[var(--page-header-background)] !pr-7",
-    sidebarCollapsed ? "!pl-[132px]" : "!pl-7",
-  );
+    "!col-start-1 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const contentClass =
     "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[22px] max-[900px]:!px-[18px]";
 
@@ -308,17 +341,10 @@ function WorkspaceLayout() {
   }
   return (
     <div className={shellClass}>
-      <WindowToolbar
-        platform={platform}
-        fullscreen={isFullscreen}
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((value) => !value)}
-      />
+      <WindowToolbar />
       <AppSidebar
         active="workspaces"
         entries={navigation}
-        collapsed={sidebarCollapsed}
-        platform={platform}
         onNavigate={navigateGlobal}
         onSettings={() => {
           if (useWorkspaceStore.getState().applyingChanges) {
@@ -327,17 +353,9 @@ function WorkspaceLayout() {
           }
           void navigate({ to: "/settings" });
         }}
+        onBrandClick={() => navigateGlobal("home")}
       />
-      {!sidebarCollapsed && (
-        <Button
-          className="fixed inset-0 z-20 cursor-default bg-transparent lg:hidden"
-          type="button"
-          aria-label={tr("common.closeSidebar")}
-          onClick={() => setSidebarCollapsed(true)}
-        />
-      )}
       <main className={mainClass}>
-        <header className={pageHeaderClass} data-tauri-drag-region />
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
           {message && (
             <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -375,18 +393,13 @@ function WorkspaceLayout() {
                 reviewDisabled={busy || !hasUnsavedDraft}
               />
             </section>
-            <nav
-              className="rounded-xl border border-border/70 bg-card px-2 shadow-sm"
-              aria-label={activeWorkspace.name}
-            >
+            {scan && <WorkspaceSummaryStrip workspace={activeWorkspace} scan={scan} />}
+            <nav aria-label={activeWorkspace.name}>
               <Tabs value={currentPage} onValueChange={(value) => navigateWorkspace(value as Page)}>
-                <TabsList
-                  className="w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent px-0"
-                  variant="line"
-                >
+                <TabsList className="segmented-control w-full justify-start" variant="default">
                   {workspaceTabs.map(([id, label, Icon]) => (
                     <TabsTrigger
-                      className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm"
+                      className="segmented-control-item min-h-11 flex-none px-3 text-xs sm:text-sm"
                       key={id}
                       value={id}
                     >

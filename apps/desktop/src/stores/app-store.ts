@@ -20,7 +20,6 @@ import type {
 type Updater<T> = T | ((current: T) => T);
 
 interface AppState {
-  sidebarCollapsed: boolean;
   isFullscreen: boolean;
   runtime?: RuntimeInfo;
   workspaces: WorkspaceSummary[];
@@ -46,7 +45,6 @@ interface AppState {
 
 interface AppActions {
   reset: () => void;
-  setSidebarCollapsed: (value: Updater<boolean>) => void;
   setIsFullscreen: (value: Updater<boolean>) => void;
   setRuntime: (value: Updater<RuntimeInfo | undefined>) => void;
   setWorkspaces: (value: Updater<WorkspaceSummary[]>) => void;
@@ -76,10 +74,6 @@ const resolve = <T>(value: Updater<T>, current: T): T =>
   typeof value === "function" ? (value as (current: T) => T)(current) : value;
 
 export const useAppStore = create<AppState & AppActions>((set) => ({
-  sidebarCollapsed:
-    typeof localStorage === "undefined"
-      ? false
-      : localStorage.getItem("agentkib.sidebar.collapsed") === "true",
   isFullscreen: false,
   workspaces: [],
   workspacesLoaded: false,
@@ -95,10 +89,6 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   quotaConfigureRequest: 0,
   reset: () =>
     set({
-      sidebarCollapsed:
-        typeof localStorage === "undefined"
-          ? false
-          : localStorage.getItem("agentkib.sidebar.collapsed") === "true",
       isFullscreen: false,
       runtime: undefined,
       workspaces: [],
@@ -121,8 +111,6 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
       quotaConfigureRequest: 0,
       globalError: undefined,
     }),
-  setSidebarCollapsed: (value) =>
-    set((state) => ({ sidebarCollapsed: resolve(value, state.sidebarCollapsed) })),
   setIsFullscreen: (value) =>
     set((state) => ({ isFullscreen: resolve(value, state.isFullscreen) })),
   setRuntime: (value) => set((state) => ({ runtime: resolve(value, state.runtime) })),

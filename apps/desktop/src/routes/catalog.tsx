@@ -214,33 +214,15 @@ function CatalogPage({
   const AssetPage = AssetCatalogPage;
   return (
     <div className="relative grid gap-5 pb-8">
-      <section className="flex items-start justify-between gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm max-[900px]:p-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-foreground text-background">
-            <Library size={19} />
-          </span>
-          <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold tracking-tight">{tr("nav.assets")}</h1>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Badge variant="secondary" className="tabular-nums">
-            {workspaceAssets.length}
-          </Badge>
-          <span className="hidden text-xs text-muted-foreground sm:inline">
-            {tr("common.assets")}
-          </span>
-        </div>
-      </section>
-      <section className="rounded-2xl border border-border bg-card px-3 shadow-sm">
+      <section className="w-fit max-w-full">
         <Tabs value={section} onValueChange={(value) => onSection(value as AssetSection)}>
           <TabsList
-            className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0"
-            variant="line"
+            className="segmented-control w-full !p-0 justify-start"
+            variant="default"
             aria-label={tr("nav.assets")}
           >
             <TabsTrigger
-              className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="instructions"
             >
               <FileCode2 size={15} />
@@ -253,7 +235,7 @@ function CatalogPage({
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="skills"
             >
               <Sparkles size={15} />
@@ -266,7 +248,7 @@ function CatalogPage({
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="mcp"
             >
               <PlugZap size={15} />
@@ -279,7 +261,7 @@ function CatalogPage({
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="memory"
             >
               <Brain size={15} />
@@ -297,7 +279,7 @@ function CatalogPage({
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              className="min-h-11 flex-none gap-2 rounded-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="other"
             >
               <Boxes size={15} />

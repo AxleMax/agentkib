@@ -200,33 +200,24 @@ export function InsightsPage({
   const showTokenFilters = section === "overview" || section === "tokens";
   const showCommitFilters = section === "overview" || section === "commits";
   const showRange = !["milestones", "sources"].includes(section);
-  const filterClass = "!h-10 !min-w-[150px] !rounded-lg !border-border !bg-card !text-foreground";
+  const filterClass =
+    "h-10 min-w-[146px] rounded-xl border-2 border-foreground/25 bg-card px-3 font-medium text-foreground shadow-xs transition-colors hover:border-primary/65 hover:bg-muted/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 max-[520px]:min-w-0 max-[520px]:flex-1";
 
   if (initializing) return <LoadingState label={tr("common.loading")} />;
 
   return (
     <div className="relative grid gap-5">
-      <section className="grid gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm max-[900px]:p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-foreground text-background">
-              <Award size={18} />
-            </span>
-            <div className="min-w-0">
-              <h1 className="truncate text-xl font-semibold tracking-tight">
-                {tr(`insights.section.${section}`)}
-              </h1>
-            </div>
-          </div>
+      <section className="grid gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {busy && <Badge variant="secondary">{tr("tray.refreshInsights")}</Badge>}
+          {error && (
+            <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <CircleAlert size={16} />
+              {error}
+            </div>
+          )}
         </div>
-        {error && (
-          <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            <CircleAlert size={16} />
-            {error}
-          </div>
-        )}
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {showTokenFilters && (
             <SelectControl
               className={filterClass}
@@ -286,7 +277,7 @@ export function InsightsPage({
         </div>
       </section>
       {!summary && (
-        <Card>
+        <Card className="rounded-2xl border-border bg-card shadow-sm">
           <Empty
             icon={Award}
             title={tr("insights.preparing")}
@@ -296,103 +287,113 @@ export function InsightsPage({
       )}
       {summary && section === "overview" && (
         <>
-          <div className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[560px]:grid-cols-1">
-            <AchievementMetric
-              icon={Sparkles}
-              label={tr("insights.totalToken")}
-              value={formatCompact(summary.total_tokens)}
-              detail={
-                summary.coverage_from ? `${summary.coverage_from} — ${summary.coverage_to}` : ""
-              }
-            />
-            <AchievementMetric
-              icon={GitCommitHorizontal}
-              label={tr("insights.myCommits")}
-              value={formatCompact(summary.my_commits)}
-              detail={tr("insights.allActivity", { count: formatCompact(summary.all_commits) })}
-            />
-            <AchievementMetric
-              icon={CalendarDays}
-              label={tr("insights.activeDays")}
-              value={`${summary.active_days} ${tr("common.days")}`}
-              detail={tr("insights.recordedSessions", {
-                count: formatCompact(summary.session_count),
-              })}
-            />
-            <AchievementMetric
-              icon={Flame}
-              label={tr("insights.currentStreak")}
-              value={`${summary.current_streak} ${tr("common.days")}`}
-              detail={tr("insights.longestStreak", { count: summary.longest_streak })}
-            />
-          </div>
-          <Card className="overflow-hidden border-border bg-card shadow-sm">
-            <CardHeader className="flex min-h-[62px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-3">
-              <div>
-                <h2 className="text-base font-semibold text-foreground">
-                  {tr("insights.heatmap")}
-                </h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">{metricLabels[metric]}</p>
-              </div>
-              <Badge variant="outline">
-                {showRange
-                  ? range === "year"
-                    ? tr("insights.rangeYear")
-                    : tr("insights.range52w")
-                  : tr("nav.insights")}
-              </Badge>
-            </CardHeader>
-            <CardContent className="p-0">
-              <Tabs value={metric} onValueChange={(value) => setMetric(value as HeatmapMetric)}>
-                <TabsList
-                  className="w-fit max-w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent px-5"
-                  variant="line"
-                  aria-label={tr("insights.heatmap")}
-                >
-                  {(Object.keys(metricLabels) as HeatmapMetric[]).map((value) => (
-                    <TabsTrigger className="flex-none rounded-none px-3" key={value} value={value}>
-                      {metricLabels[value]}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-              <div className="overflow-x-auto px-5 pb-4 pt-4">
-                <HeatmapMonths points={points} padding={padding} />
-                <div className="grid w-max grid-flow-col grid-rows-[repeat(7,11px)] auto-cols-[11px] gap-1">
-                  {Array.from({ length: padding }, (_, index) => (
-                    <span
-                      className="invisible block size-[11px] rounded-[3px]"
-                      key={`padding-${index}`}
-                    />
-                  ))}
-                  {points.map((point) => {
-                    const value = point[metric];
-                    const level = value ? Math.max(1, Math.ceil((value / max) * 4)) : 0;
-                    return (
-                      <span
-                        key={point.date}
-                        className={heatmapCellClass(level)}
-                        title={`${point.date} · ${metricLabels[metric]} ${formatCompact(value)}`}
-                      />
-                    );
-                  })}
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.85fr)]">
+            <div className="grid grid-cols-2 gap-3 max-[560px]:grid-cols-1 lg:col-start-2 lg:row-start-1">
+              <AchievementMetric
+                icon={Sparkles}
+                tone="blue"
+                label={tr("insights.totalToken")}
+                value={formatCompact(summary.total_tokens)}
+                detail={
+                  summary.coverage_from ? `${summary.coverage_from} — ${summary.coverage_to}` : ""
+                }
+              />
+              <AchievementMetric
+                icon={GitCommitHorizontal}
+                tone="violet"
+                label={tr("insights.myCommits")}
+                value={formatCompact(summary.my_commits)}
+                detail={tr("insights.allActivity", { count: formatCompact(summary.all_commits) })}
+              />
+              <AchievementMetric
+                icon={CalendarDays}
+                tone="green"
+                label={tr("insights.activeDays")}
+                value={`${summary.active_days} ${tr("common.days")}`}
+                detail={tr("insights.recordedSessions", {
+                  count: formatCompact(summary.session_count),
+                })}
+              />
+              <AchievementMetric
+                icon={Flame}
+                tone="amber"
+                label={tr("insights.currentStreak")}
+                value={`${summary.current_streak} ${tr("common.days")}`}
+                detail={tr("insights.longestStreak", { count: summary.longest_streak })}
+              />
+            </div>
+            <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm lg:col-start-1 lg:row-start-1">
+              <CardHeader className="flex min-h-[62px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-3">
+                <div>
+                  <h2 className="text-base font-semibold text-foreground">
+                    {tr("insights.heatmap")}
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{metricLabels[metric]}</p>
                 </div>
-              </div>
-              <div className="flex items-center justify-end gap-1 border-t border-border px-5 py-3 text-[10px] text-muted-foreground">
-                <span>{tr("insights.less")}</span>
-                {[0, 1, 2, 3, 4].map((level) => (
-                  <i key={level} className={heatmapCellClass(level)} />
-                ))}
-                <span>{tr("insights.more")}</span>
-              </div>
-            </CardContent>
-          </Card>
+                <Badge variant="outline">
+                  {showRange
+                    ? range === "year"
+                      ? tr("insights.rangeYear")
+                      : tr("insights.range52w")
+                    : tr("nav.insights")}
+                </Badge>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Tabs value={metric} onValueChange={(value) => setMetric(value as HeatmapMetric)}>
+                  <TabsList
+                    className="segmented-control w-fit max-w-full justify-start px-5"
+                    variant="default"
+                    aria-label={tr("insights.heatmap")}
+                  >
+                    {(Object.keys(metricLabels) as HeatmapMetric[]).map((value) => (
+                      <TabsTrigger
+                        className="segmented-control-item flex-none px-3"
+                        key={value}
+                        value={value}
+                      >
+                        {metricLabels[value]}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+                <div className="overflow-x-auto px-5 pb-4 pt-4">
+                  <HeatmapMonths points={points} padding={padding} />
+                  <div className="grid w-max grid-flow-col grid-rows-[repeat(7,11px)] auto-cols-[11px] gap-1">
+                    {Array.from({ length: padding }, (_, index) => (
+                      <span
+                        className="invisible block size-[11px] rounded-[3px]"
+                        key={`padding-${index}`}
+                      />
+                    ))}
+                    {points.map((point) => {
+                      const value = point[metric];
+                      const level = value ? Math.max(1, Math.ceil((value / max) * 4)) : 0;
+                      return (
+                        <span
+                          key={point.date}
+                          className={heatmapCellClass(level)}
+                          title={`${point.date} · ${metricLabels[metric]} ${formatCompact(value)}`}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-1 border-t border-border px-5 py-3 text-[10px] text-muted-foreground">
+                  <span>{tr("insights.less")}</span>
+                  {[0, 1, 2, 3, 4].map((level) => (
+                    <i key={level} className={heatmapCellClass(level)} />
+                  ))}
+                  <span>{tr("insights.more")}</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </>
       )}
       {summary && section === "tokens" && (
         <>
-          <Card>
-            <CardHeader className="flex min-h-[52px] items-center border-b border-border px-4 py-3">
+          <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
+            <CardHeader className="flex min-h-[58px] items-center border-b border-border px-5 py-4">
               <h2 className="m-0 text-base font-semibold">{tr("insights.agentUsage")}</h2>
             </CardHeader>
             <CardContent className="p-0">
@@ -448,8 +449,8 @@ export function InsightsPage({
         </>
       )}
       {summary && section === "commits" && (
-        <Card>
-          <CardHeader className="flex min-h-[52px] items-center border-b border-border px-4 py-3">
+        <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
+          <CardHeader className="flex min-h-[58px] items-center border-b border-border px-5 py-4">
             <h2 className="m-0 text-base font-semibold">{tr("insights.repositoryCommits")}</h2>
           </CardHeader>
           <CardContent className="p-0">
@@ -482,8 +483,8 @@ export function InsightsPage({
       )}
       {section === "milestones" && <AchievementWall achievements={achievements} />}
       {section === "sources" && (
-        <Card>
-          <CardHeader className="flex min-h-[52px] items-center justify-between border-b border-border px-4 py-3">
+        <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
+          <CardHeader className="flex min-h-[58px] items-center justify-between border-b border-border px-5 py-4">
             <h2 className="m-0 text-base font-semibold">{tr("insights.providers")}</h2>
             <Badge variant="outline">
               {status?.refreshed_at
@@ -533,10 +534,10 @@ function heatmapCellClass(level: number) {
   return cn(
     "block size-[11px] rounded-[3px]",
     level === 0 && "bg-muted",
-    level === 1 && "bg-primary/35",
-    level === 2 && "bg-primary/55",
-    level === 3 && "bg-primary/75",
-    level === 4 && "bg-primary",
+    level === 1 && "bg-[color-mix(in_srgb,var(--blue)_18%,transparent)]",
+    level === 2 && "bg-[color-mix(in_srgb,var(--blue)_38%,transparent)]",
+    level === 3 && "bg-[color-mix(in_srgb,var(--blue)_66%,transparent)]",
+    level === 4 && "bg-[var(--blue)]",
   );
 }
 
@@ -564,7 +565,7 @@ function AchievementWall({ achievements }: { achievements: Achievement[] }) {
   const [selected, setSelected] = useState<AchievementWallItem>();
   if (!achievements.length)
     return (
-      <Card>
+      <Card className="rounded-2xl border-border bg-card shadow-sm">
         <Empty icon={Award} title={tr("insights.preparing")} />
       </Card>
     );
@@ -575,8 +576,8 @@ function AchievementWall({ achievements }: { achievements: Achievement[] }) {
   const milestoneCount = tracks.reduce((count, item) => count + item.track.milestones.length, 0);
   const completedSpecials = specials.filter((item) => item.unlocked).length;
   return (
-    <Card className="overflow-hidden border-border shadow-sm">
-      <CardHeader className="flex min-h-[64px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-3">
+    <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
+      <CardHeader className="flex min-h-[58px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div>
           <div className="m-0 text-base font-semibold">{tr("insights.milestones")}</div>
           <p className="mt-0.5 text-xs text-muted-foreground">
@@ -626,7 +627,8 @@ function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOp
         size="content"
         className={cn(
           "group relative grid min-h-[156px] min-w-0 grid-cols-[38px_minmax(0,1fr)] grid-rows-[auto_auto_1fr_auto] gap-x-3 gap-y-1.5 rounded-[11px] border border-border bg-card p-4 text-left text-muted-foreground transition hover:-translate-y-px hover:border-foreground/20 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-          item.unlocked && "border-primary/30 bg-primary/5",
+          item.unlocked &&
+            "border-[color-mix(in_srgb,var(--green)_30%,var(--border))] bg-[color-mix(in_srgb,var(--green)_7%,transparent)]",
         )}
         onClick={onOpen}
         aria-label={tr("achievementWall.openTrack", {
@@ -636,7 +638,8 @@ function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOp
         <span
           className={cn(
             "row-span-2 grid size-[38px] place-items-center rounded-[10px] border border-border bg-background text-muted-foreground",
-            item.unlocked && "border-primary/25 bg-primary/10 text-primary",
+            item.unlocked &&
+              "border-[color-mix(in_srgb,var(--green)_35%,var(--border))] bg-[color-mix(in_srgb,var(--green)_12%,transparent)] text-[var(--green)]",
           )}
         >
           <Icon size={20} />
@@ -651,7 +654,7 @@ function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOp
         <span
           className={cn(
             "col-span-full flex min-w-0 items-center justify-between gap-2 border-t border-border pt-2 text-xs",
-            item.unlocked && "text-primary",
+            item.unlocked && "text-[var(--green)]",
           )}
         >
           <span className="truncate">
@@ -682,7 +685,8 @@ function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOp
       size="content"
       className={cn(
         "group relative grid min-h-[156px] min-w-0 grid-cols-[38px_minmax(0,1fr)] grid-rows-[auto_auto_1fr_auto] gap-x-3 gap-y-1.5 rounded-[11px] border border-border bg-card p-4 text-left text-muted-foreground transition hover:-translate-y-px hover:border-foreground/20 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-        unlocked && "border-primary/30 bg-primary/5",
+        unlocked &&
+          "border-[color-mix(in_srgb,var(--green)_30%,var(--border))] bg-[color-mix(in_srgb,var(--green)_7%,transparent)]",
       )}
       onClick={onOpen}
       aria-label={tr("achievementWall.openSpecial", { title })}
@@ -690,7 +694,8 @@ function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOp
       <span
         className={cn(
           "row-span-2 grid size-[38px] place-items-center rounded-[10px] border border-border bg-background text-muted-foreground",
-          unlocked && "border-primary/25 bg-primary/10 text-primary",
+          unlocked &&
+            "border-[color-mix(in_srgb,var(--green)_35%,var(--border))] bg-[color-mix(in_srgb,var(--green)_12%,transparent)] text-[var(--green)]",
         )}
       >
         <Icon size={20} />
@@ -701,7 +706,7 @@ function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOp
       <span
         className={cn(
           "col-span-full flex min-w-0 items-center justify-between gap-2 border-t border-border pt-2 text-xs",
-          unlocked && "text-primary",
+          unlocked && "text-[var(--green)]",
         )}
       >
         <span className="truncate">
@@ -799,7 +804,7 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
       </div>
       <div className="overflow-hidden border-b border-border px-5 pb-4 pt-7">
         <ToggleGroup
-          className="relative grid w-full min-w-0 gap-0 pb-2"
+          className="segmented-control segmented-control-grid relative w-full min-w-0 gap-0 pb-2"
           value={[selected.code]}
           onValueChange={(values) => {
             const next = track.milestones.find((milestone) => milestone.code === values[0]);
@@ -822,16 +827,16 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
               <ToggleGroupItem
                 value={milestone.code}
                 className={cn(
-                  "relative z-1 grid h-auto min-h-[104px] min-w-0 items-start content-start justify-items-center gap-1.5 rounded-lg !bg-transparent px-1 text-center text-muted-foreground hover:!bg-transparent hover:text-foreground data-[state=on]:!bg-transparent focus-visible:ring-2 focus-visible:ring-ring",
+                  "segmented-control-item relative z-1 grid h-auto min-h-[104px] min-w-0 items-start content-start justify-items-center gap-1.5 px-1 text-center focus-visible:ring-2 focus-visible:ring-ring",
                   reached && "text-foreground",
-                  current && "text-primary",
+                  current && "text-[var(--blue)]",
                 )}
                 key={milestone.code}
               >
                 <span
                   className={cn(
                     "grid size-[22px] place-items-center rounded-full border-2 border-[var(--border-strong)] bg-card text-muted-foreground",
-                    reached && "border-primary bg-[var(--accent-2)] text-white",
+                    reached && "border-[var(--green)] bg-[var(--green)] text-white",
                     current &&
                       "border-primary shadow-[0_0_0_4px_color-mix(in_srgb,var(--primary)_14%,transparent)]",
                   )}
@@ -854,8 +859,8 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
           <span
             className={cn(
               "grid size-[30px] shrink-0 place-items-center rounded-full border border-border bg-muted text-muted-foreground",
-              selectedReached && "border-primary bg-[var(--accent-2)] text-white",
-              selectedCurrent && "border-primary",
+              selectedReached && "border-[var(--green)] bg-[var(--green)] text-white",
+              selectedCurrent && "border-[var(--blue)]",
             )}
           >
             {selectedReached ? <Check size={14} /> : <LockKeyhole size={13} />}
@@ -908,7 +913,8 @@ function SpecialAchievementDetail({
       <span
         className={cn(
           "grid size-16 place-items-center rounded-2xl border border-border bg-muted text-muted-foreground",
-          unlocked && "border-primary/25 bg-primary/10 text-primary",
+          unlocked &&
+            "border-[color-mix(in_srgb,var(--green)_35%,var(--border))] bg-[color-mix(in_srgb,var(--green)_12%,transparent)] text-[var(--green)]",
         )}
       >
         <Icon size={28} />
@@ -957,18 +963,45 @@ function ProviderRow({ provider }: { provider: NonNullable<InsightsStatus["provi
 
 function AchievementMetric({
   icon: Icon,
+  tone,
   label,
   value,
   detail,
 }: {
   icon: ComponentType<{ size?: number; className?: string }>;
+  tone: "blue" | "violet" | "green" | "amber";
   label: string;
   value: string;
   detail: string;
 }) {
+  const toneClasses = {
+    blue: {
+      icon: "bg-[color-mix(in_srgb,var(--blue)_12%,transparent)] text-[var(--blue)]",
+      border: "hover:border-[color-mix(in_srgb,var(--blue)_38%,var(--border))]",
+    },
+    violet: {
+      icon: "bg-[color-mix(in_srgb,#8b5cf6_12%,transparent)] text-[#7c3aed]",
+      border: "hover:border-[color-mix(in_srgb,#8b5cf6_38%,var(--border))]",
+    },
+    green: {
+      icon: "bg-[color-mix(in_srgb,var(--green)_12%,transparent)] text-[var(--green)]",
+      border: "hover:border-[color-mix(in_srgb,var(--green)_38%,var(--border))]",
+    },
+    amber: {
+      icon: "bg-[color-mix(in_srgb,var(--amber)_14%,transparent)] text-[var(--amber)]",
+      border: "hover:border-[color-mix(in_srgb,var(--amber)_42%,var(--border))]",
+    },
+  }[tone];
   return (
-    <Card className="grid min-h-[136px] grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_auto_auto] gap-x-3 rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-foreground/20">
-      <span className="row-span-3 grid size-9 place-items-center rounded-xl bg-foreground text-background">
+    <Card
+      className={cn(
+        "grid min-h-[136px] grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_auto_auto] gap-x-3 rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors",
+        toneClasses.border,
+      )}
+    >
+      <span
+        className={cn("row-span-3 grid size-9 place-items-center rounded-xl", toneClasses.icon)}
+      >
         <Icon size={17} />
       </span>
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
@@ -987,8 +1020,8 @@ function BreakdownPanel({
   values: Array<{ key: string; label: string; detail: string; value: number }>;
 }) {
   return (
-    <Card>
-      <CardHeader className="flex min-h-[52px] items-center border-b border-border px-4 py-3">
+    <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
+      <CardHeader className="flex min-h-[58px] items-center border-b border-border px-5 py-4">
         <h2 className="m-0 text-base font-semibold">{title}</h2>
       </CardHeader>
       <CardContent className="p-0">

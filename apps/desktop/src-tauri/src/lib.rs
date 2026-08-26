@@ -3676,11 +3676,6 @@ fn refresh_app_menu(app: &AppHandle) -> tauri::Result<()> {
         "nav.insights",
         Some("CmdOrCtrl+6"),
     )?;
-    let toggle_sidebar = item(
-        "app-menu:toggle-sidebar",
-        "menu.toggleSidebar",
-        Some("CmdOrCtrl+Shift+Backslash"),
-    )?;
     let refresh_current = item(
         "app-menu:refresh-current",
         "menu.refreshCurrent",
@@ -3691,8 +3686,6 @@ fn refresh_app_menu(app: &AppHandle) -> tauri::Result<()> {
         PredefinedMenuItem::fullscreen(app, Some(&translate(locale, "menu.fullscreen", &[])))?;
     let view_menu = SubmenuBuilder::new(app, translate(locale, "menu.view", &[]))
         .items(&[&home, &workspaces, &assets, &agents, &quota, &insights])
-        .separator()
-        .item(&toggle_sidebar)
         .separator()
         .items(&[&refresh_current, &refresh_all])
         .separator()
@@ -3741,7 +3734,6 @@ fn handle_app_menu_event(app: &AppHandle, id: &str) {
         "app-menu:settings" => show_settings_page(app),
         "app-menu:add-workspace" => emit_app_command(app, "add-workspace"),
         "app-menu:add-scan-root" => emit_app_command(app, "add-scan-root"),
-        "app-menu:toggle-sidebar" => emit_app_command(app, "toggle-sidebar"),
         "app-menu:refresh-current" => emit_app_command(app, "refresh-current"),
         "app-menu:refresh-all" => emit_app_command(app, "refresh-all"),
         "app-menu:navigate-home" => show_global_page(app, "home"),

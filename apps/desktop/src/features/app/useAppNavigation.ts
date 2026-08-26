@@ -32,9 +32,6 @@ export function useAppNavigation() {
   const appStore = useAppStore();
   const workspaceStore = useWorkspaceStore();
   const {
-    sidebarCollapsed,
-    setSidebarCollapsed,
-    isFullscreen,
     workspaces,
     globalMemories,
     navigationRequest,
@@ -64,10 +61,6 @@ export function useAppNavigation() {
     setBusy,
   } = workspaceStore;
   const workspaceOpenRequest = useRef(0);
-
-  useEffect(() => {
-    localStorage.setItem("agentkib.sidebar.collapsed", String(sidebarCollapsed));
-  }, [sidebarCollapsed]);
 
   const updateSearch = useCallback(
     (patch: Partial<AppSearch>) => {
@@ -385,7 +378,6 @@ export function useAppNavigation() {
     setMenuCommand(undefined);
     if (menuCommand.command === "add-workspace") void selectProject();
     else if (menuCommand.command === "add-scan-root") void addScanRootFromDialog();
-    else if (menuCommand.command === "toggle-sidebar") setSidebarCollapsed((value) => !value);
     else if (menuCommand.command === "refresh-current") void refreshCurrentView();
     else if (menuCommand.command === "refresh-all")
       void dialogs.confirm(tr("menu.refreshAllConfirm")).then((confirmed) => {
@@ -399,16 +391,12 @@ export function useAppNavigation() {
     requestRefreshKinds,
     selectProject,
     setMenuCommand,
-    setSidebarCollapsed,
   ]);
 
   return {
     route,
     appMode,
     globalPage,
-    sidebarCollapsed,
-    setSidebarCollapsed,
-    isFullscreen,
     message,
     refreshJobs,
     navigation: createGlobalNavigation(

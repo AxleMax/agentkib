@@ -29,16 +29,7 @@ import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/cat
 import { formatRelativeTime, localizeMessage, tr } from "../core/i18n";
 import { useAppStore } from "../stores/app-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
-import {
-  CircleAlert,
-  ChevronRight,
-  FolderGit2,
-  Library,
-  MoreHorizontal,
-  RefreshCw,
-  Search,
-  Trash2,
-} from "lucide-react";
+import { ChevronRight, FolderGit2, MoreHorizontal, RefreshCw, Search, Trash2 } from "lucide-react";
 import type { AgentKind, Manifest, RefreshJobStatus, WorkspaceSummary } from "../core/types";
 import { cn } from "@/lib/utils";
 
@@ -232,31 +223,13 @@ function WorkspacesPage({
       (status === "all" || item.status === status) &&
       (agent === "all" || item.sources.some((source) => source.agent === agent)),
   );
-  const groups = useMemo(() => {
-    const values = new Map<string, WorkspaceSummary[]>();
-    for (const item of filtered) {
-      const key = item.repository_group_id ?? `workspace:${item.id}`;
-      values.set(key, [...(values.get(key) ?? []), item]);
-    }
-    return [...values.values()];
-  }, [filtered]);
-  const attentionCount = workspaces.filter((item) => item.status === "attention").length;
-  const assetTotal = workspaces.reduce(
-    (total, item) => total + (assetCounts.get(item.id) ?? item.asset_count),
-    0,
-  );
-  const pageStats = [
-    { label: tr("nav.workspaces"), value: workspaces.length, icon: FolderGit2 },
-    { label: workspaceStatusLabel("attention"), value: attentionCount, icon: CircleAlert },
-    { label: tr("common.assets"), value: assetTotal, icon: Library },
-  ];
   const viewControls = (
     <div className="flex flex-wrap items-center gap-2">
       <ToggleGroup
         spacing={0}
-        variant="outline"
+        variant="default"
         size="sm"
-        className="shrink-0"
+        className="segmented-control shrink-0"
         value={[view]}
         onValueChange={(values) => {
           const value = values[0];
@@ -264,10 +237,13 @@ function WorkspacesPage({
         }}
         aria-label={tr("workspace.viewLabel")}
       >
-        <ToggleGroupItem value="list" className="min-w-[68px]">
+        <ToggleGroupItem value="list" className="segmented-control-item min-w-[68px] font-semibold">
           {tr("workspace.view.list")}
         </ToggleGroupItem>
-        <ToggleGroupItem value="storage" className="min-w-[68px]">
+        <ToggleGroupItem
+          value="storage"
+          className="segmented-control-item min-w-[68px] font-semibold"
+        >
           {tr("workspace.view.storage")}
         </ToggleGroupItem>
       </ToggleGroup>
@@ -279,29 +255,7 @@ function WorkspacesPage({
       )}
     </div>
   );
-  const pageIntro = (
-    <section className="flex flex-col gap-4 rounded-2xl border border-border/70 bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-foreground text-background">
-          <FolderGit2 size={20} />
-        </span>
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-[-.03em] text-foreground">
-              {tr("nav.workspaces")}
-            </h1>
-            <Badge variant="secondary" className="rounded-md px-2 tabular-nums">
-              {workspaces.length}
-            </Badge>
-          </div>
-          <span className="mt-1 block text-xs text-muted-foreground">
-            {tr("workspace.resultCount", { count: filtered.length })}
-          </span>
-        </div>
-      </div>
-      {viewControls}
-    </section>
-  );
+  const pageIntro = <section className="flex justify-end">{viewControls}</section>;
   const filterBar = (
     <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
       <CardContent className="grid gap-3 p-4 sm:p-5">
@@ -319,7 +273,7 @@ function WorkspacesPage({
           <div className="flex flex-wrap items-center gap-2">
             <SelectControl
               aria-label={tr("workspace.allAgents")}
-              className="h-10 min-w-[146px] rounded-xl border-input bg-background px-3 text-foreground shadow-xs hover:bg-muted/40 max-[520px]:min-w-0 max-[520px]:flex-1"
+              className="h-10 min-w-[146px] rounded-xl border-2 border-foreground/25 bg-card px-3 font-medium text-foreground shadow-xs hover:border-primary/65 hover:bg-muted/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 max-[520px]:min-w-0 max-[520px]:flex-1"
               value={agent}
               onChange={(event) => setAgent(event.target.value as typeof agent)}
             >
@@ -332,7 +286,7 @@ function WorkspacesPage({
             </SelectControl>
             <SelectControl
               aria-label={tr("workspace.allStatuses")}
-              className="h-10 min-w-[146px] rounded-xl border-input bg-background px-3 text-foreground shadow-xs hover:bg-muted/40 max-[520px]:min-w-0 max-[520px]:flex-1"
+              className="h-10 min-w-[146px] rounded-xl border-2 border-foreground/25 bg-card px-3 font-medium text-foreground shadow-xs hover:border-primary/65 hover:bg-muted/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 max-[520px]:min-w-0 max-[520px]:flex-1"
               value={status}
               onChange={(event) => setStatus(event.target.value as typeof status)}
             >
@@ -371,27 +325,10 @@ function WorkspacesPage({
       </div>
     );
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-4">
       {pageIntro}
-      <div className="grid gap-px overflow-hidden rounded-2xl border border-border/70 bg-border/70 sm:grid-cols-3">
-        {pageStats.map(({ label, value, icon: Icon }) => (
-          <div className="flex items-center gap-3 bg-card px-4 py-4 sm:px-5" key={label}>
-            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
-              <Icon size={17} />
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-xs font-medium text-muted-foreground">
-                {label}
-              </span>
-              <strong className="mt-1 block text-lg font-semibold tabular-nums tracking-[-.02em] text-foreground">
-                {value}
-              </strong>
-            </span>
-          </div>
-        ))}
-      </div>
       {filterBar}
-      <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
+      <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
         <CardContent className="p-0">
           <Table className="min-w-[900px] border-separate border-spacing-0 [&_th]:h-[44px] [&_th]:bg-muted/25 [&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-[.08em] [&_th]:text-muted-foreground [&_th]:whitespace-nowrap [&_th:first-child]:pl-5 [&_td]:h-[70px] [&_td]:text-sm [&_tr]:transition-colors">
             <TableHeader>
@@ -404,44 +341,19 @@ function WorkspacesPage({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {groups.flatMap((group) => {
-                const grouped = group.length > 1;
-                const rows = group.map((workspace) => (
-                  <WorkspaceTableRow
-                    key={workspace.id}
-                    workspace={workspace}
-                    assetCount={assetCounts.get(workspace.id)}
-                    onOpen={onOpen}
-                    onRefresh={onRefreshWorkspace}
-                    onExclude={onExclude}
-                  />
-                ));
-                return grouped
-                  ? [
-                      <TableRow
-                        className="bg-primary/[0.035] hover:bg-primary/[0.05]"
-                        key={`${group[0].id}:group`}
-                      >
-                        <TableCell
-                          className="h-[38px] border-t border-border-subtle pl-5 text-xs text-muted-foreground"
-                          colSpan={5}
-                        >
-                          <span className="inline-flex items-center">
-                            <FolderGit2 className="mr-1.5 text-primary" size={14} />
-                            <strong className="mr-2 font-semibold text-foreground">
-                              {group[0].name}
-                            </strong>
-                            <span>{tr("workspace.worktrees", { count: group.length })}</span>
-                          </span>
-                        </TableCell>
-                      </TableRow>,
-                      ...rows,
-                    ]
-                  : rows;
-              })}
+              {filtered.map((workspace) => (
+                <WorkspaceTableRow
+                  key={workspace.id}
+                  workspace={workspace}
+                  assetCount={assetCounts.get(workspace.id)}
+                  onOpen={onOpen}
+                  onRefresh={onRefreshWorkspace}
+                  onExclude={onExclude}
+                />
+              ))}
             </TableBody>
           </Table>
-          {!groups.length && (
+          {!filtered.length && (
             <WorkspaceEmptyState
               title={tr("workspace.noMatch")}
               text={tr("workspace.noMatchText")}

@@ -100,13 +100,13 @@ function Assets({
     <div className="grid gap-4">
       <Tabs value={section} onValueChange={(value) => onSection(value as WorkspaceAssetSection)}>
         <TabsList
-          className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0"
-          variant="line"
+          className="segmented-control w-full justify-start"
+          variant="default"
           aria-label={tr("nav.assets")}
         >
           {tabs.map(([value, label, count]) => (
             <TabsTrigger
-              className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item min-h-11 flex-none px-3 text-xs sm:text-sm"
               value={value}
               key={value}
             >

@@ -6,6 +6,10 @@ import {
   FolderGit2,
   GitCommitHorizontal,
   History,
+  Monitor,
+  Moon,
+  RefreshCw,
+  Sun,
   Trash2,
   X,
 } from "lucide-react";
@@ -48,6 +52,8 @@ import { cn } from "@/lib/utils";
 const buildPlatform = import.meta.env.TAURI_ENV_PLATFORM;
 const appPlatform = normalizePlatform(buildPlatform);
 const hasFileAccessSettings = ["macos", "windows"].includes(appPlatform);
+const settingsControlClass =
+  "h-10 min-w-[180px] rounded-xl border-2 border-foreground/25 bg-card px-3 font-medium text-foreground shadow-xs transition-colors hover:border-primary/65 hover:bg-muted/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 max-[560px]:min-w-0 max-[560px]:flex-1";
 const agentLabels: Record<AgentKind, string> = {
   codex: "Codex",
   "claude-code": "Claude Code",
@@ -73,6 +79,7 @@ export type GlobalSettingsProps = {
   onRestore: (path: string) => Promise<void>;
   onCloseBehaviorChanged: (behavior?: CloseBehavior) => Promise<void>;
   onLocaleChanged: (runtime: RuntimeInfo) => void;
+  onCheckForUpdates?: () => void;
   onRemoteGatewaysChanged: () => Promise<void>;
 };
 
@@ -92,6 +99,7 @@ export function GlobalSettings({
   onRestore,
   onCloseBehaviorChanged,
   onLocaleChanged,
+  onCheckForUpdates,
   onRemoteGatewaysChanged,
 }: GlobalSettingsProps) {
   if (section === "general")
@@ -104,12 +112,22 @@ export function GlobalSettings({
           <SettingsRow>
             <SettingsCopy>
               <strong>{tr("settings.closeBehavior")}</strong>
+              <small>{tr("settings.closeBehaviorGlobalDescription")}</small>
             </SettingsCopy>
             <CloseBehaviorSelect
               value={runtime?.close_behavior}
               trayAvailable={runtime?.tray_available !== false}
               onChange={onCloseBehaviorChanged}
             />
+          </SettingsRow>
+          <SettingsRow border={false}>
+            <SettingsCopy>
+              <strong>{tr("settings.updates")}</strong>
+            </SettingsCopy>
+            <Button type="button" variant="default" onClick={onCheckForUpdates}>
+              <RefreshCw size={14} />
+              {tr("settings.checkForUpdates")}
+            </Button>
           </SettingsRow>
           {runtime?.tray_available === false && (
             <SettingDetail variant="warning" role="status">
@@ -123,67 +141,78 @@ export function GlobalSettings({
   if (section === "discovery")
     return (
       <div className="grid gap-5">
-        <SettingGroup title={tr("settings.discovery")}>
-          <SettingsRow>
-            <SettingsCopy>
-              <strong>{tr("settings.discoveryStatus")}</strong>
-            </SettingsCopy>
-            <span
-              className={cn(
-                "font-medium",
-                discovery?.errors.length ? "text-destructive" : "text-emerald-600",
-              )}
-            >
-              {discovery
-                ? tr("settings.workspaceCount", { count: discovery.discovered_count })
-                : tr("home.discovering")}
-            </span>
-          </SettingsRow>
-          {discovery?.errors.map((error) => (
-            <SettingDetail variant="error" key={error}>
-              {error}
-            </SettingDetail>
-          ))}
-        </SettingGroup>
-        <SettingGroup title={tr("settings.scanRoots")}>
-          <div className="flex justify-end border-b border-border/60 px-5 py-3">
-            <Button
-              size="sm"
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-              onClick={() => void onAddRoot()}
-            >
-              {tr("settings.addFolder")}
-            </Button>
-          </div>
-          <SettingsListEmptyState items={scanRoots.length} emptyText={tr("settings.noScanRoots")}>
-            <div className="divide-y divide-border/60">
-              {scanRoots.map((root) => (
-                <div
-                  className="grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-5 py-3"
-                  key={root.id}
-                >
-                  <FolderGit2 size={17} className="text-muted-foreground" />
-                  <span className="min-w-0">
-                    <strong className="block break-all text-sm font-medium">{root.path}</strong>
-                    <small className="mt-1 block text-xs text-muted-foreground">
-                      {tr("settings.maxDepth", { depth: root.max_depth })}
-                    </small>
-                  </span>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="text-destructive hover:bg-destructive/10"
-                    aria-label={tr("common.remove")}
-                    onClick={() => void onRemoveRoot(root.id)}
-                  >
-                    <Trash2 size={15} />
-                  </Button>
-                </div>
-              ))}
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
+          <SettingGroup
+            title={tr("settings.discovery")}
+            description={tr("settings.discoveryDescription")}
+          >
+            <SettingsRow>
+              <SettingsCopy>
+                <strong>{tr("settings.discoveryStatus")}</strong>
+              </SettingsCopy>
+              <span
+                className={cn(
+                  "font-medium",
+                  discovery?.errors.length ? "text-destructive" : "text-emerald-600",
+                )}
+              >
+                {discovery
+                  ? tr("settings.workspaceCount", { count: discovery.discovered_count })
+                  : tr("home.discovering")}
+              </span>
+            </SettingsRow>
+            {discovery?.errors.map((error) => (
+              <SettingDetail variant="error" key={error}>
+                {error}
+              </SettingDetail>
+            ))}
+          </SettingGroup>
+          <SettingGroup
+            title={tr("settings.scanRoots")}
+            description={tr("settings.scanRootsDescription")}
+          >
+            <div className="flex justify-end border-b border-border/60 px-5 py-3">
+              <Button
+                size="sm"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+                onClick={() => void onAddRoot()}
+              >
+                {tr("settings.addFolder")}
+              </Button>
             </div>
-          </SettingsListEmptyState>
-        </SettingGroup>
-        <SettingGroup title={tr("settings.excluded")}>
+            <SettingsListEmptyState items={scanRoots.length} emptyText={tr("settings.noScanRoots")}>
+              <div className="divide-y divide-border/60">
+                {scanRoots.map((root) => (
+                  <div
+                    className="grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-5 py-3"
+                    key={root.id}
+                  >
+                    <FolderGit2 size={17} className="text-muted-foreground" />
+                    <span className="min-w-0">
+                      <strong className="block break-all text-sm font-medium">{root.path}</strong>
+                      <small className="mt-1 block text-xs text-muted-foreground">
+                        {tr("settings.maxDepth", { depth: root.max_depth })}
+                      </small>
+                    </span>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="text-destructive hover:bg-destructive/10"
+                      aria-label={tr("common.remove")}
+                      onClick={() => void onRemoveRoot(root.id)}
+                    >
+                      <Trash2 size={15} />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </SettingsListEmptyState>
+          </SettingGroup>
+        </div>
+        <SettingGroup
+          title={tr("settings.excluded")}
+          description={tr("settings.excludedDescription")}
+        >
           <SettingsListEmptyState items={excluded.length} emptyText={tr("settings.noExcluded")}>
             <div className="divide-y divide-border/60">
               {excluded.map((item) => (
@@ -211,7 +240,7 @@ export function GlobalSettings({
   if (section === "integrations")
     return (
       <div className="grid gap-5">
-        <SettingGroup title="AgentKib MCP Hub">
+        <SettingGroup title="AgentKib MCP Hub" description={tr("settings.mcpDescription")}>
           <SettingsRow border={false}>
             <SettingsCopy>
               <strong>{tr("mcp.network")}</strong>
@@ -231,7 +260,10 @@ export function GlobalSettings({
   if (section === "privacy")
     return (
       <div className="grid gap-5">
-        <SettingGroup title={tr("settings.localData")}>
+        <SettingGroup
+          title={tr("settings.localData")}
+          description={tr("settings.localDataGlobalDescription")}
+        >
           <SettingsRow border={false}>
             <SettingsCopy>
               <strong>{tr("settings.dataLocation")}</strong>
@@ -290,7 +322,7 @@ function ActivityPage({ records }: { records: ActivityRecord[] }) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="grid gap-4">
+        <div className="divide-y divide-border/60">
           {records.map((record) => (
             <ActivityRow key={record.id} record={record} />
           ))}
@@ -311,13 +343,17 @@ function ActivityPage({ records }: { records: ActivityRecord[] }) {
 function ActivityRow({ record }: { record: ActivityRecord }) {
   const key = `activity.action.${record.action}`;
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border p-3">
-      <span className="mt-1 size-2 shrink-0 rounded-full bg-primary" />
-      <div>
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-5 py-4">
+      <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" />
+      <div className="grid min-w-0 gap-1">
         <strong>{tr(key, { defaultValue: record.action })}</strong>
-        <small title={record.detail}>{record.detail}</small>
+        <small className="truncate text-xs text-muted-foreground" title={record.detail}>
+          {record.detail}
+        </small>
       </div>
-      <time>{formatDateTime(record.created_at)}</time>
+      <time className="text-right text-xs text-muted-foreground">
+        {formatDateTime(record.created_at)}
+      </time>
     </div>
   );
 }
@@ -336,7 +372,7 @@ function SettingsRow({ children, border = true }: { children: ReactNode; border?
 }
 function SettingsCopy({ children }: { children: ReactNode }) {
   return (
-    <div className="grid min-w-0 gap-1 [&_code]:max-w-full [&_code]:truncate [&_code]:font-mono [&_code]:text-xs [&_code]:text-muted-foreground [&_strong]:text-sm [&_strong]:font-medium">
+    <div className="grid min-w-0 gap-1 [&_code]:max-w-full [&_code]:truncate [&_code]:font-mono [&_code]:text-xs [&_code]:text-muted-foreground [&_small]:max-w-[62ch] [&_small]:text-xs [&_small]:leading-relaxed [&_small]:text-muted-foreground [&_strong]:text-sm [&_strong]:font-medium">
       {children}
     </div>
   );
@@ -364,11 +400,24 @@ function SettingDetail({
     </div>
   );
 }
-function SettingGroup({ title, children }: { title: string; children: ReactNode }) {
+function SettingGroup({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
   return (
-    <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
-      <CardHeader className="border-b border-border/60 bg-muted/20 px-5 py-4">
-        <CardTitle className="text-sm font-semibold tracking-tight">{title}</CardTitle>
+    <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
+      <CardHeader className="border-b border-border/70 bg-card px-5 py-4">
+        <CardTitle className="text-base font-semibold tracking-tight">{title}</CardTitle>
+        {description && (
+          <p className="mt-1 max-w-[62ch] text-xs leading-relaxed text-muted-foreground">
+            {description}
+          </p>
+        )}
       </CardHeader>
       <CardContent className="p-0">{children}</CardContent>
     </Card>
@@ -542,10 +591,11 @@ function LanguageSetting({
     <SettingsRow>
       <SettingsCopy>
         <strong>{tr("settings.language")}</strong>
+        <small>{tr("settings.languageDescription")}</small>
       </SettingsCopy>
       <SelectControl
         aria-label={tr("settings.language")}
-        className="h-9 min-w-40 rounded-lg border-input bg-background px-3 text-sm shadow-sm"
+        className={settingsControlClass}
         value={runtime?.locale_preference ?? "system"}
         onChange={(event) => void update(event.target.value as LocalePreference)}
       >
@@ -580,7 +630,7 @@ function ThemeSetting({
       <ToggleGroup
         spacing={0}
         variant="outline"
-        className="shrink-0 rounded-lg shadow-sm"
+        className="segmented-control shrink-0"
         value={[selected]}
         onValueChange={(values) => {
           const theme = values[0];
@@ -589,7 +639,18 @@ function ThemeSetting({
         aria-label={tr("settings.theme")}
       >
         {(["light", "dark", "system"] as ThemePreference[]).map((theme) => (
-          <ToggleGroupItem key={theme} value={theme} className="h-9 min-w-[66px] px-3 text-sm">
+          <ToggleGroupItem
+            key={theme}
+            value={theme}
+            className="segmented-control-item h-10 min-w-[82px] px-3 text-sm"
+          >
+            {theme === "light" ? (
+              <Sun size={16} aria-hidden="true" />
+            ) : theme === "dark" ? (
+              <Moon size={16} aria-hidden="true" />
+            ) : (
+              <Monitor size={16} aria-hidden="true" />
+            )}
             {tr(`settings.theme.${theme}`)}
           </ToggleGroupItem>
         ))}
@@ -617,7 +678,7 @@ function AppIconSetting({
       <ToggleGroup
         spacing={0}
         variant="outline"
-        className="shrink-0 rounded-lg shadow-sm"
+        className="segmented-control shrink-0"
         value={[selected]}
         onValueChange={(values) => {
           const icon = values[0];
@@ -629,7 +690,7 @@ function AppIconSetting({
           <ToggleGroupItem
             key={icon}
             value={icon}
-            className="inline-flex h-9 min-w-[90px] items-center justify-center gap-1.5 px-3 text-sm"
+            className="segmented-control-item inline-flex h-10 min-w-[90px] items-center justify-center gap-1.5 px-3 text-sm"
           >
             {icon === "white" ? (
               <span className="size-4 rounded border border-border bg-white" aria-hidden="true" />
@@ -661,7 +722,7 @@ function CloseBehaviorSelect({
   return (
     <SelectControl
       aria-label={tr("settings.closeBehavior")}
-      className="h-9 min-w-40 rounded-lg border-input bg-background px-3 text-sm shadow-sm"
+      className={settingsControlClass}
       title={tr("settings.close.quitShortcut", { modifier })}
       value={selected}
       onChange={(event) =>
@@ -705,7 +766,10 @@ function GitIdentitySettings() {
     }
   };
   return (
-    <SettingGroup title={tr("settings.gitIdentity")}>
+    <SettingGroup
+      title={tr("settings.gitIdentity")}
+      description={tr("settings.gitIdentityDescription")}
+    >
       {error && (
         <SettingDetail variant="error" role="alert">
           {error}

@@ -1,12 +1,9 @@
-import { Button } from "@/components/ui/button";
 import { Award, Bot, CircleAlert, FolderGit2, Gauge, Home, Library } from "lucide-react";
 import { Outlet } from "@tanstack/react-router";
 import { AppSidebar, type SidebarEntry } from "@/components/AppSidebar";
 import { WindowToolbar } from "@/components/WindowToolbar";
 import { cn } from "@/lib/utils";
-import type { AppPlatform } from "@/core/platform";
 import type { RefreshJobStatus } from "@/core/types";
-import { tr } from "@/core/i18n";
 import type { GlobalPage } from "./app-route";
 
 const globalNav: SidebarEntry<GlobalPage>[] = [
@@ -27,68 +24,38 @@ export function createGlobalNavigation(pendingMemoryCount: number): SidebarEntry
 export function GlobalShell({
   active,
   entries,
-  collapsed,
-  fullscreen,
-  platform,
   message,
   refreshJobs,
-  onToggleSidebar,
   onNavigate,
   onSettings,
 }: {
   active: GlobalPage;
   entries: SidebarEntry<GlobalPage>[];
-  collapsed: boolean;
-  fullscreen: boolean;
-  platform: AppPlatform;
   message: string;
   refreshJobs: RefreshJobStatus[];
-  onToggleSidebar: () => void;
   onNavigate: (page: GlobalPage) => void;
   onSettings: () => void;
 }) {
-  const shellClass = cn(
-    "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden !grid-cols-[var(--sidebar-width)_minmax(0,1fr)] !grid-rows-[minmax(0,1fr)] !transition-[grid-template-columns] !duration-150",
-    collapsed && "sidebar-collapsed !grid-cols-[0_minmax(0,1fr)]",
-  );
+  const shellClass = "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden";
   const mainClass =
-    "!col-start-2 !row-start-1 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
-  const pageHeaderClass = cn(
-    "page-header !z-10 !flex !min-h-[58px] !h-[58px] !flex-none !items-center !justify-between !border-b !border-[var(--page-header-border)] !bg-[var(--page-header-background)] !pr-7",
-    collapsed ? "!pl-[132px]" : "!pl-7",
-  );
+    "!col-start-1 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const contentClass =
-    "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[22px] max-[900px]:!px-[18px]";
+    "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[14px] max-[900px]:!px-[18px]";
   const discoveryFailure = refreshJobs.find(
     (job) => job.kind === "discovery" && job.state === "failed",
   );
 
   return (
     <div className={shellClass}>
-      <WindowToolbar
-        platform={platform}
-        fullscreen={fullscreen}
-        collapsed={collapsed}
-        onToggle={onToggleSidebar}
-      />
+      <WindowToolbar />
       <AppSidebar
         active={active}
         entries={entries}
-        collapsed={collapsed}
-        platform={platform}
         onNavigate={onNavigate}
         onSettings={onSettings}
+        onBrandClick={() => onNavigate("home")}
       />
-      {!collapsed && (
-        <Button
-          className="fixed inset-0 z-20 cursor-default bg-transparent lg:hidden"
-          type="button"
-          aria-label={tr("common.closeSidebar")}
-          onClick={onToggleSidebar}
-        />
-      )}
       <main className={mainClass}>
-        <header className={pageHeaderClass} data-tauri-drag-region />
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
           {message && (
             <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">

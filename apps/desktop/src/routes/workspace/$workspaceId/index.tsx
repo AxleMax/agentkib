@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { CircleAlert, Copy, FolderGit2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { formatRelativeTime, tr } from "../../../core/i18n";
 import type { AgentKind, Manifest, WorkspaceScan, WorkspaceSummary } from "../../../core/types";
 const agentLabels: Record<AgentKind, string> = {
@@ -19,9 +18,6 @@ const agentLabels: Record<AgentKind, string> = {
   hermes: "Hermes",
   "deepseek-harness": "DeepSeek Harness",
 };
-function workspaceStatusLabel(status: WorkspaceSummary["status"]) {
-  return tr(`status.workspace.${status}`);
-}
 function relativeTime(value: string) {
   return formatRelativeTime(value);
 }
@@ -42,22 +38,11 @@ function Overview({
   );
   const issueCount =
     scan.warnings.length + scan.agents.reduce((total, agent) => total + agent.warnings.length, 0);
-  const sharedAssets =
-    (manifest.instructions.shared.trim() ? 1 : 0) +
-    manifest.instructions.scoped.length +
-    manifest.skills.length +
-    manifest.connections.length;
   const sources =
     workspace.sources
       .flatMap((source) => (source.agent ? [agentLabels[source.agent]] : []))
       .filter((value, index, values) => values.indexOf(value) === index)
       .join(" · ") || tr("workspace.source.manual");
-  const stats = [
-    [tr("overview.health"), workspaceStatusLabel(issueCount ? "attention" : "healthy")],
-    [tr("overview.sharedAssets"), sharedAssets],
-    [tr("overview.projectAgentConfigs"), scan.agents.filter((agent) => agent.detected).length],
-    [tr("overview.realIssues"), issueCount],
-  ] as const;
   const sourceRows = [
     [tr("assets.sharedInstructions"), manifest.instructions.shared.trim() ? 1 : 0],
     [tr("overview.sharedSkills"), manifest.skills.length],
@@ -103,23 +88,6 @@ function Overview({
               : tr("common.never")}
           </span>
         </div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map(([label, value], index) => (
-          <Card className="rounded-xl border-border/70 shadow-sm" key={label}>
-            <CardContent className="grid min-h-[92px] content-center gap-1 px-4 py-3">
-              <span className="text-xs font-medium text-muted-foreground">{label}</span>
-              <strong
-                className={cn(
-                  "text-lg tracking-tight",
-                  index === 0 && issueCount > 0 && "text-amber-700",
-                )}
-              >
-                {value}
-              </strong>
-            </CardContent>
-          </Card>
-        ))}
       </div>
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(300px,.8fr)_minmax(420px,1.2fr)]">
         <Card className="overflow-hidden rounded-2xl border-border/70 shadow-sm">

@@ -47,28 +47,34 @@ function InsightsRoute() {
 
   return (
     <div className="relative grid gap-5 pb-8" data-view={section}>
-      <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card px-3 shadow-sm">
-        <Tabs
-          value={section}
-          onValueChange={(value) => setSection(value as InsightsSection)}
-          className="min-w-0"
-        >
-          <TabsList
-            className="w-full justify-start gap-1 overflow-x-auto rounded-none bg-transparent pr-2"
-            variant="line"
-            aria-label={tr("nav.insights")}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 w-fit max-w-[calc(100%-3rem)] overflow-hidden">
+          <Tabs
+            value={section}
+            onValueChange={(value) => setSection(value as InsightsSection)}
+            className="min-w-0"
           >
-            {["overview", "tokens", "commits", "milestones", "sources"].map((value) => (
-              <TabsTrigger className="flex-none rounded-none px-3" key={value} value={value}>
-                {tr(`insights.section.${value}`)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+            <TabsList
+              className="segmented-control w-fit max-w-full justify-start pr-2"
+              variant="default"
+              aria-label={tr("nav.insights")}
+            >
+              {["overview", "tokens", "commits", "milestones", "sources"].map((value) => (
+                <TabsTrigger
+                  className="segmented-control-item flex-none px-3"
+                  key={value}
+                  value={value}
+                >
+                  {tr(`insights.section.${value}`)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
         <Button
           variant="outline"
           size="icon"
-          className="size-9 shrink-0 rounded-xl"
+          className="size-10 shrink-0 rounded-xl"
           aria-label={tr("insights.refresh")}
           title={tr("insights.refresh")}
           onClick={() => void refresh()}

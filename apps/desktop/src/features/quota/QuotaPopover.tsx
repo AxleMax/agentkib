@@ -222,15 +222,15 @@ export function QuotaPopover() {
       {providers.length > 0 && (
         <Tabs value={selectedId} onValueChange={setSelectedId}>
           <TabsList
-            className="h-auto w-full gap-1 overflow-x-auto border-b border-border bg-transparent p-2"
-            variant="line"
+            className="segmented-control w-full gap-1 p-2"
+            variant="default"
             aria-label={tr("quota.providers")}
           >
             {providers.map((provider) => {
               const remaining = lowestRemaining(provider);
               return (
                 <TabsTrigger
-                  className="h-auto min-w-[72px] flex-none flex-col gap-1 rounded-md px-1 py-2 text-xs"
+                  className="segmented-control-item h-auto min-w-[72px] flex-none flex-col gap-1 px-1 py-2 text-xs"
                   key={provider.id}
                   value={provider.id}
                 >

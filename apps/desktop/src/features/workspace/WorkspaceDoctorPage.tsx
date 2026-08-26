@@ -119,12 +119,7 @@ export function WorkspaceDoctorPage({
       {activeReport && (
         <Card className="overflow-hidden">
           <div className="flex min-h-[52px] items-center border-b border-border px-4 py-3">
-            <div>
-              <h2 className="m-0 text-base font-semibold">{tr("doctor.matrix")}</h2>
-              <p className="m-0 mt-1 text-xs text-muted-foreground">
-                {tr("doctor.matrixDescription")}
-              </p>
-            </div>
+            <h2 className="m-0 text-base font-semibold">{tr("doctor.matrix")}</h2>
           </div>
           <div className="overflow-x-auto" role="table">
             <div

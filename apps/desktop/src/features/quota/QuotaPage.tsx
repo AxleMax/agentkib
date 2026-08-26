@@ -275,46 +275,8 @@ export function QuotaPage({
 
   return (
     <div className="relative grid gap-5 pb-8">
-      <section className="grid gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm max-[900px]:p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-foreground text-background">
-                <Gauge size={18} />
-              </span>
-              <div className="min-w-0">
-                <h1 className="truncate text-xl font-semibold tracking-tight">{tr("nav.quota")}</h1>
-              </div>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {snapshot && refreshLabel && (
-              <Badge variant="secondary" className="hidden sm:inline-flex">
-                {refreshLabel}
-              </Badge>
-            )}
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-9 rounded-xl"
-              onClick={() => void refresh()}
-              disabled={busy}
-              title={tr("quota.refresh")}
-              aria-label={tr("quota.refresh")}
-            >
-              <RefreshCw size={15} className={busy ? "animate-spin" : ""} />
-            </Button>
-          </div>
-        </div>
-        {error && snapshot && (
-          <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-            <CircleAlert size={16} />
-            {error}
-          </div>
-        )}
-      </section>
       <Collapsible open={showPreferences} onOpenChange={setShowPreferences}>
-        <div className="grid gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm sm:grid-cols-[minmax(220px,1fr)_auto_auto] sm:items-center">
+        <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm lg:flex-row lg:items-center">
           <Label className="!flex !h-10 min-w-0 items-center gap-2 rounded-xl border border-border bg-background px-3 text-muted-foreground">
             <Search size={14} />
             <Input
@@ -325,7 +287,7 @@ export function QuotaPage({
             />
           </Label>
           <ToggleGroup
-            className="w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted/60 p-1 max-sm:w-full"
+            className="segmented-control w-fit max-w-full max-sm:w-full"
             value={[filter]}
             onValueChange={(values) => {
               const value = values[0];
@@ -337,22 +299,47 @@ export function QuotaPage({
               <ToggleGroupItem
                 key={value}
                 value={value}
-                className="min-h-8 flex-1 rounded-lg px-3 text-xs text-muted-foreground hover:bg-background/70 hover:text-foreground data-[state=on]:bg-background data-[state=on]:font-semibold data-[state=on]:text-foreground data-[state=on]:shadow-sm"
+                className="segmented-control-item min-h-8 flex-1 px-3 text-xs font-semibold"
               >
                 {tr(`quota.filter.${value}`)}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
-          {popoverSupported && (
-            <CollapsibleTrigger
-              className="inline-flex min-h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              type="button"
+          <div className="flex items-center gap-2">
+            {snapshot && refreshLabel && (
+              <Badge variant="secondary" className="hidden whitespace-nowrap sm:inline-flex">
+                {refreshLabel}
+              </Badge>
+            )}
+            {popoverSupported && (
+              <CollapsibleTrigger
+                className="inline-flex min-h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                type="button"
+              >
+                <Settings2 size={15} />
+                {tr("quota.popoverSettings")}
+              </CollapsibleTrigger>
+            )}
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-10 rounded-xl"
+              onClick={() => void refresh()}
+              disabled={busy}
+              title={tr("quota.refresh")}
+              aria-label={tr("quota.refresh")}
             >
-              <Settings2 size={15} />
-              {tr("quota.popoverSettings")}
-            </CollapsibleTrigger>
-          )}
+              <RefreshCw size={15} className={busy ? "animate-spin" : ""} />
+            </Button>
+          </div>
         </div>
+
+        {error && snapshot && (
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <CircleAlert size={16} />
+            {error}
+          </div>
+        )}
 
         {popoverSupported && snapshot && (
           <CollapsibleContent>
@@ -386,10 +373,6 @@ export function QuotaPage({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold tracking-tight">{tr("quota.providers")}</h2>
-                <div className="mt-1 flex items-center gap-2">
-                  <Badge variant="secondary">{providers.length}</Badge>
-                  <span className="text-xs text-muted-foreground">{tr("quota.filterLabel")}</span>
-                </div>
               </div>
               <Badge variant="outline">{tr(`quota.freshness.${snapshot.freshness}`)}</Badge>
             </div>
@@ -425,8 +408,8 @@ function ProviderTabs({
   return (
     <Tabs value={selectedId} onValueChange={onSelect}>
       <TabsList
-        className="h-auto w-full items-stretch justify-start gap-3 overflow-x-auto rounded-xl bg-transparent p-0"
-        variant="line"
+        className="segmented-control w-full items-stretch justify-start gap-3"
+        variant="default"
         aria-label={tr("quota.providers")}
       >
         {providers.map((provider) => {
@@ -438,7 +421,7 @@ function ProviderTabs({
               key={provider.id}
               value={provider.id}
               className={cn(
-                "relative grid h-auto min-h-[92px] min-w-[210px] flex-none grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-2.5 gap-y-0.5 justify-start rounded-xl border border-border bg-background px-3.5 py-3.5 text-left transition-colors hover:border-foreground/25 hover:bg-muted/30 data-[state=active]:border-foreground/45 data-[state=active]:bg-background data-[state=active]:shadow-sm",
+                "relative grid h-auto min-h-[92px] min-w-[210px] flex-none grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-2.5 gap-y-0.5 justify-start rounded-xl border border-border bg-background px-3.5 py-3.5 text-left transition-colors hover:border-foreground/25 hover:bg-muted/30 data-active:!border-primary data-active:!bg-primary data-active:!text-primary-foreground data-active:!shadow-sm",
                 unavailable && "opacity-60",
               )}
             >
