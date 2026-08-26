@@ -323,8 +323,9 @@ button {
 .segmented-control {
   display: inline-flex;
   max-width: 100%;
+  height: auto !important;
   align-items: center;
-  gap: 0;
+  gap: 0.125rem;
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 0.9375rem;

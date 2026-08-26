@@ -217,12 +217,12 @@ function CatalogPage({
       <section className="w-fit max-w-full">
         <Tabs value={section} onValueChange={(value) => onSection(value as AssetSection)}>
           <TabsList
-            className="segmented-control w-full !p-0 justify-start"
+            className="segmented-control !h-auto w-fit max-w-full justify-start"
             variant="default"
             aria-label={tr("nav.assets")}
           >
             <TabsTrigger
-              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
+              className="segmented-control-item h-9 min-h-9 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="instructions"
             >
               <FileCode2 size={15} />
@@ -235,7 +235,7 @@ function CatalogPage({
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
+              className="segmented-control-item h-9 min-h-9 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="skills"
             >
               <Sparkles size={15} />
@@ -248,7 +248,7 @@ function CatalogPage({
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
+              className="segmented-control-item h-9 min-h-9 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="mcp"
             >
               <PlugZap size={15} />
@@ -261,7 +261,7 @@ function CatalogPage({
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
+              className="segmented-control-item h-9 min-h-9 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="memory"
             >
               <Brain size={15} />
@@ -279,7 +279,7 @@ function CatalogPage({
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              className="segmented-control-item min-h-11 flex-none gap-2 px-3 text-xs sm:text-sm"
+              className="segmented-control-item h-9 min-h-9 flex-none gap-2 px-3 text-xs sm:text-sm"
               value="other"
             >
               <Boxes size={15} />

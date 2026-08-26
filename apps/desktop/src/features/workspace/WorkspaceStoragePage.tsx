@@ -285,7 +285,7 @@ export function WorkspaceStoragePage({
               <ToggleGroupItem
                 key={value}
                 value={value}
-                className="segmented-control-item min-w-[84px] font-semibold"
+                className="segmented-control-item h-9 min-h-9 min-w-[84px] font-semibold"
               >
                 {tr(`storage.metric.${value}`)}
               </ToggleGroupItem>

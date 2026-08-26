@@ -10,7 +10,7 @@ export function AppErrorFallback({ error, reset }: ErrorComponentProps) {
 
   const goHome = () => {
     reset();
-    void router.navigate({ to: "/", replace: true });
+    void router.navigate({ to: "/", search: {}, replace: true });
   };
 
   return (

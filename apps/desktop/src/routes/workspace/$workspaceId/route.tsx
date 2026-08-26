@@ -399,7 +399,7 @@ function WorkspaceLayout() {
                 <TabsList className="segmented-control w-full justify-start" variant="default">
                   {workspaceTabs.map(([id, label, Icon]) => (
                     <TabsTrigger
-                      className="segmented-control-item min-h-11 flex-none px-3 text-xs sm:text-sm"
+                      className="segmented-control-item h-9 min-h-9 flex-none px-3 text-xs sm:text-sm"
                       key={id}
                       value={id}
                     >
