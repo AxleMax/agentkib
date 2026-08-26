@@ -22,6 +22,8 @@ const emptyGateway = (): RemoteGatewayInput => ({
   url: "",
   auth_kind: "token",
 });
+const gatewayControlClass =
+  "h-10 rounded-xl border-2 border-foreground/25 bg-card px-3 font-medium text-foreground shadow-xs transition-colors hover:border-primary/65 hover:bg-muted/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20";
 
 function authKinds(kind: RemoteGatewayKind): RemoteGatewayAuthKind[] {
   return kind === "open-claw" ? ["token", "password", "none"] : ["session-token", "basic", "none"];
@@ -100,8 +102,8 @@ export function RemoteGatewaysSettings({
   };
 
   return (
-    <Card className="overflow-hidden rounded-2xl border-border/70 shadow-sm">
-      <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-5 py-4">
+    <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
+      <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-border/70 bg-card px-5 py-4">
         <CardTitle className="text-base">{tr("gateway.title")}</CardTitle>
         <Button onClick={() => edit()}>
           <Plus size={14} />
@@ -126,6 +128,7 @@ export function RemoteGatewaysSettings({
               <span>{tr("gateway.kind")}</span>
               <SelectControl
                 aria-label={tr("gateway.kind")}
+                className={gatewayControlClass}
                 value={draft.kind}
                 onChange={(event) => {
                   const kind = event.target.value as RemoteGatewayKind;
@@ -167,6 +170,7 @@ export function RemoteGatewaysSettings({
               <span>{tr("gateway.auth")}</span>
               <SelectControl
                 aria-label={tr("gateway.auth")}
+                className={gatewayControlClass}
                 value={draft.auth_kind}
                 onChange={(event) =>
                   setDraft({ ...draft, auth_kind: event.target.value as RemoteGatewayAuthKind })

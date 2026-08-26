@@ -62,7 +62,7 @@ export function AppSidebar<T extends string>({
               ))}
             </div>
           </nav>
-          <div className="top-navbar-group shrink-0">
+          <div className="shrink-0">
             <SidebarTooltip label={tr("nav.settings")}>
               <Button
                 variant="bare"

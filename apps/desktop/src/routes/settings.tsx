@@ -94,7 +94,7 @@ function SettingsRoute() {
       <SettingsSidebar
         active={section}
         onSelect={setSection}
-        onBack={() => window.history.back()}
+        onBack={() => void navigate({ to: "/" })}
         onSettings={() => setSection("general")}
       />
       <main

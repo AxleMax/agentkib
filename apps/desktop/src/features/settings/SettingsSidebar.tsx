@@ -81,12 +81,12 @@ export function SettingsSidebar({
               ))}
             </div>
           </nav>
-          <div className="top-navbar-group shrink-0">
+          <div className="shrink-0">
             <SidebarTooltip label={tr("nav.settings")}>
               <Button
                 variant="bare"
                 size="content"
-                className="flex size-9 items-center justify-center rounded-xl bg-sidebar-primary px-0 text-left text-sm font-medium text-sidebar-primary-foreground shadow-sm transition-colors hover:opacity-90 active:scale-[0.99]"
+                className="flex size-9 items-center justify-center rounded-xl px-0 text-left text-sm font-medium text-sidebar-foreground/70 transition-colors duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.99]"
                 type="button"
                 aria-current="page"
                 onClick={onSettings}
