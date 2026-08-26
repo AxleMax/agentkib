@@ -599,6 +599,7 @@
   "catalog.allScopes": "すべての範囲",
   "catalog.workspaceScope": "プロジェクトアセット",
   "catalog.asset": "アセット",
+  "catalog.modified": "更新日時",
   "catalog.scope": "範囲",
   "catalog.source": "ソース",
   "catalog.shared": "共有",

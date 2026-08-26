@@ -602,6 +602,7 @@
   "catalog.allScopes": "All Scopes",
   "catalog.workspaceScope": "Project Assets",
   "catalog.asset": "Asset",
+  "catalog.modified": "Modified",
   "catalog.scope": "Scope",
   "catalog.source": "Source",
   "catalog.shared": "Shared",

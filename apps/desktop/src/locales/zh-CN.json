@@ -599,6 +599,7 @@
   "catalog.allScopes": "全部范围",
   "catalog.workspaceScope": "项目资产",
   "catalog.asset": "资产",
+  "catalog.modified": "修改时间",
   "catalog.scope": "范围",
   "catalog.source": "来源",
   "catalog.shared": "共享",

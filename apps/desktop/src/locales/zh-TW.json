@@ -599,6 +599,7 @@
   "catalog.allScopes": "所有範圍",
   "catalog.workspaceScope": "專案資產",
   "catalog.asset": "資產",
+  "catalog.modified": "修改時間",
   "catalog.scope": "範圍",
   "catalog.source": "來源",
   "catalog.shared": "共用",

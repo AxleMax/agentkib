@@ -258,24 +258,7 @@ function WorkspacesPage({
       )}
     </div>
   );
-  const pageIntro = (
-    <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-semibold tracking-[-.03em] text-foreground">
-            {tr("nav.workspaces")}
-          </h1>
-          <Badge variant="secondary" className="rounded-md px-2 tabular-nums">
-            {workspaces.length}
-          </Badge>
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {tr("workspace.resultCount", { count: filtered.length })}
-        </p>
-      </div>
-      {viewControls}
-    </section>
-  );
+  const pageIntro = <section className="flex justify-end">{viewControls}</section>;
   const filterBar = (
     <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
       <CardContent className="grid gap-3 p-4 sm:p-5">
