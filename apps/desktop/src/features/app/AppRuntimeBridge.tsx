@@ -5,7 +5,7 @@ import { api } from "@/core/api";
 import { refreshGlobalState } from "@/core/global-state";
 import { changeLocale, localizeMessage, tr } from "@/core/i18n";
 import { applyTheme } from "@/core/theme";
-import { normalizePlatform } from "@/core/platform";
+import { isTauriRuntime, normalizePlatform } from "@/core/platform";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { useAppStore } from "@/stores/app-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
@@ -68,6 +68,8 @@ export function AppRuntimeBridge() {
   };
 
   useEffect(() => {
+    if (!isTauriRuntime()) return;
+
     let disposed = false;
     let refreshReloadTimer: number | undefined;
     let unlisten: (() => void) | undefined;
@@ -188,7 +190,7 @@ export function AppRuntimeBridge() {
   }, []);
 
   useEffect(() => {
-    if (appPlatform !== "macos") return;
+    if (!isTauriRuntime() || appPlatform !== "macos") return;
 
     const appWindow = getCurrentWindow();
     let disposed = false;
@@ -221,6 +223,8 @@ export function AppRuntimeBridge() {
 
   useEffect(() => {
     const refreshRuntime = () => {
+      if (!isTauriRuntime()) return;
+
       if (pendingRefreshKinds.current.delete("discovery")) void loadDiscoveryCache();
       void api
         .runtime()
@@ -245,6 +249,8 @@ export function AppRuntimeBridge() {
   const quitState = useRef({ hasUnsavedDraft: hasAnyUnsavedDraft, applyingChanges });
   quitState.current = { hasUnsavedDraft: hasAnyUnsavedDraft, applyingChanges };
   useEffect(() => {
+    if (!isTauriRuntime()) return;
+
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen("agentkib:quit-requested", async () => {

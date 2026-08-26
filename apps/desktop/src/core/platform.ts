@@ -1,5 +1,16 @@
 export type AppPlatform = "macos" | "windows" | "linux" | "web";
 
+type TauriWindow = Window & {
+  __TAURI_INTERNALS__?: unknown;
+};
+
+export function isTauriRuntime(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    Boolean((window as TauriWindow).__TAURI_INTERNALS__)
+  );
+}
+
 export function normalizePlatform(platform?: string): AppPlatform {
   if (platform === "darwin") return "macos";
   if (platform === "windows" || platform === "linux") return platform;
