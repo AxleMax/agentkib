@@ -476,7 +476,11 @@ function StorageTreemapContent({
             ? "var(--muted)"
             : "color-mix(in srgb, var(--muted) 72%, var(--background))";
   const textFill =
-    kind === "git" || kind === "agent" ? "var(--primary-foreground)" : "var(--foreground)";
+    kind === "git" || kind === "agent"
+      ? "var(--primary-foreground)"
+      : kind === "regenerable"
+        ? "#713f12"
+        : "var(--foreground)";
   const opacity = query.trim() && !hasDescendantMatch ? 0.35 : 1;
   const location = { workspaceId, node };
   const labelSize = detail === "rich" ? 14 : detail === "medium" ? 12 : 11;
