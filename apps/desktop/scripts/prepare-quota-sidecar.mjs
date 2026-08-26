@@ -134,16 +134,19 @@ try {
     } catch {
       await rm(sourceDirectory, { recursive: true, force: true });
       await mkdir(sourceDirectory, { recursive: true });
-      const unpack = spawnSync("tar", [
-        "--force-local",
-        "-xzf",
-        archive,
-        "-C",
-        sourceDirectory,
-        "--strip-components",
-        "1",
-      ], { stdio: "inherit" });
-      if (unpack.status !== 0) throw new Error("Failed to extract the Win-CodexBar source archive");
+      const localArchive = join(sourceDirectory, release.asset);
+      await copyFile(archive, localArchive);
+      try {
+        const unpack = spawnSync("tar", [
+          "-xzf",
+          release.asset,
+          "--strip-components",
+          "1",
+        ], { cwd: sourceDirectory, stdio: "inherit" });
+        if (unpack.status !== 0) throw new Error("Failed to extract the Win-CodexBar source archive");
+      } finally {
+        await rm(localArchive, { force: true });
+      }
     }
 
     const cargoTargetDirectory = join(cacheRoot, "cargo-target");
@@ -222,10 +225,14 @@ async function prepareWindowsArmNsis() {
 
     const extracted = await mkdtemp(join(tmpdir(), "agentkib-nsis-"));
     try {
-      const unpack = spawnSync("tar", ["--force-local", "-xf", archivePath, "-C", extracted], {
+      const localArchive = join(extracted, windowsArmNsis.asset);
+      await copyFile(archivePath, localArchive);
+      const unpack = spawnSync("tar", ["-xf", windowsArmNsis.asset], {
+        cwd: extracted,
         stdio: "inherit",
       });
       if (unpack.status !== 0) throw new Error("Failed to extract NSIS 3.11");
+      await rm(localArchive, { force: true });
       await rm(nsisDirectory, { recursive: true, force: true });
       await cp(join(extracted, "nsis-3.11"), nsisDirectory, { recursive: true });
     } finally {
