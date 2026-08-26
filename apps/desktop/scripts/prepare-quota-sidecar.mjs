@@ -230,10 +230,13 @@ async function prepareWindowsArmNsis() {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
-        archivePath,
-        extracted,
+        "Expand-Archive -LiteralPath $env:AGENTKIB_NSIS_ARCHIVE -DestinationPath $env:AGENTKIB_NSIS_DESTINATION -Force",
       ], {
+        env: {
+          ...process.env,
+          AGENTKIB_NSIS_ARCHIVE: archivePath,
+          AGENTKIB_NSIS_DESTINATION: extracted,
+        },
         stdio: "inherit",
       });
       if (unpack.status !== 0) throw new Error("Failed to extract NSIS 3.11");
