@@ -252,6 +252,7 @@
   "agents.managementTitle": "Agent 管理",
   "agents.enabled": "有効な Agent",
   "agents.available": "利用可能な Agent",
+  "agents.name": "Agent 名称",
   "agents.agentType": "種類",
   "agents.status": "状態",
   "agents.manage": "設定",

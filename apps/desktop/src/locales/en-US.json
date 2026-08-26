@@ -252,6 +252,7 @@
   "agents.managementTitle": "Agent management",
   "agents.enabled": "Enabled agents",
   "agents.available": "Available agents",
+  "agents.name": "Agent name",
   "agents.agentType": "Type",
   "agents.status": "Status",
   "agents.manage": "Configure",

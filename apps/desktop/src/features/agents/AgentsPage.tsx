@@ -8,7 +8,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useState } from "react";
 import {
   ArrowLeft,
-  Bot,
   ChevronRight,
   CircleAlert,
   FileCode2,
@@ -95,8 +94,6 @@ export function AgentsPage({
     (total, gateway) => total + gateway.workspaces.length,
     0,
   );
-  const installedAgentCount = installations.filter((item) => item.installed).length;
-
   const openDetail = (agent: AgentKind) => {
     setSelected(agent);
     setSection("overview");
@@ -109,7 +106,6 @@ export function AgentsPage({
         installations={installations}
         workspaces={workspaces}
         remoteGateways={remoteGateways}
-        installedAgentCount={installedAgentCount}
         onOpenAgent={openDetail}
       />
     );
@@ -127,16 +123,6 @@ export function AgentsPage({
       </Button>
       <div className="relative grid items-start gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div className="grid gap-4">
-          <section className="flex items-center justify-between rounded-2xl border border-border bg-background p-4 shadow-sm">
-            <div className="flex items-center gap-3">
-              <span className="grid size-10 place-items-center rounded-xl bg-foreground text-background">
-                <Bot size={19} />
-              </span>
-              <h1 className="text-base font-semibold tracking-tight">{tr("nav.agents")}</h1>
-            </div>
-            <Badge variant="secondary">{installedAgentCount}</Badge>
-          </section>
-
           <Card className="overflow-hidden rounded-2xl border-border shadow-sm">
             <CardContent className="grid gap-2 p-3">
               {agentKinds.map((agent) => {
@@ -463,13 +449,11 @@ function AgentManagementView({
   installations,
   workspaces,
   remoteGateways,
-  installedAgentCount,
   onOpenAgent,
 }: {
   installations: AgentInstallation[];
   workspaces: WorkspaceSummary[];
   remoteGateways: RemoteGatewaySummary[];
-  installedAgentCount: number;
   onOpenAgent: (agent: AgentKind) => void;
 }) {
   const rows = agentKinds.map((agent) => {
@@ -489,7 +473,7 @@ function AgentManagementView({
     <div className="overflow-x-auto">
       <div className="min-w-[620px]">
         <div className="grid grid-cols-[minmax(180px,1.5fr)_minmax(120px,1fr)_100px_112px_auto] items-center gap-3 border-b border-border-subtle bg-muted/20 px-4 py-2.5 text-[11px] font-semibold tracking-[0.04em] text-muted-foreground">
-          <span>{tr("agents.provider")}</span>
+          <span>{tr("agents.name")}</span>
           <span>{tr("agents.agentType")}</span>
           <span>{tr("agents.status")}</span>
           <span>{tr("common.workspaces")}</span>
@@ -542,37 +526,21 @@ function AgentManagementView({
 
   return (
     <div className="grid gap-5 pb-8">
-      <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-xl bg-foreground text-background">
-            <Bot size={20} />
-          </span>
-          <div>
-            <h1 className="text-xl font-semibold tracking-[-0.03em]">
-              {tr("agents.managementTitle")}
-            </h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {tr("common.enabled")} {installedAgentCount} · {tr("common.workspaces")}{" "}
-              {workspaces.length}
-            </p>
-          </div>
-        </div>
-      </section>
       <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
         <CardHeader className="flex min-h-[58px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <h2 className="text-base font-semibold">{tr("agents.enabled")}</h2>
-          <Badge variant="secondary" className="tabular-nums">
-            {enabled.length}
-          </Badge>
+          <h2 className="text-base font-semibold">
+            {tr("agents.enabled")}{" "}
+            <span className="font-normal text-muted-foreground">({enabled.length})</span>
+          </h2>
         </CardHeader>
         <CardContent className="p-0">{agentTable(enabled)}</CardContent>
       </Card>
       <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
         <CardHeader className="flex min-h-[58px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <h2 className="text-base font-semibold">{tr("agents.available")}</h2>
-          <Badge variant="outline" className="tabular-nums">
-            {available.length}
-          </Badge>
+          <h2 className="text-base font-semibold">
+            {tr("agents.available")}{" "}
+            <span className="font-normal text-muted-foreground">({available.length})</span>
+          </h2>
         </CardHeader>
         <CardContent className="p-0">{agentTable(available)}</CardContent>
       </Card>

@@ -252,6 +252,7 @@
   "agents.managementTitle": "Agent 管理",
   "agents.enabled": "已启用的 Agent",
   "agents.available": "可用的 Agent",
+  "agents.name": "Agent 名称",
   "agents.agentType": "类型",
   "agents.status": "状态",
   "agents.manage": "设置",
