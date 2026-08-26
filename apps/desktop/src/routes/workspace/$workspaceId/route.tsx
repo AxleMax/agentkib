@@ -32,7 +32,6 @@ import { useAppStore } from "../../../stores/app-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { api } from "../../../core/api";
 import { localizeMessage, tr } from "../../../core/i18n";
-import { normalizePlatform } from "../../../core/platform";
 import { cn } from "@/lib/utils";
 import type { Manifest, WorkspaceSummary } from "../../../core/types";
 import {
@@ -110,7 +109,6 @@ function workspaceStatusLabel(status: WorkspaceSummary["status"]) {
 
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
 type Page = "overview" | "sessions" | "git" | "assets" | "context" | "doctor" | "changes";
-const platform = normalizePlatform(import.meta.env.TAURI_ENV_PLATFORM);
 const workspaceTabs = [
   ["overview", "nav.overview", LayoutDashboard],
   ["sessions", "nav.sessions", MessageSquareText],
@@ -137,14 +135,7 @@ function WorkspaceLayout() {
   const app = useAppStore();
   const workspaceState = useWorkspaceStore();
   const workspace = app.workspaces.find((item) => item.id === workspaceId);
-  const {
-    sidebarCollapsed,
-    setSidebarCollapsed,
-    isFullscreen,
-    setRuntime,
-    globalMemories,
-    workspacesLoaded,
-  } = app;
+  const { setRuntime, globalMemories, workspacesLoaded } = app;
   const {
     project,
     selectedWorkspace,
@@ -284,16 +275,9 @@ function WorkspaceLayout() {
       ? { ...entry, badge: globalMemories.filter((item) => item.status === "pending").length }
       : entry,
   );
-  const shellClass = cn(
-    "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden !grid-cols-[var(--sidebar-width)_minmax(0,1fr)] !grid-rows-[minmax(0,1fr)] !transition-[grid-template-columns] !duration-150",
-    sidebarCollapsed && "sidebar-collapsed !grid-cols-[0_minmax(0,1fr)]",
-  );
+  const shellClass = cn("group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden");
   const mainClass =
-    "!col-start-2 !row-start-1 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
-  const pageHeaderClass = cn(
-    "page-header !z-10 !flex !min-h-[58px] !h-[58px] !flex-none !items-center !justify-between !border-b !border-[var(--page-header-border)] !bg-[var(--page-header-background)] !pr-7",
-    sidebarCollapsed ? "!pl-[132px]" : "!pl-7",
-  );
+    "!col-start-1 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const contentClass =
     "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[22px] max-[900px]:!px-[18px]";
 
@@ -308,17 +292,10 @@ function WorkspaceLayout() {
   }
   return (
     <div className={shellClass}>
-      <WindowToolbar
-        platform={platform}
-        fullscreen={isFullscreen}
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((value) => !value)}
-      />
+      <WindowToolbar />
       <AppSidebar
         active="workspaces"
         entries={navigation}
-        collapsed={sidebarCollapsed}
-        platform={platform}
         onNavigate={navigateGlobal}
         onSettings={() => {
           if (useWorkspaceStore.getState().applyingChanges) {
@@ -327,17 +304,9 @@ function WorkspaceLayout() {
           }
           void navigate({ to: "/settings" });
         }}
+        onBrandClick={() => navigateGlobal("home")}
       />
-      {!sidebarCollapsed && (
-        <Button
-          className="fixed inset-0 z-20 cursor-default bg-transparent lg:hidden"
-          type="button"
-          aria-label={tr("common.closeSidebar")}
-          onClick={() => setSidebarCollapsed(true)}
-        />
-      )}
       <main className={mainClass}>
-        <header className={pageHeaderClass} data-tauri-drag-region />
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
           {message && (
             <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">

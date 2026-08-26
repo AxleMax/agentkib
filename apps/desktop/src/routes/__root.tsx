@@ -3,26 +3,13 @@ import { z } from "zod";
 import type { SettingsSection } from "@/features/settings/SettingsSidebar";
 import type { InsightsSection } from "@/features/insights/InsightsPage";
 import type { AgentKind } from "../core/types";
-import { normalizePlatform } from "../core/platform";
 import { AppRuntimeBridge } from "../features/app/AppRuntimeBridge";
 import { GlobalShell } from "../features/app/GlobalShell";
 import { useAppNavigation } from "../features/app/useAppNavigation";
 
-const appPlatform = normalizePlatform(import.meta.env.TAURI_ENV_PLATFORM);
-
 function RootLayout() {
-  const {
-    route,
-    globalPage,
-    sidebarCollapsed,
-    setSidebarCollapsed,
-    isFullscreen,
-    message,
-    refreshJobs,
-    navigation,
-    navigateGlobal,
-    openSettings,
-  } = useAppNavigation();
+  const { route, globalPage, message, refreshJobs, navigation, navigateGlobal, openSettings } =
+    useAppNavigation();
 
   return (
     <>
@@ -33,12 +20,8 @@ function RootLayout() {
         <GlobalShell
           active={globalPage}
           entries={navigation}
-          collapsed={sidebarCollapsed}
-          fullscreen={isFullscreen}
-          platform={appPlatform}
           message={message}
           refreshJobs={refreshJobs}
-          onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
           onNavigate={navigateGlobal}
           onSettings={openSettings}
         />

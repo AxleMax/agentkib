@@ -45,8 +45,6 @@
 
 :root,
 :root[data-theme="dark"] {
-  --page-header-background: rgba(9, 11, 16, 0.92);
-  --page-header-border: #181e29;
   --background: #090909;
   --foreground: #f4f4f5;
   --card: #121212;
@@ -78,8 +76,6 @@
 }
 
 :root[data-theme="light"] {
-  --page-header-background: rgba(250, 250, 251, 0.94);
-  --page-header-border: #e4e6eb;
   --background: #f7f7f7;
   --foreground: #18181b;
   --card: #ffffff;
@@ -110,9 +106,9 @@
 }
 
 :root {
-  --sidebar-width: 232px;
-  --window-toolbar-height: 48px;
-  --page-header-height: 52px;
+  --window-safe-top: 16px;
+  --window-toolbar-height: var(--window-safe-top);
+  --navbar-height: 72px;
   --panel: var(--card);
   --panel-2: var(--secondary);
   --surface-hover: var(--muted);
@@ -136,6 +132,86 @@
     "Segoe UI",
     sans-serif;
   font-synthesis: none;
+}
+
+:root[data-platform="macos"] {
+  --window-safe-top: 68px;
+}
+
+:root[data-platform="windows"],
+:root[data-platform="linux"] {
+  --window-safe-top: 44px;
+}
+
+/* Accent themes are intentionally independent from light/dark mode. */
+:root[data-theme="light"][data-accent-theme="black"],
+:root[data-theme="light"][data-accent-theme="sky"],
+:root[data-theme="light"][data-accent-theme="blue"] {
+  --sidebar-primary-foreground: #ffffff;
+}
+
+:root[data-theme="light"][data-accent-theme="black"] {
+  --primary: #171717;
+  --primary-foreground: #ffffff;
+  --accent-2: #171717;
+  --accent-strong: #000000;
+  --sidebar-primary: #171717;
+  --accent: #f1f2f4;
+  --accent-foreground: #171717;
+  --sidebar-accent: #eef0f3;
+  --sidebar-accent-foreground: #171717;
+}
+
+:root[data-theme="light"][data-accent-theme="sky"] {
+  --primary: #60a5fa;
+  --primary-foreground: #ffffff;
+  --accent-2: #3b82f6;
+  --accent-strong: #2563eb;
+  --sidebar-primary: #60a5fa;
+  --accent: #e8f1ff;
+  --accent-foreground: #1e3a8a;
+  --sidebar-accent: #dbeafe;
+  --sidebar-accent-foreground: #1e3a8a;
+}
+
+:root[data-theme="light"][data-accent-theme="blue"] {
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --accent-2: #1d4ed8;
+  --accent-strong: #1e40af;
+  --sidebar-primary: #2563eb;
+  --accent: #e8efff;
+  --accent-foreground: #1e3a8a;
+  --sidebar-accent: #dbeafe;
+  --sidebar-accent-foreground: #1e3a8a;
+}
+
+:root[data-theme="dark"][data-accent-theme="sky"],
+:root[data-theme="dark"][data-accent-theme="blue"] {
+  --primary-foreground: #ffffff;
+  --sidebar-primary-foreground: #ffffff;
+}
+
+:root[data-theme="dark"][data-accent-theme="sky"] {
+  --primary: #60a5fa;
+  --accent-2: #3b82f6;
+  --accent-strong: #2563eb;
+  --sidebar-primary: #60a5fa;
+  --accent: #1e3a8a;
+  --accent-foreground: #dbeafe;
+  --sidebar-accent: #172554;
+  --sidebar-accent-foreground: #dbeafe;
+}
+
+:root[data-theme="dark"][data-accent-theme="blue"] {
+  --primary: #2563eb;
+  --accent-2: #1d4ed8;
+  --accent-strong: #1e40af;
+  --sidebar-primary: #2563eb;
+  --accent: #1e3a8a;
+  --accent-foreground: #dbeafe;
+  --sidebar-accent: #172554;
+  --sidebar-accent-foreground: #dbeafe;
 }
 
 :root[data-theme="dark"] {
@@ -205,44 +281,40 @@ button {
 /* Application shell: layout variables are shared by the desktop and settings shells. */
 .app-shell {
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--window-safe-top) var(--navbar-height) minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
-.app-shell.sidebar-collapsed {
-  grid-template-columns: 0 minmax(0, 1fr);
-}
-.app-shell.sidebar-collapsed > .sidebar {
-  transform: translateX(-100%);
-  pointer-events: none;
-}
 
-/* Page headers remain a small compatibility seam while page content is Tailwind-first. */
-.page-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  height: var(--page-header-height);
-  min-height: var(--page-header-height);
-  background: var(--page-header-background);
-  border-bottom: 1px solid var(--page-header-border);
+.top-navbar {
+  min-height: var(--navbar-height);
+  height: var(--navbar-height);
 }
-
+.top-navbar-inner {
+  display: flex;
+  width: 100%;
+  max-width: 1540px;
+  height: 100%;
+  min-width: 0;
+  margin: 0 auto;
+  align-items: center;
+  gap: 0.875rem;
+}
+.top-navbar-group {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.25rem;
+  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--muted) 58%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 4%, transparent);
+}
 @media (max-width: 900px) {
-  .app-shell,
-  .app-shell.sidebar-collapsed {
-    grid-template-columns: 0 minmax(0, 1fr);
-  }
-  .app-shell > .sidebar {
-    position: fixed;
-    inset: var(--window-toolbar-height) auto 0 0;
-    height: auto;
-    transform: none;
-    box-shadow: 18px 0 50px rgba(0, 0, 0, 0.38);
-  }
-  .app-shell.sidebar-collapsed > .sidebar {
-    transform: translateX(-100%);
+  .top-navbar {
+    gap: 0.625rem;
   }
 }

@@ -23,7 +23,12 @@ import { QuotaDiagnostics } from "@/features/quota/QuotaDiagnostics";
 import { RemoteGatewaysSettings } from "./RemoteGateways";
 import { api } from "@/core/api";
 import { changeLocale, formatDateTime, localizeMessage, tr } from "@/core/i18n";
-import { applyTheme } from "@/core/theme";
+import {
+  accentThemePreference,
+  applyAccentTheme,
+  applyTheme,
+  type AccentTheme,
+} from "@/core/theme";
 import { normalizePlatform, primaryShortcutModifier, usesSystemTrayWording } from "@/core/platform";
 import type { SettingsSection } from "./SettingsSidebar";
 import type {
@@ -98,6 +103,7 @@ export function GlobalSettings({
     return (
       <div className="grid gap-5">
         <SettingGroup title={tr("settings.interface")}>
+          <AccentThemeSetting />
           <ThemeSetting runtime={runtime} onChanged={onLocaleChanged} />
           <AppIconSetting runtime={runtime} onChanged={onLocaleChanged} />
           <LanguageSetting runtime={runtime} onChanged={onLocaleChanged} />
@@ -277,6 +283,51 @@ export function GlobalSettings({
       </div>
       <ActivityPage records={activity} />
     </div>
+  );
+}
+
+function AccentThemeSetting() {
+  const [selected, setSelected] = useState<AccentTheme>(() => accentThemePreference());
+  const themes: Array<{ value: AccentTheme; label: string; color: string }> = [
+    { value: "black", label: tr("settings.accentTheme.black"), color: "#171717" },
+    { value: "sky", label: tr("settings.accentTheme.sky"), color: "#60a5fa" },
+    { value: "blue", label: tr("settings.accentTheme.blue"), color: "#2563eb" },
+  ];
+
+  return (
+    <SettingsRow>
+      <SettingsCopy>
+        <strong>{tr("settings.accentTheme")}</strong>
+      </SettingsCopy>
+      <div
+        className="flex flex-wrap justify-end gap-2"
+        role="group"
+        aria-label={tr("settings.accentTheme")}
+      >
+        {themes.map((theme) => (
+          <button
+            key={theme.value}
+            type="button"
+            aria-pressed={selected === theme.value}
+            className={cn(
+              "flex h-10 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm transition-colors hover:bg-muted",
+              selected === theme.value && "border-primary bg-primary/[0.06]",
+            )}
+            onClick={() => {
+              setSelected(theme.value);
+              applyAccentTheme(theme.value);
+            }}
+          >
+            <span
+              className="size-4 rounded-full border border-black/10 shadow-sm"
+              style={{ backgroundColor: theme.color }}
+              aria-hidden="true"
+            />
+            {theme.label}
+          </button>
+        ))}
+      </div>
+    </SettingsRow>
   );
 }
 

@@ -6,7 +6,7 @@ import { QuotaPopover } from "@/features/quota/QuotaPopover";
 import { api } from "./core/api";
 import { initializeI18n, normalizeLocale } from "./core/i18n";
 import { applyPlatformAttribute } from "./core/platform";
-import { applyTheme, systemTheme } from "./core/theme";
+import { accentThemePreference, applyAccentTheme, applyTheme, systemTheme } from "./core/theme";
 import type { RuntimeInfo } from "./core/types";
 import { createAppRouter } from "./router";
 import { useAppStore } from "./stores/app-store";
@@ -26,6 +26,7 @@ async function bootstrap() {
     // The web preview has no Tauri runtime; the system browser locale remains useful.
   }
   applyTheme(theme);
+  applyAccentTheme(accentThemePreference());
   await initializeI18n(locale);
   if (bootstrapRuntime) useAppStore.getState().setRuntime(bootstrapRuntime);
   const surface = new URLSearchParams(window.location.search).get("surface");
