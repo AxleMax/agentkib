@@ -225,14 +225,18 @@ async function prepareWindowsArmNsis() {
 
     const extracted = await mkdtemp(join(tmpdir(), "agentkib-nsis-"));
     try {
-      const localArchive = join(extracted, windowsArmNsis.asset);
-      await copyFile(archivePath, localArchive);
-      const unpack = spawnSync("tar", ["-xf", windowsArmNsis.asset], {
-        cwd: extracted,
+      const unpack = spawnSync("powershell.exe", [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
+        archivePath,
+        extracted,
+      ], {
         stdio: "inherit",
       });
       if (unpack.status !== 0) throw new Error("Failed to extract NSIS 3.11");
-      await rm(localArchive, { force: true });
       await rm(nsisDirectory, { recursive: true, force: true });
       await cp(join(extracted, "nsis-3.11"), nsisDirectory, { recursive: true });
     } finally {
