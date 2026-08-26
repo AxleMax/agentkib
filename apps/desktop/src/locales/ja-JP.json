@@ -206,6 +206,8 @@
   "settings.theme.light": "ライト",
   "settings.theme.dark": "ダーク",
   "settings.theme.system": "システムに従う",
+  "settings.updates": "アプリの更新",
+  "settings.checkForUpdates": "アップデートを確認",
   "settings.appIcon": "アプリアイコン",
   "settings.appIcon.white": "ホワイト",
   "settings.appIcon.black": "ブラック",

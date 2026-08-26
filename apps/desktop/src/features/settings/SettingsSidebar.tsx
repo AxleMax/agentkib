@@ -63,7 +63,7 @@ export function SettingsSidebar({
                 size="content"
                 className={cn(
                   "flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.99]",
-                  active === id && "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm",
+                  active === id && "bg-primary text-primary-foreground shadow-sm",
                 )}
                 aria-current={active === id ? "page" : undefined}
                 onClick={() => onSelect(id)}

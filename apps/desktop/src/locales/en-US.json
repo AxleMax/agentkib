@@ -206,6 +206,8 @@
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
   "settings.theme.system": "Follow System",
+  "settings.updates": "App updates",
+  "settings.checkForUpdates": "Check for updates",
   "settings.appIcon": "App icon",
   "settings.appIcon.white": "White",
   "settings.appIcon.black": "Black",

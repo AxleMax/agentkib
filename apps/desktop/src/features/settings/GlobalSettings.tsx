@@ -6,6 +6,10 @@ import {
   FolderGit2,
   GitCommitHorizontal,
   History,
+  Monitor,
+  Moon,
+  RefreshCw,
+  Sun,
   Trash2,
   X,
 } from "lucide-react";
@@ -75,6 +79,7 @@ export type GlobalSettingsProps = {
   onRestore: (path: string) => Promise<void>;
   onCloseBehaviorChanged: (behavior?: CloseBehavior) => Promise<void>;
   onLocaleChanged: (runtime: RuntimeInfo) => void;
+  onCheckForUpdates?: () => void;
   onRemoteGatewaysChanged: () => Promise<void>;
 };
 
@@ -94,6 +99,7 @@ export function GlobalSettings({
   onRestore,
   onCloseBehaviorChanged,
   onLocaleChanged,
+  onCheckForUpdates,
   onRemoteGatewaysChanged,
 }: GlobalSettingsProps) {
   if (section === "general")
@@ -113,6 +119,15 @@ export function GlobalSettings({
               trayAvailable={runtime?.tray_available !== false}
               onChange={onCloseBehaviorChanged}
             />
+          </SettingsRow>
+          <SettingsRow border={false}>
+            <SettingsCopy>
+              <strong>{tr("settings.updates")}</strong>
+            </SettingsCopy>
+            <Button type="button" variant="outline" onClick={onCheckForUpdates}>
+              <RefreshCw size={14} />
+              {tr("settings.checkForUpdates")}
+            </Button>
           </SettingsRow>
           {runtime?.tray_available === false && (
             <SettingDetail variant="warning" role="status">
@@ -615,7 +630,7 @@ function ThemeSetting({
       <ToggleGroup
         spacing={0}
         variant="outline"
-        className="shrink-0 rounded-lg shadow-sm"
+        className="shrink-0 rounded-[15px] border border-border bg-card p-1 shadow-xs"
         value={[selected]}
         onValueChange={(values) => {
           const theme = values[0];
@@ -624,7 +639,18 @@ function ThemeSetting({
         aria-label={tr("settings.theme")}
       >
         {(["light", "dark", "system"] as ThemePreference[]).map((theme) => (
-          <ToggleGroupItem key={theme} value={theme} className="h-9 min-w-[66px] px-3 text-sm">
+          <ToggleGroupItem
+            key={theme}
+            value={theme}
+            className="h-10 min-w-[82px] rounded-[11px] !border-0 px-3 text-sm text-muted-foreground hover:bg-muted/70 hover:text-foreground data-[state=on]:!bg-primary data-[state=on]:!text-primary-foreground"
+          >
+            {theme === "light" ? (
+              <Sun size={16} aria-hidden="true" />
+            ) : theme === "dark" ? (
+              <Moon size={16} aria-hidden="true" />
+            ) : (
+              <Monitor size={16} aria-hidden="true" />
+            )}
             {tr(`settings.theme.${theme}`)}
           </ToggleGroupItem>
         ))}
@@ -652,7 +678,7 @@ function AppIconSetting({
       <ToggleGroup
         spacing={0}
         variant="outline"
-        className="shrink-0 rounded-lg shadow-sm"
+        className="shrink-0 rounded-[15px] border border-border bg-card p-1 shadow-xs"
         value={[selected]}
         onValueChange={(values) => {
           const icon = values[0];
@@ -664,7 +690,7 @@ function AppIconSetting({
           <ToggleGroupItem
             key={icon}
             value={icon}
-            className="inline-flex h-9 min-w-[90px] items-center justify-center gap-1.5 px-3 text-sm"
+            className="inline-flex h-10 min-w-[90px] items-center justify-center gap-1.5 rounded-[11px] !border-0 px-3 text-sm text-muted-foreground hover:bg-muted/70 hover:text-foreground data-[state=on]:!bg-primary data-[state=on]:!text-primary-foreground"
           >
             {icon === "white" ? (
               <span className="size-4 rounded border border-border bg-white" aria-hidden="true" />
