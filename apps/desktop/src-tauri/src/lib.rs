@@ -76,10 +76,12 @@ use tauri_plugin_opener::OpenerExt;
 #[cfg(target_os = "macos")]
 use tauri_plugin_shell::{ShellExt, process::CommandEvent};
 
+mod app_updates;
 mod i18n;
 mod obsidian;
 mod platform;
 mod refresh;
+use app_updates::{AppUpdateRuntime, check_app_update, install_app_update};
 use i18n::{LocalePreference, SupportedLocale, translate};
 use obsidian::{ObsidianIntegration, ObsidianWorkspaceLink};
 use refresh::{RefreshCoordinator, RefreshJobStatus, RefreshKind, RefreshReceipt};
@@ -396,6 +398,7 @@ impl LifecycleState {
 
 #[derive(Serialize)]
 struct RuntimeInfo {
+    app_version: String,
     data_dir: PathBuf,
     database_path: PathBuf,
     mcp_package_root: PathBuf,
@@ -2204,6 +2207,7 @@ fn runtime_info(
     let theme_preference = state.theme_preference();
     let data_dir = default_data_dir().map_err(format_error)?;
     Ok(RuntimeInfo {
+        app_version: app.package_info().version.to_string(),
         database_path: data_dir.join("agentkib.db"),
         data_dir,
         mcp_package_root: installation_root().map_err(format_error)?,
@@ -4443,9 +4447,11 @@ pub fn run() {
         .manage(storage)
         .manage(conversations)
         .manage(refresh)
+        .manage(AppUpdateRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let theme = app.state::<Arc<LifecycleState>>().theme_preference();
             let app_icon = app.state::<Arc<LifecycleState>>().app_icon_preference();
@@ -4593,6 +4599,8 @@ pub fn run() {
             set_locale,
             set_theme_preference,
             set_app_icon_preference,
+            check_app_update,
+            install_app_update,
             get_mcp_network_settings,
             update_mcp_network_settings,
             get_mcp_hub_status,
