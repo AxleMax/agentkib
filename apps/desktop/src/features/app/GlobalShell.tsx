@@ -40,7 +40,7 @@ export function GlobalShell({
   const mainClass =
     "!col-start-1 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const contentClass =
-    "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[22px] max-[900px]:!px-[18px]";
+    "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[14px] max-[900px]:!px-[18px]";
   const discoveryFailure = refreshJobs.find(
     (job) => job.kind === "discovery" && job.state === "failed",
   );

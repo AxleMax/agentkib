@@ -135,7 +135,7 @@
 }
 
 :root[data-platform="macos"] {
-  --window-safe-top: 68px;
+  --window-safe-top: 44px;
 }
 
 :root[data-platform="windows"],
