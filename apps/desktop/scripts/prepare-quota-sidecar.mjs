@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { access, chmod, copyFile, cp, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { get } from "node:https";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -53,9 +63,8 @@ const windowsArmNsis = {
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const tauriDirectory = resolve(scriptDirectory, "../src-tauri");
-const target = process.env.AGENTKIB_QUOTA_TARGET
-  ?? process.env.CARGO_BUILD_TARGET
-  ?? rustHostTriple();
+const target =
+  process.env.AGENTKIB_QUOTA_TARGET ?? process.env.CARGO_BUILD_TARGET ?? rustHostTriple();
 const release = releases[target];
 
 if (process.platform === "win32" && process.arch === "arm64") {
@@ -73,8 +82,8 @@ if (!release) {
 }
 
 const cacheRoot = process.env.XDG_CACHE_HOME
-    ? resolve(process.env.XDG_CACHE_HOME, "agentkib/codexbar", release.version)
-    : process.env.LOCALAPPDATA
+  ? resolve(process.env.XDG_CACHE_HOME, "agentkib/codexbar", release.version)
+  : process.env.LOCALAPPDATA
     ? resolve(process.env.LOCALAPPDATA, "AgentKibBuild/cache/quota", release.version)
     : join(homedir(), ".cache/agentkib/codexbar", release.version);
 const archive = join(cacheRoot, release.asset);
@@ -111,7 +120,9 @@ try {
       if (strip.status !== 0) throw new Error("Failed to strip CodexBarCLI debug symbols");
       await chmod(collector, 0o755);
       await rm(resourceBundle, { recursive: true, force: true });
-      await cp(join(extracted, "CodexBar_CodexBarCore.bundle"), resourceBundle, { recursive: true });
+      await cp(join(extracted, "CodexBar_CodexBarCore.bundle"), resourceBundle, {
+        recursive: true,
+      });
       // The tiny launcher is source-controlled so plain cargo builds do not
       // depend on downloading the large collector archive first.
       await access(binary);
@@ -124,7 +135,9 @@ try {
       const resourceBundle = join(resourcesDirectory, "CodexBar_CodexBarCore.bundle");
       await mkdir(resourcesDirectory, { recursive: true });
       await rm(resourceBundle, { recursive: true, force: true });
-      await cp(join(extracted, "CodexBar_CodexBarCore.bundle"), resourceBundle, { recursive: true });
+      await cp(join(extracted, "CodexBar_CodexBarCore.bundle"), resourceBundle, {
+        recursive: true,
+      });
     }
   } else {
     const sourceDirectory = join(cacheRoot, "source");
@@ -134,35 +147,36 @@ try {
     } catch {
       await rm(sourceDirectory, { recursive: true, force: true });
       await mkdir(sourceDirectory, { recursive: true });
-      const unpack = spawnSync("tar", [
-        "-xzf",
-        archive,
-        "-C",
-        sourceDirectory,
-        "--strip-components",
-        "1",
-      ], { stdio: "inherit" });
+      const unpack = spawnSync(
+        "tar",
+        ["--force-local", "-xzf", archive, "-C", sourceDirectory, "--strip-components", "1"],
+        { stdio: "inherit" },
+      );
       if (unpack.status !== 0) throw new Error("Failed to extract the Win-CodexBar source archive");
     }
 
     const cargoTargetDirectory = join(cacheRoot, "cargo-target");
-    const build = spawnSync("cargo", [
-      "build",
-      "--locked",
-      "--release",
-      "--manifest-path",
-      manifest,
-      "--bin",
-      "codexbar",
-      "--target",
-      target,
-    ], {
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        CARGO_TARGET_DIR: cargoTargetDirectory,
+    const build = spawnSync(
+      "cargo",
+      [
+        "build",
+        "--locked",
+        "--release",
+        "--manifest-path",
+        manifest,
+        "--bin",
+        "codexbar",
+        "--target",
+        target,
+      ],
+      {
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          CARGO_TARGET_DIR: cargoTargetDirectory,
+        },
       },
-    });
+    );
     if (build.status !== 0) throw new Error("Failed to build the Win-CodexBar CLI");
 
     const source = join(cargoTargetDirectory, target, "release/codexbar.exe");
@@ -171,7 +185,9 @@ try {
     await mkdir(resourceDirectory, { recursive: true });
     await copyFile(source, join(resourceDirectory, "agentkib-quota-sidecar.exe"));
   }
-  process.stdout.write(`AgentKib quota sidecar: prepared collector ${release.version} for ${target}.\n`);
+  process.stdout.write(
+    `AgentKib quota sidecar: prepared collector ${release.version} for ${target}.\n`,
+  );
 } finally {
   await rm(extracted, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }
@@ -186,7 +202,9 @@ function rustHostTriple() {
 
 async function hasExpectedHash(path, expected, algorithm = "sha256") {
   try {
-    const digest = createHash(algorithm).update(await readFile(path)).digest("hex");
+    const digest = createHash(algorithm)
+      .update(await readFile(path))
+      .digest("hex");
     return digest === expected;
   } catch {
     return false;
@@ -221,7 +239,7 @@ async function prepareWindowsArmNsis() {
 
     const extracted = await mkdtemp(join(tmpdir(), "agentkib-nsis-"));
     try {
-      const unpack = spawnSync("tar", ["-xf", archivePath, "-C", extracted], {
+      const unpack = spawnSync("tar", ["--force-local", "-xf", archivePath, "-C", extracted], {
         stdio: "inherit",
       });
       if (unpack.status !== 0) throw new Error("Failed to extract NSIS 3.11");
@@ -236,12 +254,9 @@ async function prepareWindowsArmNsis() {
   // Windows ARM64. Keep the real compiler in Bin (where it can resolve Stubs and
   // Plugins), and replace only the dispatcher with a tiny host-native launcher.
   const launcherSource = join(scriptDirectory, "windows-nsis-launcher.rs");
-  const buildLauncher = spawnSync("rustc", [
-    launcherSource,
-    "-O",
-    "-o",
-    compilerLauncher,
-  ], { stdio: "inherit" });
+  const buildLauncher = spawnSync("rustc", [launcherSource, "-O", "-o", compilerLauncher], {
+    stdio: "inherit",
+  });
   if (buildLauncher.status !== 0) {
     throw new Error("Failed to build the Windows ARM64 NSIS launcher");
   }
@@ -251,10 +266,18 @@ async function download(url, destination, redirects = 0) {
   if (redirects > 8) throw new Error("Too many redirects while downloading CodexBarCLI");
   await new Promise((resolveDownload, reject) => {
     const request = get(url, { headers: { "User-Agent": "AgentKib-build" } }, (response) => {
-      if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+      if (
+        response.statusCode &&
+        response.statusCode >= 300 &&
+        response.statusCode < 400 &&
+        response.headers.location
+      ) {
         response.resume();
-        download(new URL(response.headers.location, url).toString(), destination, redirects + 1)
-          .then(resolveDownload, reject);
+        download(
+          new URL(response.headers.location, url).toString(),
+          destination,
+          redirects + 1,
+        ).then(resolveDownload, reject);
         return;
       }
       if (response.statusCode !== 200) {
