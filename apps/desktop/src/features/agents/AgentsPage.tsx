@@ -197,13 +197,17 @@ export function AgentsPage({
 
           <Tabs value={section} onValueChange={(value) => setSection(value as AgentDetailSection)}>
             <TabsList
-              className="w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-background px-4"
-              variant="line"
+              className="segmented-control w-full justify-start px-4"
+              variant="default"
               aria-label={agentLabels[selected]}
             >
               {(["overview", "assets", "workspaces", "usage"] as AgentDetailSection[]).map(
                 (value) => (
-                  <TabsTrigger className="flex-none px-3" value={value} key={value}>
+                  <TabsTrigger
+                    className="segmented-control-item flex-none px-3"
+                    value={value}
+                    key={value}
+                  >
                     {tr(`agents.section.${value}`)}
                   </TabsTrigger>
                 ),

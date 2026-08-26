@@ -37,8 +37,8 @@ export function AppSidebar<T extends string>({
                 variant="bare"
                 size="content"
                 className={cn(
-                  "relative flex h-9 items-center justify-center gap-2 rounded-xl px-3 text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.99]",
-                  active === id && "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm",
+                  "relative flex h-9 items-center justify-center gap-2 rounded-[11px] px-3 text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 active:scale-[0.99]",
+                  active === id && "shadow-sm",
                 )}
                 aria-current={active === id ? "page" : undefined}
                 onClick={() => onNavigate(id)}
@@ -58,7 +58,7 @@ export function AppSidebar<T extends string>({
           <Button
             variant="bare"
             size="content"
-            className="flex size-9 items-center justify-center rounded-xl px-0 text-left text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.99]"
+            className="flex size-9 items-center justify-center rounded-xl px-0 text-left text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 active:scale-[0.99]"
             type="button"
             onClick={onSettings}
           >

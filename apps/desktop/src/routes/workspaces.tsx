@@ -229,7 +229,7 @@ function WorkspacesPage({
         spacing={0}
         variant="default"
         size="sm"
-        className="shrink-0 rounded-xl bg-muted/45 p-1 shadow-inner"
+        className="segmented-control shrink-0"
         value={[view]}
         onValueChange={(values) => {
           const value = values[0];
@@ -237,15 +237,12 @@ function WorkspacesPage({
         }}
         aria-label={tr("workspace.viewLabel")}
       >
-        <ToggleGroupItem
-          value="list"
-          className="!border-0 min-w-[68px] rounded-lg text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-sm aria-pressed:font-semibold data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:font-semibold"
-        >
+        <ToggleGroupItem value="list" className="segmented-control-item min-w-[68px] font-semibold">
           {tr("workspace.view.list")}
         </ToggleGroupItem>
         <ToggleGroupItem
           value="storage"
-          className="!border-0 min-w-[68px] rounded-lg text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-sm aria-pressed:font-semibold data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:font-semibold"
+          className="segmented-control-item min-w-[68px] font-semibold"
         >
           {tr("workspace.view.storage")}
         </ToggleGroupItem>

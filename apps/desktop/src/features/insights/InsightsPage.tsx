@@ -341,13 +341,13 @@ export function InsightsPage({
               <CardContent className="p-0">
                 <Tabs value={metric} onValueChange={(value) => setMetric(value as HeatmapMetric)}>
                   <TabsList
-                    className="w-fit max-w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent px-5"
-                    variant="line"
+                    className="segmented-control w-fit max-w-full justify-start px-5"
+                    variant="default"
                     aria-label={tr("insights.heatmap")}
                   >
                     {(Object.keys(metricLabels) as HeatmapMetric[]).map((value) => (
                       <TabsTrigger
-                        className="flex-none rounded-none px-3"
+                        className="segmented-control-item flex-none px-3"
                         key={value}
                         value={value}
                       >
@@ -804,7 +804,7 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
       </div>
       <div className="overflow-hidden border-b border-border px-5 pb-4 pt-7">
         <ToggleGroup
-          className="relative grid w-full min-w-0 gap-0 pb-2"
+          className="segmented-control segmented-control-grid relative w-full min-w-0 gap-0 pb-2"
           value={[selected.code]}
           onValueChange={(values) => {
             const next = track.milestones.find((milestone) => milestone.code === values[0]);
@@ -827,7 +827,7 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
               <ToggleGroupItem
                 value={milestone.code}
                 className={cn(
-                  "relative z-1 grid h-auto min-h-[104px] min-w-0 items-start content-start justify-items-center gap-1.5 rounded-lg !bg-transparent px-1 text-center text-muted-foreground hover:!bg-transparent hover:text-foreground data-[state=on]:!bg-transparent focus-visible:ring-2 focus-visible:ring-ring",
+                  "segmented-control-item relative z-1 grid h-auto min-h-[104px] min-w-0 items-start content-start justify-items-center gap-1.5 px-1 text-center focus-visible:ring-2 focus-visible:ring-ring",
                   reached && "text-foreground",
                   current && "text-[var(--blue)]",
                 )}

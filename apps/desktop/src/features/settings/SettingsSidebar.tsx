@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { tr } from "@/core/i18n";
 import { cn } from "@/lib/utils";
-import { SidebarBrand } from "@/components/SidebarBrand";
 
 export type SettingsSection = "general" | "discovery" | "integrations" | "privacy" | "diagnostics";
 
@@ -41,12 +40,11 @@ export function SettingsSidebar({
   return (
     <header className="top-navbar col-start-1 row-start-2 flex min-w-0 items-center border-b border-border-subtle/70 bg-background px-4 sm:px-6">
       <div className="top-navbar-inner">
-        <SidebarBrand onClick={onBack} />
         <div className="top-navbar-group shrink-0">
           <Button
             variant="bare"
             size="content"
-            className="flex size-9 items-center justify-center rounded-xl px-0 text-left text-sm font-medium text-sidebar-foreground/70 transition-colors duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.99]"
+            className="flex size-9 items-center justify-center rounded-xl px-0 text-left text-sm font-medium text-sidebar-foreground/70 transition-colors duration-200 active:scale-[0.99]"
             type="button"
             onClick={onBack}
           >
@@ -62,8 +60,8 @@ export function SettingsSidebar({
                 variant="bare"
                 size="content"
                 className={cn(
-                  "flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.99]",
-                  active === id && "bg-primary text-primary-foreground shadow-sm",
+                  "flex h-9 items-center justify-center gap-2 rounded-[11px] px-3 text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 active:scale-[0.99]",
+                  active === id && "shadow-sm",
                 )}
                 aria-current={active === id ? "page" : undefined}
                 onClick={() => onSelect(id)}
@@ -78,7 +76,7 @@ export function SettingsSidebar({
           <Button
             variant="bare"
             size="content"
-            className="flex size-9 items-center justify-center rounded-xl px-0 text-left text-sm font-medium text-sidebar-foreground/70 transition-colors duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:scale-[0.99]"
+            className="flex size-9 items-center justify-center rounded-xl px-0 text-left text-sm font-medium text-sidebar-foreground/70 transition-colors duration-200 active:scale-[0.99]"
             type="button"
             aria-current="page"
             onClick={onSettings}

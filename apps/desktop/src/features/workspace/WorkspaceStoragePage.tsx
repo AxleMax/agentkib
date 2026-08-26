@@ -241,7 +241,7 @@ export function WorkspaceStoragePage({
             spacing={0}
             variant="default"
             size="sm"
-            className="shrink-0 rounded-xl bg-muted/45 p-1 shadow-inner"
+            className="segmented-control shrink-0"
             value={[metric]}
             onValueChange={(values) => {
               const value = values[0];
@@ -256,7 +256,7 @@ export function WorkspaceStoragePage({
               <ToggleGroupItem
                 key={value}
                 value={value}
-                className="!border-0 min-w-[84px] rounded-lg text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-sm aria-pressed:font-semibold data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:font-semibold"
+                className="segmented-control-item min-w-[84px] font-semibold"
               >
                 {tr(`storage.metric.${value}`)}
               </ToggleGroupItem>

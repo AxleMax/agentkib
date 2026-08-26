@@ -565,19 +565,19 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
           onValueChange={(value) => (value === "history" ? showHistory() : showWorktree())}
         >
           <TabsList
-            className="w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent px-0"
-            variant="line"
+            className="segmented-control w-full justify-start"
+            variant="default"
             aria-label={tr("git.sectionLabel")}
           >
             <TabsTrigger
-              className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item min-h-11 flex-none px-3 text-xs sm:text-sm"
               value="history"
             >
               <History size={15} />
               {tr("git.history")}
             </TabsTrigger>
             <TabsTrigger
-              className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item min-h-11 flex-none px-3 text-xs sm:text-sm"
               value="worktree"
             >
               <FileCode2 size={15} />

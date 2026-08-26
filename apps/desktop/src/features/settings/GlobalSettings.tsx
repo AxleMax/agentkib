@@ -124,7 +124,7 @@ export function GlobalSettings({
             <SettingsCopy>
               <strong>{tr("settings.updates")}</strong>
             </SettingsCopy>
-            <Button type="button" variant="outline" onClick={onCheckForUpdates}>
+            <Button type="button" variant="default" onClick={onCheckForUpdates}>
               <RefreshCw size={14} />
               {tr("settings.checkForUpdates")}
             </Button>
@@ -630,7 +630,7 @@ function ThemeSetting({
       <ToggleGroup
         spacing={0}
         variant="outline"
-        className="shrink-0 rounded-[15px] border border-border bg-card p-1 shadow-xs"
+        className="segmented-control shrink-0"
         value={[selected]}
         onValueChange={(values) => {
           const theme = values[0];
@@ -642,7 +642,7 @@ function ThemeSetting({
           <ToggleGroupItem
             key={theme}
             value={theme}
-            className="h-10 min-w-[82px] rounded-[11px] !border-0 px-3 text-sm text-muted-foreground hover:bg-muted/70 hover:text-foreground data-[state=on]:!bg-primary data-[state=on]:!text-primary-foreground"
+            className="segmented-control-item h-10 min-w-[82px] px-3 text-sm"
           >
             {theme === "light" ? (
               <Sun size={16} aria-hidden="true" />
@@ -678,7 +678,7 @@ function AppIconSetting({
       <ToggleGroup
         spacing={0}
         variant="outline"
-        className="shrink-0 rounded-[15px] border border-border bg-card p-1 shadow-xs"
+        className="segmented-control shrink-0"
         value={[selected]}
         onValueChange={(values) => {
           const icon = values[0];
@@ -690,7 +690,7 @@ function AppIconSetting({
           <ToggleGroupItem
             key={icon}
             value={icon}
-            className="inline-flex h-10 min-w-[90px] items-center justify-center gap-1.5 rounded-[11px] !border-0 px-3 text-sm text-muted-foreground hover:bg-muted/70 hover:text-foreground data-[state=on]:!bg-primary data-[state=on]:!text-primary-foreground"
+            className="segmented-control-item inline-flex h-10 min-w-[90px] items-center justify-center gap-1.5 px-3 text-sm"
           >
             {icon === "white" ? (
               <span className="size-4 rounded border border-border bg-white" aria-hidden="true" />

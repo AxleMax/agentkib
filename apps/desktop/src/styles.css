@@ -308,10 +308,57 @@ button {
   align-items: center;
   gap: 0.125rem;
   padding: 0.25rem;
-  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  border-radius: 1rem;
-  background: color-mix(in srgb, var(--muted) 58%, transparent);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 4%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 0.9375rem;
+  background: var(--card);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+.top-navbar-group > [data-slot="button"]:hover,
+.top-navbar-group > [data-slot="button"][aria-current="page"] {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+}
+
+.segmented-control {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.9375rem;
+  background: var(--card);
+  padding: 0.25rem;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+.segmented-control-item {
+  border: 0 !important;
+  border-radius: 0.6875rem !important;
+  color: var(--muted-foreground);
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.segmented-control-item:hover {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+}
+
+.segmented-control-item[data-state="on"],
+.segmented-control-item[aria-pressed="true"],
+.segmented-control-item[data-active] {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--primary) 28%, transparent);
+}
+
+.segmented-control-grid {
+  display: grid;
+  overflow: visible;
 }
 @media (max-width: 900px) {
   .top-navbar {

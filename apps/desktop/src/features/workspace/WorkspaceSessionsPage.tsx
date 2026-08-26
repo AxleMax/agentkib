@@ -301,15 +301,15 @@ export function WorkspaceSessionsPage({
           </div>
           <Tabs value={filter} onValueChange={(value) => setFilter(value as SessionFilter)}>
             <TabsList
-              className="flex min-h-11 w-full justify-start gap-0 overflow-x-auto rounded-none border-b border-border/70 bg-transparent px-3 py-0"
-              variant="line"
+              className="segmented-control flex min-h-11 w-full justify-start px-3 py-0"
+              variant="default"
               aria-label={tr("conversations.filterLabel")}
             >
               {(["current", "archived", "metadata", "all"] as SessionFilter[]).map((value) => (
                 <TabsTrigger
                   key={value}
                   value={value}
-                  className="min-h-11 flex-none gap-1.5 rounded-none px-2.5 text-xs"
+                  className="segmented-control-item min-h-11 flex-none gap-1.5 px-2.5 text-xs"
                 >
                   <span>{tr(`conversations.filter.${value}`)}</span>
                   <Badge

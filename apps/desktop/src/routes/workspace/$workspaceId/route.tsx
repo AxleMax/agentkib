@@ -394,18 +394,12 @@ function WorkspaceLayout() {
               />
             </section>
             {scan && <WorkspaceSummaryStrip workspace={activeWorkspace} scan={scan} />}
-            <nav
-              className="rounded-xl border border-border/70 bg-card px-2 shadow-sm"
-              aria-label={activeWorkspace.name}
-            >
+            <nav aria-label={activeWorkspace.name}>
               <Tabs value={currentPage} onValueChange={(value) => navigateWorkspace(value as Page)}>
-                <TabsList
-                  className="w-full justify-start gap-1 overflow-x-auto rounded-none border-0 bg-transparent px-0"
-                  variant="line"
-                >
+                <TabsList className="segmented-control w-full justify-start" variant="default">
                   {workspaceTabs.map(([id, label, Icon]) => (
                     <TabsTrigger
-                      className="min-h-11 flex-none rounded-none px-3 text-xs sm:text-sm"
+                      className="segmented-control-item min-h-11 flex-none px-3 text-xs sm:text-sm"
                       key={id}
                       value={id}
                     >

@@ -287,7 +287,7 @@ export function QuotaPage({
             />
           </Label>
           <ToggleGroup
-            className="w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted/60 p-1 max-sm:w-full"
+            className="segmented-control w-fit max-w-full max-sm:w-full"
             value={[filter]}
             onValueChange={(values) => {
               const value = values[0];
@@ -299,7 +299,7 @@ export function QuotaPage({
               <ToggleGroupItem
                 key={value}
                 value={value}
-                className="min-h-8 flex-1 rounded-lg px-3 text-xs text-muted-foreground hover:bg-background/70 hover:text-foreground data-[state=on]:bg-background data-[state=on]:font-semibold data-[state=on]:text-foreground data-[state=on]:shadow-sm"
+                className="segmented-control-item min-h-8 flex-1 px-3 text-xs font-semibold"
               >
                 {tr(`quota.filter.${value}`)}
               </ToggleGroupItem>
@@ -408,8 +408,8 @@ function ProviderTabs({
   return (
     <Tabs value={selectedId} onValueChange={onSelect}>
       <TabsList
-        className="h-auto w-full items-stretch justify-start gap-3 overflow-x-auto rounded-xl bg-transparent p-0"
-        variant="line"
+        className="segmented-control w-full items-stretch justify-start gap-3"
+        variant="default"
         aria-label={tr("quota.providers")}
       >
         {providers.map((provider) => {
@@ -421,7 +421,7 @@ function ProviderTabs({
               key={provider.id}
               value={provider.id}
               className={cn(
-                "relative grid h-auto min-h-[92px] min-w-[210px] flex-none grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-2.5 gap-y-0.5 justify-start rounded-xl border border-border bg-background px-3.5 py-3.5 text-left transition-colors hover:border-foreground/25 hover:bg-muted/30 data-[state=active]:border-foreground/45 data-[state=active]:bg-background data-[state=active]:shadow-sm",
+                "relative grid h-auto min-h-[92px] min-w-[210px] flex-none grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-2.5 gap-y-0.5 justify-start rounded-xl border border-border bg-background px-3.5 py-3.5 text-left transition-colors hover:border-foreground/25 hover:bg-muted/30 data-active:!border-primary data-active:!bg-primary data-active:!text-primary-foreground data-active:!shadow-sm",
                 unavailable && "opacity-60",
               )}
             >
