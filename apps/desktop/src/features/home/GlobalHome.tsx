@@ -5,10 +5,13 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  FileText,
   FolderGit2,
   History,
   Library,
+  Plus,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -87,16 +90,7 @@ export function GlobalHome({
     (workspace) => !doctorSummaries[workspace.id],
   ).length;
   const issueCount = doctorIssueCount + legacyAttentionCount + pending;
-  const importantActions = new Set([
-    "changeset.apply",
-    "changeset.apply_failed",
-    "memory.propose",
-    "memory.review",
-    "workspace.exclude",
-  ]);
-  const importantActivity = activity
-    .filter((item) => importantActions.has(item.action))
-    .slice(0, 5);
+  const recentActivity = activity.slice(0, 5);
   const installedAgentCount = installations.filter((item) => item.installed).length;
   const metrics = [
     {
@@ -166,35 +160,30 @@ export function GlobalHome({
     </Button>
   );
   return (
-    <div className="grid gap-6">
-      <section className="relative overflow-hidden rounded-2xl border border-border/70 bg-card px-6 py-6 shadow-[0_18px_50px_-34px_rgba(15,23,42,.4)] md:px-7 md:py-7">
-        <div className="pointer-events-none absolute -right-16 -top-20 size-64 rounded-full border-[32px] border-primary/[0.035]" />
-        <div className="relative grid gap-6">
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {metrics.map(({ label, value, icon: Icon, onClick }) => (
-              <Button
-                variant="bare"
-                size="content"
-                className="group flex min-w-0 items-start gap-3 rounded-xl border border-border-subtle bg-muted/20 p-4 text-left transition-[transform,border-color,background-color] hover:-translate-y-0.5 hover:border-border hover:bg-muted/45"
-                key={label}
-                onClick={onClick}
-              >
-                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/8 text-primary transition-colors group-hover:bg-primary/12">
-                  <Icon size={17} />
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-medium text-muted-foreground">
-                    {label}
-                  </span>
-                  <strong className="mt-1 block text-xl font-semibold tabular-nums tracking-[-.03em] text-foreground">
-                    {value}
-                  </strong>
-                </span>
-              </Button>
-            ))}
-          </div>
-        </div>
-      </section>
+    <div className="grid gap-4">
+      <div className="grid grid-cols-4 gap-3 max-[800px]:grid-cols-2">
+        {metrics.map(({ label, value, icon: Icon, onClick }) => (
+          <Button
+            variant="bare"
+            size="content"
+            className="group flex min-h-[78px] min-w-0 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3.5 text-left shadow-[0_8px_24px_-20px_rgba(15,23,42,.45)] transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-primary/35 hover:bg-muted/25 hover:shadow-md"
+            key={label}
+            onClick={onClick}
+          >
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/8 text-primary transition-colors group-hover:bg-primary/12">
+              <Icon size={18} />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium text-muted-foreground">
+                {label}
+              </span>
+              <strong className="mt-1 block text-xl font-semibold tabular-nums tracking-[-.03em] text-foreground">
+                {value}
+              </strong>
+            </span>
+          </Button>
+        ))}
+      </div>
       {issueCount > 0 ? (
         <Card className="overflow-hidden rounded-2xl border border-amber-500/30 bg-amber-500/[0.045] shadow-none">
           <div className="flex items-center justify-between gap-3 border-b border-amber-500/20 px-5 py-3.5">
@@ -283,16 +272,16 @@ export function GlobalHome({
           {insightCard}
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,.65fr)]">
-          <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,.8fr)]">
+          <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-border-subtle px-5 py-4">
               <div>
                 <h2 className="text-base font-semibold tracking-[-.02em]">
-                  {tr("home.recentWorkspaces")}
+                  {tr("home.continueWorkspace")}
                 </h2>
                 <p className="mt-1 text-xs text-muted-foreground">{tr("home.workspaceSources")}</p>
               </div>
-              <Badge variant="outline" className="shrink-0">
+              <Badge variant="outline" className="shrink-0 tabular-nums">
                 {discovery
                   ? tr("home.updated", { time: relativeTime(discovery.finished_at) })
                   : tr("home.discovering")}
@@ -309,20 +298,30 @@ export function GlobalHome({
                   />
                 ))}
               </div>
-              <Button
-                variant="link"
-                className="mx-5 my-3 px-0 text-xs text-muted-foreground"
-                onClick={onShowWorkspaces}
-              >
-                {tr("nav.workspaces")}
-                <ChevronRight size={13} />
-              </Button>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle px-5 py-3">
+                <Button
+                  variant="link"
+                  className="px-0 text-xs text-muted-foreground"
+                  onClick={onShowWorkspaces}
+                >
+                  {tr("nav.workspaces")}
+                  <ChevronRight size={13} />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => void onAddRoot()}
+                >
+                  <Plus size={14} />
+                  {tr("home.createWorkspace")}
+                </Button>
+              </div>
             </CardContent>
           </Card>
           <div className="grid content-start gap-4">
-            {insightCard}
-            {importantActivity.length > 0 ? (
-              <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
+            {recentActivity.length > 0 ? (
+              <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
                 <CardHeader className="border-b border-border-subtle px-5 py-4">
                   <h2 className="text-base font-semibold tracking-[-.02em]">
                     {tr("home.recentActivity")}
@@ -332,7 +331,7 @@ export function GlobalHome({
                   </p>
                 </CardHeader>
                 <CardContent className="grid gap-2 p-3">
-                  {importantActivity.map((item) => (
+                  {recentActivity.map((item) => (
                     <ActivityRow key={item.id} record={item} />
                   ))}
                 </CardContent>
@@ -408,14 +407,32 @@ function WorkspaceRow({
 
 function ActivityRow({ record }: { record: ActivityRecord }) {
   const key = `activity.action.${record.action}`;
+  const Icon = record.action.includes("memory")
+    ? Brain
+    : record.action.includes("changeset")
+      ? Sparkles
+      : record.action.includes("workspace")
+        ? FolderGit2
+        : FileText;
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border p-3">
-      <span className="mt-1 size-2 shrink-0 rounded-full bg-primary" />
-      <div>
-        <strong>{tr(key, { defaultValue: record.action })}</strong>
-        <small title={record.detail}>{record.detail}</small>
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-lg px-2.5 py-2.5 transition-colors hover:bg-muted/45">
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/8 text-primary">
+        <Icon size={15} />
+      </span>
+      <div className="min-w-0">
+        <strong className="block truncate text-xs font-semibold">
+          {tr(key, { defaultValue: record.action })}
+        </strong>
+        <small
+          className="mt-0.5 block truncate text-xs text-muted-foreground"
+          title={record.detail}
+        >
+          {record.detail}
+        </small>
       </div>
-      <time>{formatDateTime(record.created_at)}</time>
+      <time className="whitespace-nowrap pt-0.5 text-[11px] text-muted-foreground">
+        {formatDateTime(record.created_at)}
+      </time>
     </div>
   );
 }
