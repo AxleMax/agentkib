@@ -8,10 +8,10 @@ import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { ResponsiveContainer, Tooltip, Treemap, type TreemapNode } from "recharts";
 import { CircleAlert, ExternalLink, HardDrive, Pause, RefreshCw, Search, X } from "lucide-react";
 import { api } from "@/core/api";
 import { currentLocale, formatDateTime, localizeMessage, tr } from "@/core/i18n";
-import { squarifyTreemap } from "@/features/workspace/treemap";
 import type {
   AgentKind,
   RefreshJobStatus,
@@ -128,19 +128,18 @@ export function WorkspaceStoragePage({
   const displayed = current
     ? current.node.children.map((node) => ({ workspaceId: current.workspaceId, node }))
     : workspaceNodes;
-  const values = displayed
+  const chartData = displayed
     .map((item) => ({
       id: `${item.workspaceId}:${item.node.id}`,
-      value: metricBytes(item.node, metric),
+      name: nodeLabel(item.node),
+      size: metricBytes(item.node, metric),
+      storageNode: item.node,
+      workspaceId: item.workspaceId,
     }))
-    .filter((item) => item.value > 0);
-  const rects = squarifyTreemap(values);
-  const visibleById = new Map(
-    displayed.map((item) => [`${item.workspaceId}:${item.node.id}`, item]),
-  );
+    .filter((item) => item.size > 0);
   const parentBytes = current
     ? metricBytes(current.node, metric)
-    : values.reduce((sum, item) => sum + item.value, 0);
+    : chartData.reduce((sum, item) => sum + item.size, 0);
   const stale = Boolean(
     overview?.last_scanned_at &&
     Date.now() - new Date(overview.last_scanned_at).getTime() > 86_400_000,
@@ -223,7 +222,7 @@ export function WorkspaceStoragePage({
           </label>
           <SelectControl
             aria-label={tr("workspace.allAgents")}
-            className="h-9 min-w-[150px]"
+            className="h-9 min-w-[150px] rounded-xl border-2 border-foreground/25 bg-card px-3.5 font-medium text-foreground shadow-xs hover:border-primary/65 hover:bg-muted/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20"
             value={agent}
             onChange={(event) => {
               setAgent(event.target.value as typeof agent);
@@ -240,9 +239,9 @@ export function WorkspaceStoragePage({
           </SelectControl>
           <ToggleGroup
             spacing={0}
-            variant="outline"
+            variant="default"
             size="sm"
-            className="shrink-0"
+            className="shrink-0 rounded-xl bg-muted/45 p-1 shadow-inner"
             value={[metric]}
             onValueChange={(values) => {
               const value = values[0];
@@ -254,7 +253,11 @@ export function WorkspaceStoragePage({
             aria-label={tr("storage.metricLabel")}
           >
             {(["allocated", "regenerable", "agent-assets"] as StorageMetric[]).map((value) => (
-              <ToggleGroupItem key={value} value={value} className="min-w-[84px]">
+              <ToggleGroupItem
+                key={value}
+                value={value}
+                className="!border-0 min-w-[84px] rounded-lg text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-sm aria-pressed:font-semibold data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:font-semibold"
+              >
                 {tr(`storage.metric.${value}`)}
               </ToggleGroupItem>
             ))}
@@ -381,79 +384,31 @@ export function WorkspaceStoragePage({
                     : ""}
               </span>
             </div>
-            {rects.length ? (
-              <div
-                className="relative min-h-[510px] overflow-hidden bg-background p-1"
-                role="tree"
-                aria-label={current ? nodeLabel(current.node) : tr("storage.allWorkspaces")}
-              >
-                {rects.map((rect) => {
-                  const location = visibleById.get(rect.id)!;
-                  const bytes = metricBytes(location.node, metric);
-                  const ratio = parentBytes > 0 ? bytes / parentBytes : 0;
-                  const area = rect.width * rect.height;
-                  const match = matchesNode(location.node, query);
-                  const hasDescendantMatch = containsMatch(location.node, query);
-                  const detail =
-                    area >= 500 ? "rich" : area >= 150 ? "medium" : area >= 42 ? "name" : "tiny";
-                  const kind = semanticKind(location.node);
-                  return (
-                    <Button
-                      variant="bare"
-                      size="content"
-                      key={rect.id}
-                      role="treeitem"
-                      aria-label={`${nodeLabel(location.node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`}
-                      className={cn(
-                        "absolute flex flex-col items-center justify-center gap-1 overflow-hidden rounded-md border p-2 text-center transition-colors duration-200",
-                        kind === "git" &&
-                          "border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800",
-                        kind === "agent" &&
-                          "border-primary/70 bg-primary text-primary-foreground hover:bg-primary/90",
-                        kind === "regenerable" &&
-                          "border-amber-300 bg-amber-100 text-amber-950 hover:bg-amber-200",
-                        kind === "aggregate" &&
-                          "border-border bg-muted text-foreground hover:bg-muted/80",
-                        kind === "normal" &&
-                          "border-border bg-muted/70 text-foreground hover:bg-muted",
-                        detail === "tiny" && "text-[10px]",
-                        detail === "name" && "text-[11px]",
-                        detail === "medium" && "text-xs",
-                        detail === "rich" && "text-sm",
-                        query.trim() && !hasDescendantMatch && "opacity-35 grayscale",
-                        query.trim() && match && "z-10 ring-2 ring-primary ring-offset-1",
-                        location.node.partial && "border-dashed",
-                      )}
-                      style={{
-                        left: `${rect.x}%`,
-                        top: `${rect.y}%`,
-                        width: `${rect.width}%`,
-                        height: `${rect.height}%`,
-                      }}
-                      title={`${nodeLabel(location.node)} · ${formatBytes(bytes)} · ${formatPercent(ratio)}`}
-                      onClick={() => select(location)}
-                      onDoubleClick={() => void enter(location)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void enter(location);
-                        }
-                      }}
-                    >
-                      {detail !== "tiny" && (
-                        <strong className="max-w-full truncate">{nodeLabel(location.node)}</strong>
-                      )}
-                      {(detail === "medium" || detail === "rich") && (
-                        <span className="text-[.9em] opacity-80">{formatBytes(bytes)}</span>
-                      )}
-                      {detail === "rich" && (
-                        <small className="text-[.82em] opacity-75">
-                          {formatPercent(ratio)} · {tr(`storage.type.${kind}`)}
-                        </small>
-                      )}
-                    </Button>
-                  );
-                })}
+            {chartData.length ? (
+              <div className="min-h-[510px] overflow-hidden bg-background p-1" role="tree">
+                <ResponsiveContainer width="100%" height={510}>
+                  <Treemap
+                    data={chartData}
+                    dataKey="size"
+                    nameKey="name"
+                    aspectRatio={1.6}
+                    nodeGap={4}
+                    nodeInset={2}
+                    isAnimationActive={false}
+                    content={(props) => (
+                      <StorageTreemapContent
+                        {...props}
+                        metric={metric}
+                        parentBytes={parentBytes}
+                        query={query}
+                        onSelect={select}
+                        onEnter={enter}
+                      />
+                    )}
+                  >
+                    <Tooltip />
+                  </Treemap>
+                </ResponsiveContainer>
               </div>
             ) : (
               <div className="m-2 grid min-h-[390px] place-content-center justify-items-center gap-2 rounded-lg bg-muted text-sm text-muted-foreground">
@@ -475,6 +430,127 @@ export function WorkspaceStoragePage({
         </div>
       )}
     </div>
+  );
+}
+
+function StorageTreemapContent({
+  x,
+  y,
+  width,
+  height,
+  storageNode: rawStorageNode,
+  workspaceId: rawWorkspaceId,
+  metric,
+  parentBytes,
+  query,
+  onSelect,
+  onEnter,
+}: TreemapNode & {
+  storageNode?: unknown;
+  workspaceId?: unknown;
+  metric: StorageMetric;
+  parentBytes: number;
+  query: string;
+  onSelect: (location: StorageLocation) => void;
+  onEnter: (location: StorageLocation) => Promise<void>;
+}) {
+  const node = rawStorageNode as StorageNode | undefined;
+  const workspaceId = typeof rawWorkspaceId === "string" ? rawWorkspaceId : undefined;
+  if (!node || !workspaceId) return <g />;
+
+  const bytes = metricBytes(node, metric);
+  const ratio = parentBytes > 0 ? bytes / parentBytes : 0;
+  const area = width * height;
+  const match = matchesNode(node, query);
+  const hasDescendantMatch = containsMatch(node, query);
+  const detail = area >= 50000 ? "rich" : area >= 16000 ? "medium" : area >= 4200 ? "name" : "tiny";
+  const kind = semanticKind(node);
+  const fill =
+    kind === "git"
+      ? "#18181b"
+      : kind === "agent"
+        ? "var(--primary)"
+        : kind === "regenerable"
+          ? "#fef3c7"
+          : kind === "aggregate"
+            ? "var(--muted)"
+            : "color-mix(in srgb, var(--muted) 72%, var(--background))";
+  const textFill =
+    kind === "git" || kind === "agent" ? "var(--primary-foreground)" : "var(--foreground)";
+  const opacity = query.trim() && !hasDescendantMatch ? 0.35 : 1;
+  const location = { workspaceId, node };
+  const labelSize = detail === "rich" ? 14 : detail === "medium" ? 12 : 11;
+
+  return (
+    <g
+      role="treeitem"
+      tabIndex={0}
+      aria-label={`${nodeLabel(node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`}
+      opacity={opacity}
+      onClick={() => onSelect(location)}
+      onDoubleClick={() => void onEnter(location)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void onEnter(location);
+        }
+      }}
+    >
+      <title>
+        {nodeLabel(node)} · {formatBytes(bytes)} · {formatPercent(ratio)}
+      </title>
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        rx={7}
+        fill={fill}
+        stroke={match && query.trim() ? "var(--primary)" : "var(--border)"}
+        strokeWidth={match && query.trim() ? 3 : 1}
+        strokeDasharray={node.partial ? "5 3" : undefined}
+        className="transition-[opacity,filter] duration-200 hover:brightness-95"
+      />
+      {detail !== "tiny" && (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 - (detail === "rich" ? 13 : 5)}
+          fill={textFill}
+          fontSize={labelSize}
+          fontWeight={650}
+          textAnchor="middle"
+          dominantBaseline="middle"
+        >
+          {nodeLabel(node)}
+        </text>
+      )}
+      {(detail === "medium" || detail === "rich") && (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 + 8}
+          fill={textFill}
+          fontSize={labelSize - 1}
+          opacity={0.85}
+          textAnchor="middle"
+          dominantBaseline="middle"
+        >
+          {formatBytes(bytes)}
+        </text>
+      )}
+      {detail === "rich" && (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 + 27}
+          fill={textFill}
+          fontSize={11}
+          opacity={0.75}
+          textAnchor="middle"
+          dominantBaseline="middle"
+        >
+          {formatPercent(ratio)} · {tr(`storage.type.${kind}`)}
+        </text>
+      )}
+    </g>
   );
 }
 

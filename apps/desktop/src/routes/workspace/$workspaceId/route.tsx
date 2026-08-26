@@ -10,9 +10,11 @@ import {
   Award,
   Bot,
   Boxes,
+  Clock3,
   Code2,
   FolderGit2,
   Gauge,
+  GitBranch,
   GitCommitHorizontal,
   GitCompareArrows,
   Home,
@@ -31,9 +33,9 @@ import { WindowToolbar } from "@/components/WindowToolbar";
 import { useAppStore } from "../../../stores/app-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { api } from "../../../core/api";
-import { localizeMessage, tr } from "../../../core/i18n";
+import { formatRelativeTime, localizeMessage, tr } from "../../../core/i18n";
 import { cn } from "@/lib/utils";
-import type { Manifest, WorkspaceSummary } from "../../../core/types";
+import type { Manifest, WorkspaceScan, WorkspaceSummary } from "../../../core/types";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -105,6 +107,53 @@ function WorkspaceActions({
 
 function workspaceStatusLabel(status: WorkspaceSummary["status"]) {
   return tr(`status.workspace.${status}`);
+}
+
+function WorkspaceSummaryStrip({
+  workspace,
+  scan,
+}: {
+  workspace: WorkspaceSummary;
+  scan: WorkspaceScan;
+}) {
+  const metrics = [
+    { label: tr("common.assets"), value: workspace.asset_count, icon: Boxes },
+    {
+      label: tr("nav.agents"),
+      value: scan.agents.filter((agent) => agent.detected).length,
+      icon: Bot,
+    },
+    { label: tr("workspace.discoverySources"), value: workspace.sources.length, icon: GitBranch },
+    {
+      label: tr("workspace.lastScanLabel"),
+      value: workspace.last_active_at
+        ? formatRelativeTime(workspace.last_active_at)
+        : tr("common.never"),
+      icon: Clock3,
+    },
+  ];
+  return (
+    <div className="grid grid-cols-4 gap-3 max-[800px]:grid-cols-2">
+      {metrics.map(({ label, value, icon: Icon }) => (
+        <div
+          className="flex min-h-[76px] items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-[0_8px_24px_-20px_rgba(15,23,42,.45)]"
+          key={label}
+        >
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/8 text-primary">
+            <Icon size={17} />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-medium text-muted-foreground">
+              {label}
+            </span>
+            <strong className="mt-1 block truncate text-lg font-semibold tabular-nums tracking-[-.02em]">
+              {value}
+            </strong>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
@@ -344,6 +393,7 @@ function WorkspaceLayout() {
                 reviewDisabled={busy || !hasUnsavedDraft}
               />
             </section>
+            {scan && <WorkspaceSummaryStrip workspace={activeWorkspace} scan={scan} />}
             <nav
               className="rounded-xl border border-border/70 bg-card px-2 shadow-sm"
               aria-label={activeWorkspace.name}
