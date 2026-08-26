@@ -128,7 +128,7 @@ pub(crate) async fn check_app_update(
 
 #[tauri::command]
 pub(crate) async fn install_app_update(
-    app: AppHandle,
+    _app: AppHandle,
     state: tauri::State<'_, AppUpdateRuntime>,
     version: String,
     on_event: Channel<AppUpdateProgress>,
@@ -179,7 +179,7 @@ pub(crate) async fn install_app_update(
 
     #[cfg(not(target_os = "windows"))]
     {
-        app.restart()
+        _app.restart()
     }
     #[cfg(target_os = "windows")]
     {
