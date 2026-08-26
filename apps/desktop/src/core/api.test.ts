@@ -54,6 +54,14 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("set_app_icon_preference", { preference: "black" });
   });
 
+  it("checks for application updates through the narrow updater boundary", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+
+    await api.checkAppUpdate();
+
+    expect(invoke).toHaveBeenCalledWith("check_app_update");
+  });
+
   it("queues refresh work without waiting for collector results", async () => {
     vi.mocked(invoke).mockResolvedValue({
       kind: "insights",

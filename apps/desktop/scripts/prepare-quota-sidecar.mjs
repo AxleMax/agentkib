@@ -134,15 +134,19 @@ try {
     } catch {
       await rm(sourceDirectory, { recursive: true, force: true });
       await mkdir(sourceDirectory, { recursive: true });
-      const unpack = spawnSync("tar", [
-        "-xzf",
-        archive,
-        "-C",
-        sourceDirectory,
-        "--strip-components",
-        "1",
-      ], { stdio: "inherit" });
-      if (unpack.status !== 0) throw new Error("Failed to extract the Win-CodexBar source archive");
+      const localArchive = join(sourceDirectory, release.asset);
+      await copyFile(archive, localArchive);
+      try {
+        const unpack = spawnSync("tar", [
+          "-xzf",
+          release.asset,
+          "--strip-components",
+          "1",
+        ], { cwd: sourceDirectory, stdio: "inherit" });
+        if (unpack.status !== 0) throw new Error("Failed to extract the Win-CodexBar source archive");
+      } finally {
+        await rm(localArchive, { force: true });
+      }
     }
 
     const cargoTargetDirectory = join(cacheRoot, "cargo-target");
@@ -221,7 +225,18 @@ async function prepareWindowsArmNsis() {
 
     const extracted = await mkdtemp(join(tmpdir(), "agentkib-nsis-"));
     try {
-      const unpack = spawnSync("tar", ["-xf", archivePath, "-C", extracted], {
+      const unpack = spawnSync("powershell.exe", [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Expand-Archive -LiteralPath $env:AGENTKIB_NSIS_ARCHIVE -DestinationPath $env:AGENTKIB_NSIS_DESTINATION -Force",
+      ], {
+        env: {
+          ...process.env,
+          AGENTKIB_NSIS_ARCHIVE: archivePath,
+          AGENTKIB_NSIS_DESTINATION: extracted,
+        },
         stdio: "inherit",
       });
       if (unpack.status !== 0) throw new Error("Failed to extract NSIS 3.11");

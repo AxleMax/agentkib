@@ -79,7 +79,7 @@ pnpm dev
 - **工作区与上下文**：发现已有项目，集中查看不同 Agent 的规则、Skills、MCP 和有效加载顺序。
 - **诊断与同步**：找出缺失、漂移、无效或完全重复的配置，并在写入前展示 ChangeSet 和完整 Diff。
 - **会话交接**：复用 Codex 或 Claude Code 的原生压缩上下文，排除工具与推理记录，生成脱敏、可编辑的 Markdown 或 JSON。
-- **其他本地工具**：管理 MCP Server，只读浏览 Git，并查看额度、Token、活动热力图和成就；应用可在系统托盘继续运行。
+- **其他本地工具**：管理 MCP Server，只读浏览 Git，并查看额度、Token、活动热力图和成就；应用可在系统托盘继续运行，并可在设置中手动检查更新。
 
 界面支持简体中文、繁體中文、日本語和 English，并提供浅色、深色与跟随系统主题。
 
@@ -121,7 +121,7 @@ AgentKib 会区分“已安装”和“只发现了卸载后留下的本地数�
 
 Windows 的完整环境、启动、打包和安装说明见 [Windows 指南](docs/WINDOWS.md)。维护者按 [桌面发布流程](docs/RELEASE.md) 推送版本标签后，CI 会构建、校验并发布未签名的多平台预览包；PR 和普通分支 push 只运行检查，不发布安装包。开发和验证命令见文末的[开发说明](#development)。
 
-安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。
+安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。首个包含更新器的版本仍需手动安装；之后 macOS、Windows 和 Linux AppImage 可在设置中检查并安装正式更新，Linux DEB/RPM 会打开 Release 页面交由系统包管理方式更新。
 
 macOS 安装包目前尚未签名和公证。请先核对 Release 中的 SHA-256 校验文件，将 AgentKib 拖入“应用程序”后，再执行以下命令解除隔离属性：
 
@@ -190,7 +190,7 @@ Discovery reads known agent configuration and history metadata; it does not scan
 - **Workspaces and context**: discover existing projects and see each agent's rules, Skills, MCP connections, and effective load order in one place.
 - **Diagnostics and synchronization**: find missing, drifted, invalid, or exactly duplicated configuration, then review a ChangeSet and complete diff before writing.
 - **Session handoff**: reuse native compacted Codex or Claude Code context, exclude tool and reasoning records, and produce redacted, editable Markdown or JSON.
-- **Other local tools**: manage MCP servers, browse Git read-only, and view quota, Token usage, heatmaps, and achievements while the app can continue from the system tray.
+- **Other local tools**: manage MCP servers, browse Git read-only, and view quota, Token usage, heatmaps, and achievements while the app can continue from the system tray and manually check for updates in Settings.
 
 The UI supports Simplified Chinese, Traditional Chinese, Japanese, and English, with light, dark, and system themes.
 
@@ -230,7 +230,7 @@ Optional Obsidian and OpenClaw/Hermes Remote Gateway integrations must be config
 | Fedora x64 | Platform code checked on PRs; `.rpm` built and verified manually |
 | Windows ARM64 / Linux ARM64 | Preview; core compilation or tests plus preview packages |
 
-See the [Windows guide](docs/WINDOWS.md) for setup, development, packaging, installation, and usage. Maintainers can generate unsigned multi-platform preview packages with the [desktop package workflow](docs/RELEASE.md). Pull requests and ordinary pushes run checks without producing installers.
+See the [Windows guide](docs/WINDOWS.md) for setup, development, packaging, installation, and usage. Maintainers can generate unsigned multi-platform preview packages with the [desktop package workflow](docs/RELEASE.md). Pull requests and ordinary pushes run checks without producing installers. The first updater-capable release still requires a manual installation; subsequent stable releases can update in-app on macOS, Windows, and Linux AppImage, while DEB/RPM installations open the Release page for a package-manager-safe update.
 
 The macOS package is not currently signed or notarized. Verify it against the SHA-256 file in the Release, drag AgentKib into Applications, and then remove its quarantine attributes:
 
