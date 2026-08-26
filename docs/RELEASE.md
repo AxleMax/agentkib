@@ -21,8 +21,9 @@ branch pushes run platform checks but do not publish installers.
 
 4. Wait for every job in **Desktop Package Artifacts** to pass. The workflow
    creates a draft GitHub Release only after all platform builds complete. It
-   verifies the complete asset manifest and every SHA-256 checksum, uploads the
-   files, checks their remote names and sizes, and then publishes the release.
+   verifies the complete asset manifest, SHA-256 checksums, updater signatures,
+   and `latest.json`, uploads the files, checks their remote names and sizes,
+   and then publishes the release.
 
 Do not create an empty GitHub Release before pushing the tag. Stable SemVer
 tags such as `v0.1.0` become the latest release. Tags containing a prerelease
@@ -74,12 +75,29 @@ shasum -a 256 -c AgentKib_0.1.0_macos-arm64.dmg.sha256
 On Linux, use `sha256sum -c`. On Windows, compare the value in the checksum
 file with `Get-FileHash <installer> -Algorithm SHA256`.
 
+## Updater signing
+
+Published tags require `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in GitHub Actions Secrets. The corresponding
+public key is compiled into the desktop application. Do not rotate this key as
+part of a normal release: clients that contain the old public key cannot install
+updates signed only by a replacement key.
+
+The encrypted private-key backup is maintained outside the repository. Losing
+both that backup and the GitHub Secret breaks the update path for already
+installed clients. Tauri updater signatures verify update origin and integrity;
+they do not replace Apple notarization or Windows Authenticode signing.
+
 ## Preview limitations
 
 Release packages are unsigned development previews. They do not include macOS
-notarization, Windows code signing, MSI packages, a macOS universal binary, or
-automatic updates. macOS Gatekeeper and Windows SmartScreen may therefore
-display warnings.
+notarization, Windows code signing, MSI packages, or a macOS universal binary.
+macOS Gatekeeper and Windows SmartScreen may therefore display warnings.
+
+The first updater-capable release must still be installed manually. Later stable
+releases can be installed in-app on macOS, Windows, and Linux AppImage. DEB and
+RPM installations check for updates but continue through the GitHub Release page
+so their system package state is not modified behind the package manager.
 
 After verifying the downloaded DMG against its `.sha256` file and copying
 AgentKib into Applications, macOS users must currently remove the quarantine

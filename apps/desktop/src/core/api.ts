@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   Achievement,
   ActivityRecord,
@@ -6,6 +6,8 @@ import type {
   AgentKind,
   AgentUsageBreakdown,
   AppIconPreference,
+  AppUpdateInfo,
+  AppUpdateProgress,
   CatalogAsset,
   ChangeSet,
   CloseBehavior,
@@ -117,6 +119,12 @@ export const api = {
     invoke<RuntimeInfo>("set_theme_preference", { preference }),
   setAppIconPreference: (preference: AppIconPreference) =>
     invoke<RuntimeInfo>("set_app_icon_preference", { preference }),
+  checkAppUpdate: () => invoke<AppUpdateInfo | undefined>("check_app_update"),
+  installAppUpdate: (version: string, onEvent: (event: AppUpdateProgress) => void) => {
+    const channel = new Channel<AppUpdateProgress>();
+    channel.onmessage = onEvent;
+    return invoke<void>("install_app_update", { version, onEvent: channel });
+  },
   mcpHubStatus: () => invoke<McpHubStatus>("get_mcp_hub_status"),
   updateMcpNetwork: (settings: McpNetworkSettings) =>
     invoke<McpHubStatus>("update_mcp_network_settings", { settings }),

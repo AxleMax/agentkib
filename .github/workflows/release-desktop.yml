@@ -148,6 +148,20 @@ jobs:
           echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
           echo "Selected release revision: sha=$release_sha tag=${release_tag:-none} publish=$should_publish"
 
+      - name: Validate updater signing secrets
+        if: steps.release.outputs.should_publish == 'true'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+      - name: Test updater manifest generator
+        run: node --test .github/scripts/build-updater-manifest.test.mjs
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -215,6 +229,9 @@ jobs:
       APP_VERSION: ${{ needs.preflight.outputs.app_version }}
       CARGO_TERM_COLOR: always
       DESKTOP_RELEASE_DIR: dist/desktop-release
+      SHOULD_PUBLISH: ${{ needs.preflight.outputs.should_publish }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Checkout selected revision
@@ -264,11 +281,23 @@ jobs:
 
       - name: Build Linux bundles
         if: runner.os == 'Linux'
-        run: apps/desktop/scripts/build-linux-bundles.sh --bundles ${{ matrix.bundles }}
+        shell: bash
+        run: |
+          args=(--bundles '${{ matrix.bundles }}')
+          if [[ "$SHOULD_PUBLISH" == true ]]; then
+            args+=(--config src-tauri/tauri.release.conf.json)
+          fi
+          apps/desktop/scripts/build-linux-bundles.sh "${args[@]}"
 
       - name: Build macOS or Windows bundles
         if: runner.os != 'Linux'
-        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+        shell: bash
+        run: |
+          args=(--bundles '${{ matrix.bundles }}')
+          if [[ "$SHOULD_PUBLISH" == true ]]; then
+            args+=(--config src-tauri/tauri.release.conf.json)
+          fi
+          pnpm tauri build "${args[@]}"
 
       - name: Smoke test Linux bundles
         if: runner.os == 'Linux'
@@ -312,6 +341,13 @@ jobs:
             app=$(find target -type d -path '*/bundle/macos/*.app' -print -quit)
             test -n "$app"
             ditto -c -k --sequesterRsrc --keepParent "$app" "$DESKTOP_RELEASE_DIR/${prefix}.app.zip"
+            if [[ "$SHOULD_PUBLISH" == true ]]; then
+              updater=$(find target -type f -path '*/bundle/macos/*.app.tar.gz' -print -quit)
+              test -n "$updater"
+              test -s "$updater.sig"
+              cp "$updater" "$DESKTOP_RELEASE_DIR/${prefix}.app.tar.gz"
+              cp "$updater.sig" "$DESKTOP_RELEASE_DIR/${prefix}.app.tar.gz.sig"
+            fi
           fi
 
           while IFS= read -r artifact; do
@@ -325,6 +361,16 @@ jobs:
             \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) \
             -path '*/bundle/*' | sort)
 
+          if [[ "$SHOULD_PUBLISH" == true && "$RUNNER_OS" != macOS ]]; then
+            updater=$(find target -type f \( -name '*.AppImage.sig' -o -name '*.exe.sig' \) \
+              -path '*/bundle/*' -print -quit)
+            test -n "$updater"
+            case "$updater" in
+              *.AppImage.sig) cp "$updater" "$DESKTOP_RELEASE_DIR/${prefix}.AppImage.sig" ;;
+              *.exe.sig) cp "$updater" "$DESKTOP_RELEASE_DIR/${prefix}.exe.sig" ;;
+            esac
+          fi
+
           count=$(find "$DESKTOP_RELEASE_DIR" -type f | wc -l | tr -d ' ')
           test "$count" -gt 0
           find "$DESKTOP_RELEASE_DIR" -type f -print
@@ -335,7 +381,7 @@ jobs:
           set -euo pipefail
           cd "$DESKTOP_RELEASE_DIR"
           for artifact in *; do
-            [[ "$artifact" == *.sha256 ]] && continue
+            [[ "$artifact" == *.sha256 || "$artifact" == *.sig ]] && continue
             if command -v sha256sum >/dev/null 2>&1; then
               sha256sum "$artifact" > "$artifact.sha256"
             else
@@ -460,6 +506,12 @@ jobs:
       WORKFLOW_ARTIFACTS_DIR: dist/workflow-artifacts
 
     steps:
+      - name: Checkout selected revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.release_sha }}
+          fetch-depth: 1
+
       - name: Download platform artifacts
         uses: actions/download-artifact@v8
         with:
@@ -485,26 +537,36 @@ jobs:
           cat > "$RUNNER_TEMP/expected-release-assets.txt" <<EOF
           ${prefix}_linux-arm64-preview.AppImage
           ${prefix}_linux-arm64-preview.AppImage.sha256
+          ${prefix}_linux-arm64-preview.AppImage.sig
           ${prefix}_linux-arm64-preview.deb
           ${prefix}_linux-arm64-preview.deb.sha256
           ${prefix}_linux-x64.AppImage
           ${prefix}_linux-x64.AppImage.sha256
+          ${prefix}_linux-x64.AppImage.sig
           ${prefix}_linux-x64.deb
           ${prefix}_linux-x64.deb.sha256
           ${prefix}_linux-x64.rpm
           ${prefix}_linux-x64.rpm.sha256
           ${prefix}_macos-arm64.app.zip
           ${prefix}_macos-arm64.app.zip.sha256
+          ${prefix}_macos-arm64.app.tar.gz
+          ${prefix}_macos-arm64.app.tar.gz.sha256
+          ${prefix}_macos-arm64.app.tar.gz.sig
           ${prefix}_macos-arm64.dmg
           ${prefix}_macos-arm64.dmg.sha256
           ${prefix}_macos-x64.app.zip
           ${prefix}_macos-x64.app.zip.sha256
+          ${prefix}_macos-x64.app.tar.gz
+          ${prefix}_macos-x64.app.tar.gz.sha256
+          ${prefix}_macos-x64.app.tar.gz.sig
           ${prefix}_macos-x64.dmg
           ${prefix}_macos-x64.dmg.sha256
           ${prefix}_windows-arm64-preview.exe
           ${prefix}_windows-arm64-preview.exe.sha256
+          ${prefix}_windows-arm64-preview.exe.sig
           ${prefix}_windows-x64.exe
           ${prefix}_windows-x64.exe.sha256
+          ${prefix}_windows-x64.exe.sig
           EOF
 
           find "$RELEASE_ASSETS_DIR" -maxdepth 1 -type f -exec basename {} \; \
@@ -528,6 +590,24 @@ jobs:
               sha256sum -c "$(basename "$checksum")"
             )
           done < <(find "$RELEASE_ASSETS_DIR" -maxdepth 1 -type f -name '*.sha256' | LC_ALL=C sort)
+
+      - name: Generate updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          published_at=$(git show -s --format=%cI "$RELEASE_SHA")
+          notes_file="$RUNNER_TEMP/updater-release-notes.md"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="$RELEASE_SHA" \
+            --jq '.body' > "$notes_file"
+          node .github/scripts/build-updater-manifest.mjs \
+            "$RELEASE_ASSETS_DIR" "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$APP_VERSION" \
+            "$published_at" "$notes_file"
+          test -s "$RELEASE_ASSETS_DIR/latest.json"
+          jq -e --arg version "$APP_VERSION" \
+            '.version == $version and (.platforms | length) == 6' \
+            "$RELEASE_ASSETS_DIR/latest.json" >/dev/null
 
       - name: Prepare draft release
         shell: bash
