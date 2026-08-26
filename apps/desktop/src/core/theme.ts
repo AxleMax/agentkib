@@ -1,6 +1,6 @@
 import type { EffectiveTheme } from "./types";
 
-export type AccentTheme = "black" | "sky" | "blue";
+export type AccentTheme = "sky";
 
 const ACCENT_THEME_STORAGE_KEY = "agentkib.accent-theme";
 
@@ -14,9 +14,7 @@ export function applyTheme(theme: EffectiveTheme) {
 }
 
 export function accentThemePreference(): AccentTheme {
-  if (typeof localStorage === "undefined") return "black";
-  const stored = localStorage.getItem(ACCENT_THEME_STORAGE_KEY);
-  return stored === "sky" || stored === "blue" ? stored : "black";
+  return "sky";
 }
 
 export function applyAccentTheme(theme: AccentTheme) {
