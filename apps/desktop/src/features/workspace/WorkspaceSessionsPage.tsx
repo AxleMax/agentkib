@@ -301,7 +301,7 @@ export function WorkspaceSessionsPage({
           </div>
           <Tabs value={filter} onValueChange={(value) => setFilter(value as SessionFilter)}>
             <TabsList
-              className="segmented-control flex min-h-11 w-full justify-start px-3 py-0"
+              className="segmented-control flex w-full justify-start"
               variant="default"
               aria-label={tr("conversations.filterLabel")}
             >
@@ -309,7 +309,7 @@ export function WorkspaceSessionsPage({
                 <TabsTrigger
                   key={value}
                   value={value}
-                  className="segmented-control-item min-h-11 flex-none gap-1.5 px-2.5 text-xs"
+                  className="segmented-control-item h-9 min-h-9 flex-none gap-1.5 px-2.5 text-xs"
                 >
                   <span>{tr(`conversations.filter.${value}`)}</span>
                   <Badge

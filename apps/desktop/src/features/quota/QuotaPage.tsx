@@ -299,7 +299,7 @@ export function QuotaPage({
               <ToggleGroupItem
                 key={value}
                 value={value}
-                className="segmented-control-item min-h-8 flex-1 px-3 text-xs font-semibold"
+                className="segmented-control-item h-9 min-h-9 flex-1 px-3 text-xs font-semibold"
               >
                 {tr(`quota.filter.${value}`)}
               </ToggleGroupItem>
@@ -408,7 +408,7 @@ function ProviderTabs({
   return (
     <Tabs value={selectedId} onValueChange={onSelect}>
       <TabsList
-        className="segmented-control w-full items-stretch justify-start gap-3"
+        className="segmented-control !h-auto !gap-3 min-h-[92px] w-full items-stretch justify-start overflow-x-auto overflow-y-hidden"
         variant="default"
         aria-label={tr("quota.providers")}
       >
@@ -416,6 +416,7 @@ function ProviderTabs({
           const remaining = lowestRemaining(provider);
           const unavailable = remaining === undefined;
           const severity = remaining === undefined ? undefined : quotaSeverity(remaining);
+          const isActive = provider.id === selectedId;
           return (
             <TabsTrigger
               key={provider.id}
@@ -428,7 +429,12 @@ function ProviderTabs({
               <ProviderIcon provider={provider} />
               <span className="min-w-0 grid gap-0.5">
                 <strong className="truncate text-[13px]">{provider.name}</strong>
-                <small className="truncate text-[11px] text-muted-foreground">
+                <small
+                  className={cn(
+                    "truncate text-[11px] text-muted-foreground",
+                    isActive && "text-primary-foreground/80",
+                  )}
+                >
                   {provider.identity?.account_email ??
                     provider.identity?.plan ??
                     tr(unavailable ? "quota.unavailable" : "quota.available")}
@@ -441,19 +447,26 @@ function ProviderTabs({
                   <em
                     className={cn(
                       "text-[13px] font-bold not-italic",
-                      severity === "healthy" && "text-green-600",
-                      severity === "warning" && "text-amber-600",
-                      severity === "danger" && "text-red-600",
+                      isActive && "text-primary-foreground",
+                      !isActive && severity === "healthy" && "text-green-600",
+                      !isActive && severity === "warning" && "text-amber-600",
+                      !isActive && severity === "danger" && "text-red-600",
                     )}
                   >
                     {Math.round(remaining)}%
                   </em>
-                  <i className="absolute inset-x-3 bottom-2 h-1 overflow-hidden rounded-full bg-muted">
+                  <i
+                    className={cn(
+                      "absolute inset-x-3 bottom-2 h-1 overflow-hidden rounded-full bg-muted",
+                      isActive && "bg-primary-foreground/25",
+                    )}
+                  >
                     <b
                       className={cn(
                         "block h-full rounded-full bg-primary",
-                        severity === "warning" && "bg-amber-500",
-                        severity === "danger" && "bg-red-500",
+                        isActive && "bg-primary-foreground",
+                        !isActive && severity === "warning" && "bg-amber-500",
+                        !isActive && severity === "danger" && "bg-red-500",
                       )}
                       style={{ width: `${remaining}%` }}
                     />

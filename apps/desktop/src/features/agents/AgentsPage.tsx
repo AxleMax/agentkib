@@ -204,7 +204,7 @@ export function AgentsPage({
               {(["overview", "assets", "workspaces", "usage"] as AgentDetailSection[]).map(
                 (value) => (
                   <TabsTrigger
-                    className="segmented-control-item flex-none px-3"
+                    className="segmented-control-item h-9 min-h-9 flex-none px-3"
                     value={value}
                     key={value}
                   >

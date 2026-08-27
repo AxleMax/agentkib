@@ -106,7 +106,7 @@ function Assets({
         >
           {tabs.map(([value, label, count]) => (
             <TabsTrigger
-              className="segmented-control-item min-h-11 flex-none px-3 text-xs sm:text-sm"
+              className="segmented-control-item h-9 min-h-9 flex-none px-3 text-xs sm:text-sm"
               value={value}
               key={value}
             >
