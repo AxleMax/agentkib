@@ -1,0 +1,43 @@
+name: Feature request
+description: Describe a real workflow problem AgentKib could solve
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the problem and workflow rather than a proposed implementation. Do not include keys, cookies, full transcripts, or private project content.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is difficult, repetitive, unsafe, or currently impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Usage scenario
+      description: Who encounters this, with which Agent or workspace, and what are they trying to finish?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result that would make the workflow successful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround
+      description: Optional. How do you handle this today?
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Sensitive data check
+      options:
+        - label: I removed secrets, cookies, full transcripts, and private project content.
+          required: true
