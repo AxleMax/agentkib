@@ -2,7 +2,15 @@
 
 This guide is for maintainers and testers validating a release candidate. AgentKib does not automatically collect telemetry, upload diagnostics, or send workspace and conversation content. Feedback is submitted deliberately through [GitHub Issues](https://github.com/starroyhq/agentkib/issues).
 
-## Five-minute core path
+## Before tagging: candidate checks
+
+Run the artifact-only desktop workflow against the release commit and use its
+packages for the checks in this section. These candidate artifacts validate the
+application behavior and packaging shape, but they are not the final release
+artifacts: macOS candidates are unsigned, and updater signatures and
+`latest.json` are not generated until the tagged release run.
+
+### Five-minute core path
 
 Use a disposable or backed-up workspace. Do not use production secrets for the first pass.
 
@@ -14,7 +22,21 @@ Use a disposable or backed-up workspace. Do not use production secrets for the f
 
 Applying a ChangeSet is optional. A tester may reject it or close the getting-started guide without changing project files.
 
-## Platform installation checks
+### Candidate platform checks
+
+- [ ] Confirm every expected platform artifact is present and its SHA-256 file verifies successfully.
+- [ ] Confirm the package launches on representative test systems, accounting for the unsigned macOS candidate limitation.
+- [ ] Complete the five-minute core path on at least one supported platform.
+
+## After publishing: release-asset checks
+
+Create the immutable version tag only after the candidate checks pass. The
+tagged workflow builds a different set of release artifacts with updater
+signatures and signed/notarized macOS packages. Complete every check below
+against the assets attached to the published GitHub Release, not against the
+artifact-only candidate run.
+
+### Platform installation checks
 
 ### macOS
 
@@ -34,7 +56,7 @@ Applying a ChangeSet is optional. A tester may reject it or close the getting-st
 - [ ] Confirm executable permissions and desktop integration for the AppImage.
 - [ ] Confirm DEB/RPM upgrades remain under the system package manager rather than the in-app installer.
 
-## Update checks
+### Update checks
 
 - [ ] Start from the latest supported stable version and use Settings → General → Check for updates.
 - [ ] Confirm the displayed version and release notes match the target GitHub Release.
@@ -42,7 +64,7 @@ Applying a ChangeSet is optional. A tester may reject it or close the getting-st
 - [ ] For DEB/RPM, confirm AgentKib opens the matching Release page instead of replacing the system package.
 - [ ] After restart, confirm workspaces, preferences, local indexes, and the getting-started acknowledgement remain intact.
 
-## Rollback checks
+### Rollback checks
 
 The updater does not perform downgrades. To test rollback:
 
