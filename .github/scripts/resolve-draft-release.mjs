@@ -36,18 +36,48 @@ export async function resolveDraftRelease({
 }
 
 export async function loadReleaseByTag({ repository, tag, token, request = fetch }) {
+  const headers = {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${token}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "agentkib-release-workflow",
+  };
   const response = await request(
     `https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`,
-    {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "agentkib-release-workflow",
-      },
-    },
+    { headers },
   );
-  if (response.status === 404) return undefined;
+  if (response.status === 404) {
+    let url = `https://api.github.com/repos/${repository}/releases?per_page=100`;
+    const visited = new Set();
+    const matches = [];
+
+    while (url) {
+      if (visited.has(url)) throw new Error("GitHub release pagination contains a loop");
+      visited.add(url);
+
+      const page = await request(url, { headers });
+      if (!page.ok) {
+        throw new Error(`GitHub release list failed with HTTP ${page.status}`);
+      }
+      const releases = await page.json();
+      if (!Array.isArray(releases)) {
+        throw new Error("GitHub release list returned an invalid response");
+      }
+      matches.push(...releases.filter((release) => release.tag_name === tag));
+
+      const link = page.headers?.get?.("link") ?? "";
+      url =
+        link
+          .split(",")
+          .map((part) => part.trim().match(/^<([^>]+)>;\s*rel="([^"]+)"$/))
+          .find((match) => match?.[2] === "next")?.[1] ?? "";
+    }
+
+    if (matches.length > 1) {
+      throw new Error(`Multiple GitHub releases use tag ${tag}`);
+    }
+    return matches[0];
+  }
   if (!response.ok) {
     throw new Error(`GitHub release lookup failed with HTTP ${response.status}`);
   }
