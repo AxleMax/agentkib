@@ -135,7 +135,8 @@
 }
 
 :root[data-platform="macos"] {
-  --window-safe-top: 44px;
+  --window-safe-top: 0px;
+  --window-toolbar-height: 46px;
 }
 
 :root[data-platform="windows"],
@@ -288,6 +289,9 @@ button {
   min-height: 0;
   overflow: hidden;
 }
+:root[data-platform="macos"] .app-shell {
+  grid-template-rows: 0 46px minmax(0, 1fr);
+}
 .app-shell-sidebar-collapsed {
   --sidebar-width: 4.75rem;
 }
@@ -319,6 +323,9 @@ button {
   min-height: 0;
   flex-direction: column;
   padding: 1.25rem 0.875rem 1rem;
+}
+:root[data-platform="macos"] .app-sidebar-content {
+  padding-top: calc(1.25rem + var(--window-toolbar-height));
 }
 .app-sidebar-header {
   position: relative;
@@ -454,6 +461,11 @@ button {
   left: 0.875rem;
   margin-left: 0;
   transform: translateY(-50%);
+}
+:root[data-platform="macos"] .app-sidebar-collapse-button {
+  position: absolute;
+  z-index: 65;
+  pointer-events: auto;
 }
 .app-sidebar-collapse-button:hover {
   background: color-mix(in srgb, var(--sidebar-accent) 68%, transparent);

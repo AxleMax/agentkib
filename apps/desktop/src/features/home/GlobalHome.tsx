@@ -166,7 +166,7 @@ export function GlobalHome({
           <Button
             variant="bare"
             size="content"
-            className="group flex min-h-[78px] min-w-0 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3.5 text-left shadow-[0_8px_24px_-20px_rgba(15,23,42,.45)] transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-primary/35 hover:bg-muted/25 hover:shadow-md"
+            className="group flex min-h-[78px] min-w-0 items-center justify-start gap-3 rounded-xl border border-border bg-card px-4 py-3.5 text-left shadow-[0_8px_24px_-20px_rgba(15,23,42,.45)] transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-primary/35 hover:bg-muted/25 hover:shadow-md"
             key={label}
             onClick={onClick}
           >
