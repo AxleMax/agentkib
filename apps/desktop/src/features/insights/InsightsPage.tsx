@@ -1,7 +1,7 @@
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { LoadingState } from "@/components/ui/loading-state";
+import { InsightsSkeleton } from "./InsightsSkeleton";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
@@ -207,7 +207,7 @@ export function InsightsPage({
   const filterClass =
     "h-10 min-w-[146px] rounded-xl border-2 border-foreground/25 bg-card px-3 font-medium text-foreground shadow-xs transition-colors hover:border-primary/65 hover:bg-muted/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 max-[520px]:min-w-0 max-[520px]:flex-1";
 
-  if (initializing) return <LoadingState label={tr("common.loading")} />;
+  if (initializing) return <InsightsSkeleton />;
 
   return (
     <div className="relative grid gap-5">

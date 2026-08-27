@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { WorkspaceDoctorSkeleton } from "./WorkspaceSkeleton";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -71,12 +72,7 @@ export function WorkspaceDoctorPage({
   };
 
   if (loading && !activeReport) {
-    return (
-      <div className="grid min-h-[240px] place-content-center justify-items-center gap-2 text-sm text-muted-foreground">
-        <RefreshCw className="animate-spin" size={20} />
-        <span>{tr("doctor.running")}</span>
-      </div>
-    );
+    return <WorkspaceDoctorSkeleton />;
   }
 
   return (

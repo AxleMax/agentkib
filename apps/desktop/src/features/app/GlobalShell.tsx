@@ -5,6 +5,7 @@ import { WindowToolbar } from "@/components/WindowToolbar";
 import { cn } from "@/lib/utils";
 import type { RefreshJobStatus } from "@/core/types";
 import type { GlobalPage } from "./app-route";
+import { useAppStore } from "@/stores/app-store";
 
 const globalNav: SidebarEntry<GlobalPage>[] = [
   { id: "home", label: "nav.home", icon: Home },
@@ -36,9 +37,14 @@ export function GlobalShell({
   onNavigate: (page: GlobalPage) => void;
   onSettings: () => void;
 }) {
-  const shellClass = "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden";
+  const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useAppStore((state) => state.setSidebarCollapsed);
+  const shellClass = cn(
+    "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden",
+    sidebarCollapsed && "app-shell-sidebar-collapsed",
+  );
   const mainClass =
-    "!col-start-1 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
+    "app-shell-main !col-start-2 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const contentClass =
     "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[14px] max-[900px]:!px-[18px]";
   const discoveryFailure = refreshJobs.find(
@@ -50,10 +56,12 @@ export function GlobalShell({
       <WindowToolbar />
       <AppSidebar
         active={active}
+        collapsed={sidebarCollapsed}
         entries={entries}
         onNavigate={onNavigate}
         onSettings={onSettings}
         onBrandClick={() => onNavigate("home")}
+        onCollapsedChange={setSidebarCollapsed}
       />
       <main className={mainClass}>
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">

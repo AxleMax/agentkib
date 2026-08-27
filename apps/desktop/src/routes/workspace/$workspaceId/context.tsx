@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
-import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceContextSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../../core/api";
@@ -71,6 +71,7 @@ function ContextPage({
     return () => window.clearTimeout(timeout);
   }, [project, cwd, agent]);
   const empty = preview && !preview.sections.length;
+  if (resolving && !preview) return <WorkspaceContextSkeleton />;
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(260px,.35fr)_minmax(0,1fr)]">
       <Card className="rounded-xl border border-border bg-card shadow-sm grid content-start gap-4 p-4">
@@ -192,7 +193,7 @@ function WorkspaceContextRoute() {
   const navigate = useNavigate();
   const { workspaceId } = useParams({ from: "/workspace/$workspaceId/context" });
   const { project } = useWorkspaceStore();
-  if (!project) return <LoadingState label="Loading…" />;
+  if (!project) return <WorkspaceContextSkeleton />;
   return (
     <ContextPage
       project={project}

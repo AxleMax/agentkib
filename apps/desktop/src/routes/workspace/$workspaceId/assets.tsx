@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceAssetsSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { useMemo, useState } from "react";
 import { AssetCatalogPage } from "@/features/catalog/AssetCatalogPage";
@@ -319,7 +319,7 @@ function WorkspaceAssetsRoute() {
       params: { workspaceId },
       search: (current) => ({ ...current, workspaceAssetSection: nextSection }) as never,
     });
-  if (!scan || !manifest) return <LoadingState label="Loading…" />;
+  if (!scan || !manifest) return <WorkspaceAssetsSkeleton />;
   return (
     <Assets
       section={section}

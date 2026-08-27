@@ -26,7 +26,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LoadingState } from "@/components/ui/loading-state";
+import {
+  WorkspaceAssetsSkeleton,
+  WorkspaceChangesSkeleton,
+  WorkspaceContextSkeleton,
+  WorkspaceDoctorSkeleton,
+  WorkspaceGitSkeleton,
+  WorkspaceLayoutSkeleton,
+  WorkspaceOverviewSkeleton,
+  WorkspaceSessionsSkeleton,
+} from "@/features/workspace/WorkspaceSkeleton";
 import { AppSidebar, type SidebarEntry } from "@/components/AppSidebar";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { WindowToolbar } from "@/components/WindowToolbar";
@@ -324,9 +333,14 @@ function WorkspaceLayout() {
       ? { ...entry, badge: globalMemories.filter((item) => item.status === "pending").length }
       : entry,
   );
-  const shellClass = cn("group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden");
+  const sidebarCollapsed = app.sidebarCollapsed;
+  const setSidebarCollapsed = app.setSidebarCollapsed;
+  const shellClass = cn(
+    "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden",
+    sidebarCollapsed && "app-shell-sidebar-collapsed",
+  );
   const mainClass =
-    "!col-start-1 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
+    "app-shell-main !col-start-2 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const contentClass =
     "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[22px] max-[900px]:!px-[18px]";
 
@@ -336,7 +350,7 @@ function WorkspaceLayout() {
         {tr("common.notFound")}
       </div>
     ) : (
-      <LoadingState label={tr("common.loading")} />
+      <WorkspaceLayoutSkeleton />
     );
   }
   return (
@@ -344,6 +358,7 @@ function WorkspaceLayout() {
       <WindowToolbar />
       <AppSidebar
         active="workspaces"
+        collapsed={sidebarCollapsed}
         entries={navigation}
         onNavigate={navigateGlobal}
         onSettings={() => {
@@ -354,6 +369,7 @@ function WorkspaceLayout() {
           void navigate({ to: "/settings" });
         }}
         onBrandClick={() => navigateGlobal("home")}
+        onCollapsedChange={setSidebarCollapsed}
       />
       <main className={mainClass}>
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
@@ -417,7 +433,7 @@ function WorkspaceLayout() {
               className={cn("min-w-0", currentPage === "git" && "min-h-[calc(100vh-170px)]")}
             >
               {busy || (currentPage !== "doctor" && (!scan || !manifest)) ? (
-                <LoadingState label={tr("common.loading")} />
+                <WorkspacePageSkeleton page={currentPage} />
               ) : (
                 <Outlet />
               )}
@@ -439,6 +455,25 @@ function getPage(pathname: string): Page {
     value === "changes"
     ? value
     : "overview";
+}
+
+function WorkspacePageSkeleton({ page }: { page: Page }) {
+  switch (page) {
+    case "assets":
+      return <WorkspaceAssetsSkeleton />;
+    case "changes":
+      return <WorkspaceChangesSkeleton />;
+    case "context":
+      return <WorkspaceContextSkeleton />;
+    case "doctor":
+      return <WorkspaceDoctorSkeleton />;
+    case "git":
+      return <WorkspaceGitSkeleton />;
+    case "sessions":
+      return <WorkspaceSessionsSkeleton />;
+    default:
+      return <WorkspaceOverviewSkeleton />;
+  }
 }
 
 export const Route = createFileRoute("/workspace/$workspaceId")({ component: WorkspaceLayout });

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
-import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceChangesSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { api } from "../../../core/api";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { refreshGlobalState } from "../../../core/global-state";
@@ -372,7 +372,7 @@ function WorkspaceChangesRoute() {
     },
     [workspaceId],
   );
-  if (!project) return <LoadingState label="Loading…" />;
+  if (!project) return <WorkspaceChangesSkeleton />;
   const planHome = async () => {
     if (!manifest) return;
     const requestId = ++homePlanRequest.current;

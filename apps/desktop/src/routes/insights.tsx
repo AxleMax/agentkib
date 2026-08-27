@@ -2,7 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LoadingState } from "@/components/ui/loading-state";
+import { InsightsSkeleton } from "@/features/insights/InsightsSkeleton";
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAppStore } from "../stores/app-store";
 import { api } from "../core/api";
@@ -89,7 +89,7 @@ function InsightsRoute() {
           {refreshError}
         </div>
       )}
-      <Suspense fallback={<LoadingState label={tr("common.loading")} />}>
+      <Suspense fallback={<InsightsSkeleton />}>
         <InsightsPageLazy
           section={section}
           workspaces={workspaces}

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceOverviewSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { WorkspaceObsidianCard } from "@/features/obsidian/ObsidianIntegration";
@@ -170,7 +170,7 @@ function Overview({
 
 function WorkspaceOverviewRoute() {
   const { selectedWorkspace, scan, manifest } = useWorkspaceStore();
-  if (!selectedWorkspace || !scan || !manifest) return <LoadingState label="Loading…" />;
+  if (!selectedWorkspace || !scan || !manifest) return <WorkspaceOverviewSkeleton />;
   return <Overview workspace={selectedWorkspace} scan={scan} manifest={manifest} />;
 }
 

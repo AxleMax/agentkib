@@ -3,7 +3,7 @@ import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceStorageSkeleton } from "./WorkspaceSkeleton";
 import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useMemo, useState } from "react";
@@ -234,7 +234,7 @@ export function WorkspaceStoragePage({
     });
   };
 
-  if (!loaded) return <LoadingState label={tr("common.loading")} />;
+  if (!loaded) return <WorkspaceStorageSkeleton />;
 
   return (
     <div className="min-w-0 space-y-4">
@@ -339,7 +339,10 @@ export function WorkspaceStoragePage({
           aria-live="polite"
         >
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
-            <ScanLine size={18} className={job?.state === "running" ? "animate-pulse" : undefined} />
+            <ScanLine
+              size={18}
+              className={job?.state === "running" ? "animate-pulse" : undefined}
+            />
           </span>
           <div className="min-w-0 shrink-0 sm:min-w-[150px]">
             <strong className="block truncate font-semibold text-foreground">
@@ -718,13 +721,7 @@ function StorageLegend() {
   );
 }
 
-function StorageTreemapTooltip({
-  hover,
-  chartWidth,
-}: {
-  hover: StorageHover;
-  chartWidth: number;
-}) {
+function StorageTreemapTooltip({ hover, chartWidth }: { hover: StorageHover; chartWidth: number }) {
   const nearLeft = hover.left < 170;
   const nearRight = chartWidth > 0 && hover.left > chartWidth - 170;
   const above = hover.top > 94;
@@ -740,16 +737,16 @@ function StorageTreemapTooltip({
       style={{
         ...horizontalStyle,
         top: above ? Math.max(8, hover.top - 8) : hover.bottom + 8,
-        ...(above
-          ? { transform: `${horizontalStyle.transform ?? ""} translateY(-100%)` }
-          : {}),
+        ...(above ? { transform: `${horizontalStyle.transform ?? ""} translateY(-100%)` } : {}),
       }}
     >
       <div className="truncate font-semibold">{nodeLabel(hover.node)}</div>
       <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
         <span>{formatBytes(hover.bytes)}</span>
         <span className="text-right">{formatPercent(hover.ratio)}</span>
-        <span className="col-span-2 truncate">{tr(`storage.type.${semanticKind(hover.node)}`)}</span>
+        <span className="col-span-2 truncate">
+          {tr(`storage.type.${semanticKind(hover.node)}`)}
+        </span>
       </div>
     </div>
   );

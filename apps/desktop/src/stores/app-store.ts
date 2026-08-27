@@ -21,6 +21,7 @@ type Updater<T> = T | ((current: T) => T);
 
 interface AppState {
   isFullscreen: boolean;
+  sidebarCollapsed: boolean;
   runtime?: RuntimeInfo;
   workspaces: WorkspaceSummary[];
   workspacesLoaded: boolean;
@@ -46,6 +47,7 @@ interface AppState {
 interface AppActions {
   reset: () => void;
   setIsFullscreen: (value: Updater<boolean>) => void;
+  setSidebarCollapsed: (value: Updater<boolean>) => void;
   setRuntime: (value: Updater<RuntimeInfo | undefined>) => void;
   setWorkspaces: (value: Updater<WorkspaceSummary[]>) => void;
   setWorkspacesLoaded: (value: Updater<boolean>) => void;
@@ -73,8 +75,17 @@ interface AppActions {
 const resolve = <T>(value: Updater<T>, current: T): T =>
   typeof value === "function" ? (value as (current: T) => T)(current) : value;
 
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "agentkib.sidebar-collapsed";
+
+function initialSidebarCollapsed() {
+  return typeof localStorage !== "undefined"
+    ? localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true"
+    : false;
+}
+
 export const useAppStore = create<AppState & AppActions>((set) => ({
   isFullscreen: false,
+  sidebarCollapsed: initialSidebarCollapsed(),
   workspaces: [],
   workspacesLoaded: false,
   installations: [],
@@ -90,6 +101,7 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   reset: () =>
     set({
       isFullscreen: false,
+      sidebarCollapsed: false,
       runtime: undefined,
       workspaces: [],
       workspacesLoaded: false,
@@ -113,6 +125,14 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
     }),
   setIsFullscreen: (value) =>
     set((state) => ({ isFullscreen: resolve(value, state.isFullscreen) })),
+  setSidebarCollapsed: (value) =>
+    set((state) => {
+      const next = resolve(value, state.sidebarCollapsed);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next));
+      }
+      return { sidebarCollapsed: next };
+    }),
   setRuntime: (value) => set((state) => ({ runtime: resolve(value, state.runtime) })),
   setWorkspaces: (value) => set((state) => ({ workspaces: resolve(value, state.workspaces) })),
   setWorkspacesLoaded: (value) =>

@@ -23,6 +23,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { WorkspaceStoragePage } from "@/features/workspace/WorkspaceStoragePage";
+import { WorkspacesSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { api } from "../core/api";
 import { refreshGlobalState } from "../core/global-state";
 import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/catalog";
@@ -50,6 +51,7 @@ function WorkspacesRoute() {
   const search = useSearch({ strict: false }) as WorkspacesSearch;
   const view = search.workspaceView ?? "list";
   const workspaces = useAppStore((state) => state.workspaces);
+  const workspacesLoaded = useAppStore((state) => state.workspacesLoaded);
   const catalog = useAppStore((state) => state.catalog);
   const refreshJobs = useAppStore((state) => state.refreshJobs);
   const setRuntime = useAppStore((state) => state.setRuntime);
@@ -172,6 +174,8 @@ function WorkspacesRoute() {
     }
   };
 
+  if (!workspacesLoaded) return <WorkspacesSkeleton view={view} />;
+
   return (
     <WorkspacesPage
       view={view}
@@ -237,7 +241,10 @@ function WorkspacesPage({
         }}
         aria-label={tr("workspace.viewLabel")}
       >
-        <ToggleGroupItem value="list" className="segmented-control-item h-9 min-h-9 min-w-[68px] font-semibold">
+        <ToggleGroupItem
+          value="list"
+          className="segmented-control-item h-9 min-h-9 min-w-[68px] font-semibold"
+        >
           {tr("workspace.view.list")}
         </ToggleGroupItem>
         <ToggleGroupItem

@@ -3,6 +3,7 @@ import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router"
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { AssetCatalogPage } from "@/features/catalog/AssetCatalogPage";
+import { CatalogSkeleton } from "@/features/catalog/CatalogSkeleton";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { MemoryCard } from "@/features/catalog/MemoryCard";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +71,7 @@ function CatalogRoute() {
   const section = search.assetSection ?? "instructions";
   const assets = useAppStore((state) => state.catalog);
   const workspaces = useAppStore((state) => state.workspaces);
+  const workspacesLoaded = useAppStore((state) => state.workspacesLoaded);
   const memories = useAppStore((state) => state.globalMemories);
   const runtime = useAppStore((state) => state.runtime);
   const setRuntime = useAppStore((state) => state.setRuntime);
@@ -104,6 +106,7 @@ function CatalogRoute() {
   const reload = async () => {
     await refreshGlobalState(useAppStore.getState().runtime);
   };
+  if (!workspacesLoaded) return <CatalogSkeleton />;
   const openWorkspace = async (workspace: WorkspaceSummary): Promise<boolean> => {
     const requestId = ++openRequest.current;
     setBusy(true);

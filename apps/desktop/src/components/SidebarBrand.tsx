@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import logoUrl from "../assets/logo.svg";
 import { useAppStore } from "@/stores/app-store";
 
 export function SidebarBrand({ onClick }: { onClick: () => void }) {
@@ -7,11 +8,12 @@ export function SidebarBrand({ onClick }: { onClick: () => void }) {
     <Button
       variant="bare"
       size="content"
-      className="shrink-0 rounded-lg border-0 bg-transparent px-2 py-1 text-left text-[15px] font-semibold tracking-[-0.02em] text-primary transition-opacity hover:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      className="sidebar-brand"
       aria-label={appName}
       onClick={onClick}
     >
-      {appName}
+      <img className="sidebar-brand-mark" src={logoUrl} alt="" aria-hidden="true" />
+      <span className="sidebar-brand-label">{appName}</span>
     </Button>
   );
 }
