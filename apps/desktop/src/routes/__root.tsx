@@ -75,6 +75,7 @@ const searchSchema = z.object({
   gitSubview: gitSubviewSchema.optional().catch(undefined),
   agent: z.custom<AgentKind>().optional().catch(undefined),
   configure: z.boolean().optional().catch(undefined),
+  doctorVerification: z.enum(["applied"]).optional().catch(undefined),
 });
 
 export const Route = createRootRoute({

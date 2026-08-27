@@ -282,7 +282,21 @@ export interface RuntimeInfo {
   app_icon_preference: AppIconPreference;
   tray_available: boolean;
   session_index_enabled: boolean;
+  onboarding: OnboardingState;
 }
+export interface OnboardingState {
+  version: number;
+  acknowledged_version: number;
+  workspace_id?: string;
+  doctor_completed: boolean;
+  repairable_count: number;
+  repair_applied: boolean;
+}
+export type OnboardingEvent =
+  | { event: "doctor-completed"; workspace_id: string; repairable_count: number }
+  | { event: "repair-applied"; workspace_id: string }
+  | { event: "dismissed" }
+  | { event: "restarted" };
 export type AppUpdateInstallMode = "in-app" | "manual";
 export interface AppUpdateInfo {
   current_version: string;

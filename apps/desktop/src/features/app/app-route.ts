@@ -11,6 +11,7 @@ export type AppSearch = {
   quotaProvider?: string;
   quotaWindow?: import("@/core/types").QuotaWindowSelector;
   gitSubview?: GitSubview;
+  doctorVerification?: "applied";
 };
 
 export type ParsedRoute =
