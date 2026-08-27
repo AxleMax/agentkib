@@ -54,11 +54,14 @@ gh workflow run release-desktop.yml --ref main -f release_tag=vX.Y.Z
 ```
 
 The retry rebuilds every platform, resumes an existing draft, and replaces
-same-named draft assets. Draft lookup uses the release-by-tag API with a bounded
-retry window because a newly created draft can be briefly unavailable through
-the GitHub API. It refuses to overwrite a release that is already public. A
-product-code fix requires a new version and tag rather than moving an existing
-tag. Workflow artifacts remain available for diagnosing failed builds.
+same-named draft assets. GitHub's release-by-tag API can omit draft releases,
+so draft lookup falls back to the authenticated, paginated Releases list and
+uses a bounded retry window. Manual retries build the immutable tagged source
+but use the reviewed release helpers from the selected workflow revision. The
+workflow refuses duplicate tags and will not overwrite a release that is
+already public. A product-code fix requires a new version and tag rather than
+moving an existing tag. Workflow artifacts remain available for diagnosing
+failed builds.
 
 ## Build artifacts without publishing
 
