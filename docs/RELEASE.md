@@ -41,7 +41,7 @@ publishing the incomplete draft, then run the workflow against the existing
 tag:
 
 ```bash
-gh workflow run release-desktop.yml --ref main -f release_tag=v0.1.0
+gh workflow run release-desktop.yml --ref main -f release_tag=vX.Y.Z
 ```
 
 The retry rebuilds every platform, resumes an existing draft, and replaces
@@ -94,10 +94,11 @@ Release packages are unsigned development previews. They do not include macOS
 notarization, Windows code signing, MSI packages, or a macOS universal binary.
 macOS Gatekeeper and Windows SmartScreen may therefore display warnings.
 
-The first updater-capable release must still be installed manually. Later stable
-releases can be installed in-app on macOS, Windows, and Linux AppImage. DEB and
-RPM installations check for updates but continue through the GitHub Release page
-so their system package state is not modified behind the package manager.
+v0.3.1 is the first updater-capable release. Clients older than v0.3.1 require
+one manual upgrade; later stable releases can be installed in-app on macOS,
+Windows, and Linux AppImage. DEB and RPM installations check for updates but
+continue through the GitHub Release page so their system package state is not
+modified behind the package manager.
 
 After verifying the downloaded DMG against its `.sha256` file and copying
 AgentKib into Applications, macOS users must currently remove the quarantine

@@ -55,7 +55,19 @@ AgentKib 会读取本机已有的工作区和配置，让你在一个界面里�
 | MCP | Agent 可以调用的本地工具或远程服务连接 |
 | ChangeSet | 真正写文件之前，让你审查的一组变更及 Diff |
 
-### 快速开始（开发预览）
+### 下载与安装
+
+从 [Latest Release](https://github.com/starroyhq/agentkib/releases/latest) 下载当前平台的安装包：
+
+- macOS：Apple Silicon 或 Intel 的 `.dmg`
+- Windows 11：x64 的 `.exe`；ARM64 安装包仍为 Preview
+- Linux：Ubuntu 的 `.deb` 或 AppImage、Fedora 的 `.rpm`；ARM64 安装包仍为 Preview
+
+当前安装包尚未进行 macOS 公证或 Windows 代码签名，请只使用官方 Release 中的文件并核对对应 `.sha256`。macOS 的额外安装步骤见下方[平台状态](#平台状态)。
+
+**v0.3.1 是首个支持应用内更新的版本。** 从更早版本升级时，需要先手动安装 v0.3.1 或更新版本；之后可在“设置 → 常规”中检查更新。macOS、Windows 和 Linux AppImage 支持应用内下载安装，DEB/RPM 会打开 Release 页面交由系统包管理方式更新。
+
+### 从源码运行
 
 需要 Rust stable、Node.js、pnpm 10，以及当前平台的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)。macOS 需要 Xcode Command Line Tools；Windows 需要 Visual Studio Build Tools 2022 和 Windows SDK；Linux 需要 GTK 3、WebKitGTK 4.1、AppIndicator、librsvg 和 libxdo。
 
@@ -121,7 +133,7 @@ AgentKib 会区分“已安装”和“只发现了卸载后留下的本地数�
 
 Windows 的完整环境、启动、打包和安装说明见 [Windows 指南](docs/WINDOWS.md)。维护者按 [桌面发布流程](docs/RELEASE.md) 推送版本标签后，CI 会构建、校验并发布未签名的多平台预览包；PR 和普通分支 push 只运行检查，不发布安装包。开发和验证命令见文末的[开发说明](#development)。
 
-安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。首个包含更新器的版本仍需手动安装；之后 macOS、Windows 和 Linux AppImage 可在设置中检查并安装正式更新，Linux DEB/RPM 会打开 Release 页面交由系统包管理方式更新。
+安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。v0.3.1 是首个包含更新器的版本；更早版本需先手动升级，此后的正式版本可按上文所述在应用内检查更新。
 
 macOS 安装包目前尚未签名和公证。请先核对 Release 中的 SHA-256 校验文件，将 AgentKib 拖入“应用程序”后，再执行以下命令解除隔离属性：
 
@@ -166,7 +178,19 @@ Browsing, previewing, and diagnosing do not create a manifest or modify agent co
 | MCP | Connections to local tools or remote services an agent can call |
 | ChangeSet | A group of file changes and diffs you review before anything is written |
 
-### Quick start — development preview
+### Download and install
+
+Download the package for your platform from the [Latest Release](https://github.com/starroyhq/agentkib/releases/latest):
+
+- macOS: `.dmg` for Apple Silicon or Intel
+- Windows 11: x64 `.exe`; the ARM64 installer remains a preview
+- Linux: Ubuntu `.deb` or AppImage, or Fedora `.rpm`; ARM64 packages remain previews
+
+The packages are not yet notarized on macOS or code-signed on Windows. Only use files from the official Release and verify the matching `.sha256` file. See [Platform status](#platform-status) below for the additional macOS installation step.
+
+**v0.3.1 is the first release with in-app update support.** Versions older than v0.3.1 must first be upgraded manually. After that, check for updates under Settings → General. macOS, Windows, and Linux AppImage support in-app installation; DEB/RPM installations open the Release page for a package-manager-safe update.
+
+### Run from source
 
 Install Rust stable, Node.js, pnpm 10, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform. The desktop runtime requires macOS 13.3+, WebView2 111+ on Windows 11, or WebKitGTK 2.40+ on Linux.
 
@@ -225,12 +249,12 @@ Optional Obsidian and OpenClaw/Hermes Remote Gateway integrations must be config
 | Platform | Status |
 | --- | --- |
 | macOS 13.3+ (Apple Silicon / Intel) | Primary development and acceptance platform |
-| Windows 11 x64 (WebView2 111+) | Platform code checked on PRs; NSIS built and smoke-tested manually |
-| Ubuntu 22.04 x64 (WebKitGTK 2.40+) | Core CI platform; `.deb` and AppImage built and verified manually |
-| Fedora x64 | Platform code checked on PRs; `.rpm` built and verified manually |
-| Windows ARM64 / Linux ARM64 | Preview; core compilation or tests plus preview packages |
+| Windows 11 x64 (WebView2 111+) | Platform code checked on PRs; release workflow builds and smoke-tests NSIS |
+| Ubuntu 22.04 x64 (WebKitGTK 2.40+) | Core CI platform; release workflow builds and verifies `.deb` and AppImage |
+| Fedora x64 | Platform code checked on PRs; release workflow builds and verifies `.rpm` |
+| Windows ARM64 / Linux ARM64 | Preview; release workflow builds and verifies preview packages |
 
-See the [Windows guide](docs/WINDOWS.md) for setup, development, packaging, installation, and usage. Maintainers can generate unsigned multi-platform preview packages with the [desktop package workflow](docs/RELEASE.md). Pull requests and ordinary pushes run checks without producing installers. The first updater-capable release still requires a manual installation; subsequent stable releases can update in-app on macOS, Windows, and Linux AppImage, while DEB/RPM installations open the Release page for a package-manager-safe update.
+See the [Windows guide](docs/WINDOWS.md) for setup, development, packaging, installation, and usage. Maintainers publish unsigned multi-platform preview packages through the [desktop release workflow](docs/RELEASE.md). Pull requests and ordinary pushes run checks without publishing installers. v0.3.1 is the first updater-capable release; older versions require one manual upgrade before later stable releases can update in-app.
 
 The macOS package is not currently signed or notarized. Verify it against the SHA-256 file in the Release, drag AgentKib into Applications, and then remove its quarantine attributes:
 

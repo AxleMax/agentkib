@@ -202,6 +202,6 @@ Get-NetTCPConnection -LocalPort 1420 -ErrorAction SilentlyContinue
 
 - 已验收目标仅为 Windows 11 x64 的编译、开发启动、NSIS 安装和启动。
 - Windows ARM64 仅提供 Preview 安装包，尚未完成与 x64 等价的原生回归。
-- GitHub Release 已由版本标签自动发布；Windows 代码签名和自动更新仍不在本阶段范围内。
+- GitHub Release 已由版本标签自动发布；v0.3.1 起可在设置中检查并安装正式更新。Windows 安装包仍未进行代码签名，ARM64 仍为 Preview。
 - macOS/Linux 行为通过平台隔离和现有 CI 保持，本机无法替代对应平台的原生回归。
 - 完整 Windows 功能等价测试仍需后续阶段逐项完成。
