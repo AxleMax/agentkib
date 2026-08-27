@@ -22,6 +22,7 @@ import {
 import { api } from "@/core/api";
 import { formatRelativeTime, localizeMessage, tr } from "@/core/i18n";
 import { normalizePlatform } from "@/core/platform";
+import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
 import {
   compareQuotaProviders,
@@ -42,6 +43,7 @@ import type {
   RefreshJobStatus,
 } from "@/core/types";
 import { ProviderIcon, QuotaWindowRow } from "./QuotaDisplay";
+import { QuotaAutoRefreshPrompt } from "./QuotaAutoRefreshPrompt";
 
 type QuotaFilter = "all" | "healthy" | "warning" | "unavailable";
 
@@ -72,6 +74,13 @@ export function QuotaPage({
   const [requestPending, setRequestPending] = useState(false);
   const [error, setError] = useState("");
   const [initializing, setInitializing] = useState(true);
+  const autoRefreshEnabled = useAppStore(
+    (state) => state.runtime?.quota_auto_refresh_enabled === true,
+  );
+  const promptSeen = useAppStore(
+    (state) => state.runtime?.quota_auto_refresh_prompt_seen === true,
+  );
+  const setRuntime = useAppStore((state) => state.setRuntime);
   const pendingRefresh = useRef(false);
   const requestedInitialRefresh = useRef(false);
 
@@ -130,6 +139,8 @@ export function QuotaPage({
       }
       const { snapshot: initialSnapshot, job } = await load();
       if (
+        disposed ||
+        !autoRefreshEnabled ||
         requestedInitialRefresh.current ||
         (job && ["queued", "running", "backoff"].includes(job.state))
       ) {
@@ -158,7 +169,7 @@ export function QuotaPage({
       unlistenRefresh?.();
       unlistenPreferences?.();
     };
-  }, []);
+  }, [autoRefreshEnabled]);
 
   const refreshActive = refreshJob?.state === "queued" || refreshJob?.state === "running";
   useEffect(() => {
@@ -250,6 +261,12 @@ export function QuotaPage({
     } finally {
       setRequestPending(false);
     }
+  };
+  const markPromptSeen = async () => {
+    setRuntime(await api.setQuotaAutoRefreshPromptSeen(true));
+  };
+  const enableAutoRefresh = async () => {
+    setRuntime(await api.setQuotaAutoRefreshEnabled(true));
   };
   const refreshLabel =
     refreshJob?.state === "queued"
@@ -352,6 +369,13 @@ export function QuotaPage({
           </CollapsibleContent>
         )}
       </Collapsible>
+
+      {!autoRefreshEnabled && !promptSeen && (
+        <QuotaAutoRefreshPrompt
+          onEnableAutoRefresh={enableAutoRefresh}
+          onNotNow={markPromptSeen}
+        />
+      )}
 
       {!snapshot && (
         <div className="grid min-h-[240px] place-content-center justify-items-center gap-3 text-muted-foreground">

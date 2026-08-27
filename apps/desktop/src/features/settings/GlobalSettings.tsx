@@ -143,6 +143,7 @@ export function GlobalSettings({
             </SettingDetail>
           )}
         </SettingGroup>
+        <QuotaAutoRefreshSetting runtime={runtime} onChanged={onLocaleChanged} />
       </div>
     );
   if (section === "discovery")
@@ -636,6 +637,54 @@ function FileAccessSettingsRow() {
         </SettingDetail>
       )}
     </>
+  );
+}
+
+function QuotaAutoRefreshSetting({
+  runtime,
+  onChanged,
+}: {
+  runtime?: RuntimeInfo;
+  onChanged: (runtime: RuntimeInfo) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toggle = async (enabled: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      onChanged(await api.setQuotaAutoRefreshEnabled(enabled));
+    } catch (reason) {
+      setError(localizeMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SettingGroup
+      title={tr("settings.quotaTitle")}
+      description={tr("settings.quotaAutoRefreshDescription")}
+    >
+      <SettingsRow border={false}>
+        <SettingsCopy>
+          <strong>{tr("settings.quotaAutoRefresh")}</strong>
+          <small>{tr("settings.quotaAutoRefreshHint")}</small>
+        </SettingsCopy>
+        <Label className="inline-flex items-center">
+          <Switch
+            checked={runtime?.quota_auto_refresh_enabled === true}
+            disabled={busy || !runtime}
+            onCheckedChange={(checked) => void toggle(checked)}
+          />
+        </Label>
+      </SettingsRow>
+      {error && (
+        <SettingDetail variant="error" role="alert">
+          {error}
+        </SettingDetail>
+      )}
+    </SettingGroup>
   );
 }
 
