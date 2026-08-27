@@ -55,13 +55,13 @@ function InsightsRoute() {
             className="min-w-0"
           >
             <TabsList
-              className="segmented-control w-fit max-w-full justify-start pr-2"
+              className="segmented-control !h-auto w-fit max-w-full justify-start"
               variant="default"
               aria-label={tr("nav.insights")}
             >
               {["overview", "tokens", "commits", "milestones", "sources"].map((value) => (
                 <TabsTrigger
-                  className="segmented-control-item flex-none px-3"
+                  className="segmented-control-item h-9 min-h-9 flex-none px-3"
                   key={value}
                   value={value}
                 >

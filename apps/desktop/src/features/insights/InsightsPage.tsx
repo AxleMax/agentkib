@@ -49,6 +49,7 @@ import {
   localizeMessage,
   tr,
 } from "@/core/i18n";
+import { isTauriRuntime } from "@/core/platform";
 import { buildHeatmapMonthMarkers } from "@/features/insights/insights";
 import type {
   Achievement,
@@ -148,6 +149,8 @@ export function InsightsPage({
     void loadInsights();
   }, [loadInsights]);
   useEffect(() => {
+    if (!isTauriRuntime()) return;
+
     let unlisten: (() => void) | undefined;
     let disposed = false;
     void listen<RefreshJobStatus>("agentkib:refresh-state", (event) => {
@@ -200,6 +203,7 @@ export function InsightsPage({
   const showTokenFilters = section === "overview" || section === "tokens";
   const showCommitFilters = section === "overview" || section === "commits";
   const showRange = !["milestones", "sources"].includes(section);
+  const showMetricTabs = section === "overview";
   const filterClass =
     "h-10 min-w-[146px] rounded-xl border-2 border-foreground/25 bg-card px-3 font-medium text-foreground shadow-xs transition-colors hover:border-primary/65 hover:bg-muted/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20 max-[520px]:min-w-0 max-[520px]:flex-1";
 
@@ -217,63 +221,84 @@ export function InsightsPage({
             </div>
           )}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {showTokenFilters && (
-            <SelectControl
-              className={filterClass}
-              aria-label={tr("workspace.allAgents")}
-              value={agent}
-              onChange={(event) => setAgent(event.target.value as typeof agent)}
-            >
-              <option value="all">{tr("workspace.allAgents")}</option>
-              {Object.entries(agentLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </SelectControl>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {showMetricTabs && (
+            <Tabs value={metric} onValueChange={(value) => setMetric(value as HeatmapMetric)}>
+              <TabsList
+                className="segmented-control !h-auto w-fit max-w-full justify-start"
+                variant="default"
+                aria-label={tr("insights.heatmap")}
+              >
+                {(Object.keys(metricLabels) as HeatmapMetric[]).map((value) => (
+                  <TabsTrigger
+                    className="segmented-control-item h-9 min-h-9 flex-none px-3"
+                    key={value}
+                    value={value}
+                  >
+                    {metricLabels[value]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
           )}
-          {showTokenFilters && (
-            <SelectControl
-              className={filterClass}
-              aria-label={tr("workspace.all")}
-              value={workspaceId}
-              onChange={(event) => setWorkspaceId(event.target.value)}
-            >
-              <option value="all">{tr("workspace.all")}</option>
-              {workspaces.map((value) => (
-                <option key={value.id} value={value.id}>
-                  {value.name}
-                </option>
-              ))}
-            </SelectControl>
-          )}
-          {showCommitFilters && (
-            <SelectControl
-              className={filterClass}
-              aria-label={tr("insights.allRepositories")}
-              value={repository}
-              onChange={(event) => setRepository(event.target.value)}
-            >
-              <option value="all">{tr("insights.allRepositories")}</option>
-              {repositoryOptions.map(([id, name]) => (
-                <option key={id} value={id}>
-                  {name}
-                </option>
-              ))}
-            </SelectControl>
-          )}
-          {showRange && (
-            <SelectControl
-              className={filterClass}
-              aria-label={tr("insights.range52w")}
-              value={range}
-              onChange={(event) => setRange(event.target.value as typeof range)}
-            >
-              <option value="52w">{tr("insights.range52w")}</option>
-              <option value="year">{tr("insights.rangeYear")}</option>
-            </SelectControl>
-          )}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {showTokenFilters && (
+              <SelectControl
+                className={filterClass}
+                aria-label={tr("workspace.allAgents")}
+                value={agent}
+                onChange={(event) => setAgent(event.target.value as typeof agent)}
+              >
+                <option value="all">{tr("workspace.allAgents")}</option>
+                {Object.entries(agentLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </SelectControl>
+            )}
+            {showTokenFilters && (
+              <SelectControl
+                className={filterClass}
+                aria-label={tr("workspace.all")}
+                value={workspaceId}
+                onChange={(event) => setWorkspaceId(event.target.value)}
+              >
+                <option value="all">{tr("workspace.all")}</option>
+                {workspaces.map((value) => (
+                  <option key={value.id} value={value.id}>
+                    {value.name}
+                  </option>
+                ))}
+              </SelectControl>
+            )}
+            {showCommitFilters && (
+              <SelectControl
+                className={filterClass}
+                aria-label={tr("insights.allRepositories")}
+                value={repository}
+                onChange={(event) => setRepository(event.target.value)}
+              >
+                <option value="all">{tr("insights.allRepositories")}</option>
+                {repositoryOptions.map(([id, name]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </SelectControl>
+            )}
+            {showRange && (
+              <SelectControl
+                className={filterClass}
+                aria-label={tr("insights.range52w")}
+                value={range}
+                onChange={(event) => setRange(event.target.value as typeof range)}
+              >
+                <option value="52w">{tr("insights.range52w")}</option>
+                <option value="year">{tr("insights.rangeYear")}</option>
+              </SelectControl>
+            )}
+          </div>
         </div>
       </section>
       {!summary && (
@@ -339,23 +364,6 @@ export function InsightsPage({
                 </Badge>
               </CardHeader>
               <CardContent className="p-0">
-                <Tabs value={metric} onValueChange={(value) => setMetric(value as HeatmapMetric)}>
-                  <TabsList
-                    className="segmented-control w-fit max-w-full justify-start px-5"
-                    variant="default"
-                    aria-label={tr("insights.heatmap")}
-                  >
-                    {(Object.keys(metricLabels) as HeatmapMetric[]).map((value) => (
-                      <TabsTrigger
-                        className="segmented-control-item flex-none px-3"
-                        key={value}
-                        value={value}
-                      >
-                        {metricLabels[value]}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
                 <div className="overflow-x-auto px-5 pb-4 pt-4">
                   <HeatmapMonths points={points} padding={padding} />
                   <div className="grid w-max grid-flow-col grid-rows-[repeat(7,11px)] auto-cols-[11px] gap-1">

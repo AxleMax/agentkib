@@ -237,12 +237,12 @@ function WorkspacesPage({
         }}
         aria-label={tr("workspace.viewLabel")}
       >
-        <ToggleGroupItem value="list" className="segmented-control-item min-w-[68px] font-semibold">
+        <ToggleGroupItem value="list" className="segmented-control-item h-9 min-h-9 min-w-[68px] font-semibold">
           {tr("workspace.view.list")}
         </ToggleGroupItem>
         <ToggleGroupItem
           value="storage"
-          className="segmented-control-item min-w-[68px] font-semibold"
+          className="segmented-control-item h-9 min-h-9 min-w-[68px] font-semibold"
         >
           {tr("workspace.view.storage")}
         </ToggleGroupItem>

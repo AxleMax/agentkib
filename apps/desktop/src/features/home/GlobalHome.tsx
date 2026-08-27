@@ -258,7 +258,13 @@ export function GlobalHome({
         </div>
       )}
       {!workspaces.length ? (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,.45fr)]">
+        <div
+          className={
+            insightCard
+              ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,.45fr)]"
+              : "grid"
+          }
+        >
           <Card className="grid min-h-[260px] place-content-center justify-items-center gap-3 rounded-2xl border-dashed bg-card p-8 text-center">
             <span className="grid size-12 place-items-center rounded-2xl bg-primary/8 text-primary">
               <FolderGit2 size={24} />

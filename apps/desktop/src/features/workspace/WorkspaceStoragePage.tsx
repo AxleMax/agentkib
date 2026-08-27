@@ -8,8 +8,17 @@ import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ResponsiveContainer, Tooltip, Treemap, type TreemapNode } from "recharts";
-import { CircleAlert, ExternalLink, HardDrive, Pause, RefreshCw, Search, X } from "lucide-react";
+import { hierarchy, treemap, treemapResquarify } from "d3-hierarchy";
+import {
+  CircleAlert,
+  ExternalLink,
+  HardDrive,
+  Pause,
+  RefreshCw,
+  ScanLine,
+  Search,
+  X,
+} from "lucide-react";
 import { api } from "@/core/api";
 import { currentLocale, formatDateTime, localizeMessage, tr } from "@/core/i18n";
 import type {
@@ -38,6 +47,23 @@ interface StorageLocation {
 interface StorageSelection extends StorageLocation {
   parentBytes: number;
   workspaceBytes: number;
+}
+interface StorageChartItem {
+  id: string;
+  name: string;
+  size: number;
+  storageNode: StorageNode;
+  workspaceId: string;
+}
+interface StorageChartRoot {
+  children: StorageChartItem[];
+}
+interface StorageHover extends StorageLocation {
+  bytes: number;
+  ratio: number;
+  left: number;
+  top: number;
+  bottom: number;
 }
 
 export function WorkspaceStoragePage({
@@ -128,7 +154,7 @@ export function WorkspaceStoragePage({
   const displayed = current
     ? current.node.children.map((node) => ({ workspaceId: current.workspaceId, node }))
     : workspaceNodes;
-  const chartData = displayed
+  const chartData: StorageChartItem[] = displayed
     .map((item) => ({
       id: `${item.workspaceId}:${item.node.id}`,
       name: nodeLabel(item.node),
@@ -153,6 +179,9 @@ export function WorkspaceStoragePage({
   const coverage = overview?.total_workspace_count
     ? Math.round((overview.scanned_workspace_count / overview.total_workspace_count) * 100)
     : 0;
+  const progressTotal = job?.progress_total || workspaces.length || 1;
+  const progressCurrent = Math.min(job?.progress_current ?? 0, progressTotal);
+  const progressValue = Math.round((progressCurrent / progressTotal) * 100);
 
   const start = async () => {
     setError("");
@@ -256,7 +285,7 @@ export function WorkspaceStoragePage({
               <ToggleGroupItem
                 key={value}
                 value={value}
-                className="segmented-control-item min-w-[84px] font-semibold"
+                className="segmented-control-item h-9 min-h-9 min-w-[84px] font-semibold"
               >
                 {tr(`storage.metric.${value}`)}
               </ToggleGroupItem>
@@ -304,16 +333,25 @@ export function WorkspaceStoragePage({
         </Card>
       )}
       {active && (
-        <div className="flex min-h-10 items-center gap-3 rounded-lg border bg-card px-3 text-xs text-muted-foreground">
-          <span>{job?.state === "queued" ? tr("storage.waiting") : tr("storage.scanning")}</span>
-          <Progress
-            className="h-1.5"
-            value={
-              ((job?.progress_current ?? 0) / (job?.progress_total || workspaces.length || 1)) * 100
-            }
-          />
-          <strong className="text-foreground">
-            {job?.progress_current ?? 0} / {job?.progress_total ?? workspaces.length}
+        <div
+          className="flex min-h-[68px] items-center gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] px-3.5 py-2.5 text-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+            <ScanLine size={18} className={job?.state === "running" ? "animate-pulse" : undefined} />
+          </span>
+          <div className="min-w-0 shrink-0 sm:min-w-[150px]">
+            <strong className="block truncate font-semibold text-foreground">
+              {job?.state === "queued" ? tr("storage.waiting") : tr("storage.scanning")}
+            </strong>
+            <span className="text-xs text-muted-foreground">{progressValue}%</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <Progress className="h-2 bg-primary/10" value={progressValue} />
+          </div>
+          <strong className="shrink-0 whitespace-nowrap font-mono text-sm tabular-nums text-foreground">
+            {progressCurrent} / {progressTotal}
           </strong>
         </div>
       )}
@@ -384,32 +422,17 @@ export function WorkspaceStoragePage({
                     : ""}
               </span>
             </div>
+            <StorageLegend />
             {chartData.length ? (
-              <div className="min-h-[510px] overflow-hidden bg-background p-1" role="tree">
-                <ResponsiveContainer width="100%" height={510}>
-                  <Treemap
-                    data={chartData}
-                    dataKey="size"
-                    nameKey="name"
-                    aspectRatio={1.6}
-                    nodeGap={4}
-                    nodeInset={2}
-                    isAnimationActive={false}
-                    content={(props) => (
-                      <StorageTreemapContent
-                        {...props}
-                        metric={metric}
-                        parentBytes={parentBytes}
-                        query={query}
-                        onSelect={select}
-                        onEnter={enter}
-                      />
-                    )}
-                  >
-                    <Tooltip />
-                  </Treemap>
-                </ResponsiveContainer>
-              </div>
+              <StorageTreemapChart
+                data={chartData}
+                metric={metric}
+                parentBytes={parentBytes}
+                query={query}
+                selected={selected}
+                onSelect={select}
+                onEnter={enter}
+              />
             ) : (
               <div className="m-2 grid min-h-[390px] place-content-center justify-items-center gap-2 rounded-lg bg-muted text-sm text-muted-foreground">
                 <HardDrive size={26} />
@@ -433,6 +456,104 @@ export function WorkspaceStoragePage({
   );
 }
 
+function StorageTreemapChart({
+  data,
+  metric,
+  parentBytes,
+  query,
+  selected,
+  onSelect,
+  onEnter,
+}: {
+  data: StorageChartItem[];
+  metric: StorageMetric;
+  parentBytes: number;
+  query: string;
+  selected?: StorageSelection;
+  onSelect: (location: StorageLocation) => void;
+  onEnter: (location: StorageLocation) => Promise<void>;
+}) {
+  const [width, setWidth] = useState(0);
+  const [hovered, setHovered] = useState<StorageHover>();
+  const [chartElement, setChartElement] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!chartElement) return;
+    const updateWidth = () => setWidth(Math.floor(chartElement.clientWidth));
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(chartElement);
+    return () => observer.disconnect();
+  }, [chartElement]);
+
+  const root = useMemo(() => {
+    if (!width) return undefined;
+    const hierarchyRoot = hierarchy<StorageChartRoot | StorageChartItem>(
+      { children: data },
+      (value) => ("children" in value ? value.children : undefined),
+    )
+      .sum((value) => ("size" in value ? value.size : 0))
+      .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+    return treemap<StorageChartRoot | StorageChartItem>()
+      .size([width, 510])
+      .paddingOuter(2)
+      .paddingInner(4)
+      .round(true)
+      .tile(treemapResquarify)(hierarchyRoot);
+  }, [data, width]);
+
+  return (
+    <div
+      ref={setChartElement}
+      className="relative min-h-[510px] overflow-hidden bg-background p-1"
+      role="tree"
+      onMouseLeave={() => setHovered(undefined)}
+    >
+      {root && (
+        <svg
+          aria-label={tr("storage.mapTitle")}
+          className="block h-[510px] w-full"
+          viewBox={`0 0 ${width} 510`}
+          preserveAspectRatio="none"
+          role="presentation"
+        >
+          {root.children?.map((node) => {
+            const item = node.data;
+            if (!("storageNode" in item)) return null;
+            return (
+              <StorageTreemapContent
+                key={item.id}
+                x={node.x0}
+                y={node.y0}
+                width={Math.max(0, node.x1 - node.x0)}
+                height={Math.max(0, node.y1 - node.y0)}
+                storageNode={item.storageNode}
+                workspaceId={item.workspaceId}
+                metric={metric}
+                parentBytes={parentBytes}
+                query={query}
+                onSelect={onSelect}
+                onEnter={onEnter}
+                selected={selected}
+                onHover={(location, bounds) =>
+                  setHovered({
+                    ...location,
+                    bytes: metricBytes(location.node, metric),
+                    ratio: parentBytes > 0 ? metricBytes(location.node, metric) / parentBytes : 0,
+                    ...bounds,
+                  })
+                }
+                onHoverEnd={() => setHovered(undefined)}
+              />
+            );
+          })}
+        </svg>
+      )}
+      {hovered && <StorageTreemapTooltip hover={hovered} chartWidth={width} />}
+    </div>
+  );
+}
+
 function StorageTreemapContent({
   x,
   y,
@@ -445,7 +566,14 @@ function StorageTreemapContent({
   query,
   onSelect,
   onEnter,
-}: TreemapNode & {
+  selected,
+  onHover,
+  onHoverEnd,
+}: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   storageNode?: unknown;
   workspaceId?: unknown;
   metric: StorageMetric;
@@ -453,6 +581,12 @@ function StorageTreemapContent({
   query: string;
   onSelect: (location: StorageLocation) => void;
   onEnter: (location: StorageLocation) => Promise<void>;
+  selected?: StorageSelection;
+  onHover: (
+    location: StorageLocation,
+    bounds: { left: number; top: number; bottom: number },
+  ) => void;
+  onHoverEnd: () => void;
 }) {
   const node = rawStorageNode as StorageNode | undefined;
   const workspaceId = typeof rawWorkspaceId === "string" ? rawWorkspaceId : undefined;
@@ -463,32 +597,40 @@ function StorageTreemapContent({
   const area = width * height;
   const match = matchesNode(node, query);
   const hasDescendantMatch = containsMatch(node, query);
-  const detail = area >= 50000 ? "rich" : area >= 16000 ? "medium" : area >= 4200 ? "name" : "tiny";
+  const detail =
+    area >= 50000 && width >= 170 && height >= 110
+      ? "rich"
+      : area >= 16000 && width >= 115 && height >= 68
+        ? "medium"
+        : area >= 4200 && width >= 80 && height >= 34
+          ? "name"
+          : "tiny";
   const kind = semanticKind(node);
-  const fill =
-    kind === "git"
-      ? "#18181b"
-      : kind === "agent"
-        ? "var(--primary)"
-        : kind === "regenerable"
-          ? "#fef3c7"
-          : kind === "aggregate"
-            ? "var(--muted)"
-            : "color-mix(in srgb, var(--muted) 72%, var(--background))";
-  const textFill =
-    kind === "git" || kind === "agent" ? "var(--primary-foreground)" : "var(--foreground)";
+  const fill = storageFill(kind);
+  const textFill = storageTextColor(kind);
   const opacity = query.trim() && !hasDescendantMatch ? 0.35 : 1;
   const location = { workspaceId, node };
   const labelSize = detail === "rich" ? 14 : detail === "medium" ? 12 : 11;
+  const isSelected = selected?.workspaceId === workspaceId && selected.node.id === node.id;
+  const label = fitTreemapLabel(nodeLabel(node), Math.max(0, width - 18), labelSize);
 
   return (
     <g
       role="treeitem"
       tabIndex={0}
       aria-label={`${nodeLabel(node)}, ${formatBytes(bytes)}, ${formatPercent(ratio)}`}
+      aria-selected={isSelected}
       opacity={opacity}
       onClick={() => onSelect(location)}
       onDoubleClick={() => void onEnter(location)}
+      onMouseEnter={() =>
+        onHover(location, {
+          left: x + width / 2,
+          top: y,
+          bottom: y + height,
+        })
+      }
+      onMouseLeave={onHoverEnd}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           event.preventDefault();
@@ -496,9 +638,6 @@ function StorageTreemapContent({
         }
       }}
     >
-      <title>
-        {nodeLabel(node)} · {formatBytes(bytes)} · {formatPercent(ratio)}
-      </title>
       <rect
         x={x}
         y={y}
@@ -506,10 +645,10 @@ function StorageTreemapContent({
         height={height}
         rx={7}
         fill={fill}
-        stroke={match && query.trim() ? "var(--primary)" : "var(--border)"}
-        strokeWidth={match && query.trim() ? 3 : 1}
+        stroke={isSelected || (match && query.trim()) ? "var(--primary)" : "var(--border)"}
+        strokeWidth={isSelected ? 3 : match && query.trim() ? 2 : 1}
         strokeDasharray={node.partial ? "5 3" : undefined}
-        className="transition-[opacity,filter] duration-200 hover:brightness-95"
+        className="transition-[opacity,filter] duration-200 hover:brightness-95 dark:hover:brightness-125"
       />
       {detail !== "tiny" && (
         <text
@@ -521,7 +660,7 @@ function StorageTreemapContent({
           textAnchor="middle"
           dominantBaseline="middle"
         >
-          {nodeLabel(node)}
+          {label}
         </text>
       )}
       {(detail === "medium" || detail === "rich") && (
@@ -551,6 +690,68 @@ function StorageTreemapContent({
         </text>
       )}
     </g>
+  );
+}
+
+type StorageKind = "normal" | "regenerable" | "agent" | "git" | "aggregate";
+
+function StorageLegend() {
+  const items: Array<{ kind: StorageKind; label: string }> = [
+    { kind: "normal", label: tr("storage.type.normal") },
+    { kind: "regenerable", label: tr("storage.type.regenerable") },
+    { kind: "agent", label: tr("storage.type.agent") },
+    { kind: "git", label: tr("storage.type.git") },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border-subtle px-4 py-2 text-[11px] text-muted-foreground">
+      {items.map((item) => (
+        <span className="inline-flex items-center gap-1.5" key={item.kind}>
+          <span
+            aria-hidden="true"
+            className="size-2.5 rounded-[3px] border border-border/60"
+            style={{ backgroundColor: storageFill(item.kind) }}
+          />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function StorageTreemapTooltip({
+  hover,
+  chartWidth,
+}: {
+  hover: StorageHover;
+  chartWidth: number;
+}) {
+  const nearLeft = hover.left < 170;
+  const nearRight = chartWidth > 0 && hover.left > chartWidth - 170;
+  const above = hover.top > 94;
+  const horizontalStyle = nearLeft
+    ? { left: 12 }
+    : nearRight
+      ? { right: 12 }
+      : { left: hover.left, transform: "translateX(-50%)" };
+  return (
+    <div
+      className="pointer-events-none absolute z-10 w-[min(240px,calc(100%-24px))] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg"
+      role="tooltip"
+      style={{
+        ...horizontalStyle,
+        top: above ? Math.max(8, hover.top - 8) : hover.bottom + 8,
+        ...(above
+          ? { transform: `${horizontalStyle.transform ?? ""} translateY(-100%)` }
+          : {}),
+      }}
+    >
+      <div className="truncate font-semibold">{nodeLabel(hover.node)}</div>
+      <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
+        <span>{formatBytes(hover.bytes)}</span>
+        <span className="text-right">{formatPercent(hover.ratio)}</span>
+        <span className="col-span-2 truncate">{tr(`storage.type.${semanticKind(hover.node)}`)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -768,7 +969,7 @@ function metricStorageBytes(storage: WorkspaceStorage, metric: StorageMetric) {
   return storage.allocated_bytes;
 }
 
-function semanticKind(node: StorageNode) {
+function semanticKind(node: StorageNode): StorageKind {
   if (node.kind === "aggregate") return "aggregate";
   if (node.relative_path.split(/[\\/]/).includes(".git")) return "git";
   if (node.allocated_bytes > 0 && node.agent_asset_bytes / node.allocated_bytes >= 0.5)
@@ -776,6 +977,27 @@ function semanticKind(node: StorageNode) {
   if (node.allocated_bytes > 0 && node.regenerable_bytes / node.allocated_bytes >= 0.8)
     return "regenerable";
   return "normal";
+}
+
+function storageFill(kind: StorageKind) {
+  if (kind === "git") return "#18181b";
+  if (kind === "agent") return "var(--primary)";
+  if (kind === "regenerable") return "#fef3c7";
+  if (kind === "aggregate") return "var(--muted)";
+  return "color-mix(in srgb, var(--muted) 72%, var(--background))";
+}
+
+function storageTextColor(kind: StorageKind) {
+  if (kind === "git" || kind === "agent") return "var(--primary-foreground)";
+  if (kind === "regenerable") return "#713f12";
+  return "var(--foreground)";
+}
+
+function fitTreemapLabel(value: string, maxWidth: number, fontSize: number) {
+  const maxCharacters = Math.floor(maxWidth / Math.max(fontSize * 0.58, 1));
+  if (maxCharacters >= value.length) return value;
+  if (maxCharacters < 2) return "…";
+  return `${value.slice(0, maxCharacters - 1)}…`;
 }
 
 function matchesNode(node: StorageNode, query: string) {

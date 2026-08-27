@@ -770,7 +770,7 @@ function ThemeSetting({
           <ToggleGroupItem
             key={theme}
             value={theme}
-            className="segmented-control-item h-10 min-w-[82px] px-3 text-sm"
+            className="segmented-control-item h-9 min-h-9 min-w-[82px] px-3 text-sm"
           >
             {theme === "light" ? (
               <Sun size={16} aria-hidden="true" />
@@ -818,7 +818,7 @@ function AppIconSetting({
           <ToggleGroupItem
             key={icon}
             value={icon}
-            className="segmented-control-item inline-flex h-10 min-w-[90px] items-center justify-center gap-1.5 px-3 text-sm"
+            className="segmented-control-item inline-flex h-9 min-h-9 min-w-[90px] items-center justify-center gap-1.5 px-3 text-sm"
           >
             {icon === "white" ? (
               <span className="size-4 rounded border border-border bg-white" aria-hidden="true" />
