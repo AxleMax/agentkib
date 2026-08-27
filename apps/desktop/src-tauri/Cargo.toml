@@ -8,6 +8,9 @@ license.workspace = true
 name = "agentkib_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+dev-app = ["agentkib-store/dev-app"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

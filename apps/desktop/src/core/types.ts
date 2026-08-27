@@ -266,7 +266,10 @@ export interface McpInstallResult {
   tools: McpToolDescriptor[];
 }
 export interface RuntimeInfo {
+  app_name: string;
   app_version: string;
+  app_channel: "stable" | "development";
+  updates_enabled: boolean;
   data_dir: string;
   database_path: string;
   mcp_package_root: string;

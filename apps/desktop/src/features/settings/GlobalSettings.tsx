@@ -123,7 +123,10 @@ export function GlobalSettings({
               onChange={onCloseBehaviorChanged}
             />
           </SettingsRow>
-          <AppUpdateSetting currentVersion={runtime?.app_version} />
+          <AppUpdateSetting
+            currentVersion={runtime?.app_version}
+            updatesEnabled={runtime?.updates_enabled ?? false}
+          />
           <SettingsRow>
             <SettingsCopy>
               <strong>{tr("settings.onboarding")}</strong>
@@ -319,7 +322,13 @@ export function GlobalSettings({
 
 type AppUpdateStatus = "idle" | "checking" | "up-to-date" | "available" | "downloading" | "failed";
 
-export function AppUpdateSetting({ currentVersion }: { currentVersion?: string }) {
+export function AppUpdateSetting({
+  currentVersion,
+  updatesEnabled = true,
+}: {
+  currentVersion?: string;
+  updatesEnabled?: boolean;
+}) {
   const dialogs = useAppDialogs();
   const [status, setStatus] = useState<AppUpdateStatus>("idle");
   const [update, setUpdate] = useState<AppUpdateInfo>();
@@ -332,7 +341,7 @@ export function AppUpdateSetting({ currentVersion }: { currentVersion?: string }
     : 0;
 
   const check = async () => {
-    if (busy) return;
+    if (busy || !updatesEnabled) return;
     setStatus("checking");
     setError("");
     setUpdate(undefined);
@@ -386,6 +395,7 @@ export function AppUpdateSetting({ currentVersion }: { currentVersion?: string }
   };
 
   const description = (() => {
+    if (!updatesEnabled) return tr("settings.updateUnavailableInDevelopment");
     if (status === "checking") return tr("settings.updateChecking");
     if (status === "up-to-date")
       return tr("settings.updateUpToDate", { version: currentVersion ?? "—" });
@@ -423,7 +433,11 @@ export function AppUpdateSetting({ currentVersion }: { currentVersion?: string }
             )}
           </Button>
         ) : (
-          <Button type="button" disabled={busy} onClick={() => void check()}>
+          <Button
+            type="button"
+            disabled={busy || !updatesEnabled}
+            onClick={() => void check()}
+          >
             <RefreshCw size={14} className={busy ? "animate-spin" : undefined} />
             {tr(status === "failed" ? "settings.updateRetry" : "settings.checkForUpdates")}
           </Button>

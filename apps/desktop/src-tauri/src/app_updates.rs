@@ -11,6 +11,20 @@ use crate::{CommandResult, LocalizedMessage};
 
 const RELEASE_BASE_URL: &str = "https://github.com/starroyhq/agentkib/releases/tag";
 
+pub(crate) const fn updates_enabled() -> bool {
+    !cfg!(feature = "dev-app")
+}
+
+fn ensure_updates_enabled() -> CommandResult<()> {
+    if updates_enabled() {
+        Ok(())
+    } else {
+        Err(LocalizedMessage::new(
+            "errors.updateUnavailableInDevelopment",
+        ))
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct AppUpdateRuntime {
     pending: Mutex<Option<Update>>,
@@ -83,6 +97,7 @@ pub(crate) async fn check_app_update(
     app: AppHandle,
     state: tauri::State<'_, AppUpdateRuntime>,
 ) -> CommandResult<Option<AppUpdateInfo>> {
+    ensure_updates_enabled()?;
     if state.installing.load(Ordering::SeqCst) {
         return Err(LocalizedMessage::new("errors.updateBusy"));
     }
@@ -133,6 +148,7 @@ pub(crate) async fn install_app_update(
     version: String,
     on_event: Channel<AppUpdateProgress>,
 ) -> CommandResult<()> {
+    ensure_updates_enabled()?;
     if state.checking.load(Ordering::SeqCst) {
         return Err(LocalizedMessage::new("errors.updateBusy"));
     }
@@ -223,5 +239,11 @@ mod tests {
         assert!(acquire(&busy).is_err());
         drop(guard);
         assert!(!busy.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn update_availability_matches_the_application_channel() {
+        assert_eq!(updates_enabled(), !cfg!(feature = "dev-app"));
+        assert_eq!(ensure_updates_enabled().is_ok(), updates_enabled());
     }
 }

@@ -81,7 +81,7 @@ mod i18n;
 mod obsidian;
 mod platform;
 mod refresh;
-use app_updates::{AppUpdateRuntime, check_app_update, install_app_update};
+use app_updates::{AppUpdateRuntime, check_app_update, install_app_update, updates_enabled};
 use i18n::{LocalePreference, SupportedLocale, translate};
 use obsidian::{ObsidianIntegration, ObsidianWorkspaceLink};
 use refresh::{RefreshCoordinator, RefreshJobStatus, RefreshKind, RefreshReceipt};
@@ -318,7 +318,7 @@ struct DesktopPreferences {
     theme_preference: ThemePreference,
     #[serde(default)]
     app_icon_preference: AppIconPreference,
-    #[serde(default)]
+    #[serde(default = "default_mcp_network_settings")]
     mcp_network: McpNetworkSettings,
     #[serde(default)]
     quota_popover: QuotaPopoverPreferences,
@@ -341,7 +341,7 @@ impl Default for DesktopPreferences {
             locale_preference: LocalePreference::default(),
             theme_preference: ThemePreference::default(),
             app_icon_preference: AppIconPreference::default(),
-            mcp_network: McpNetworkSettings::default(),
+            mcp_network: default_mcp_network_settings(),
             quota_popover: QuotaPopoverPreferences::default(),
             workspace_openers: WorkspaceOpenerPreferences::default(),
             session_index_enabled: true,
@@ -354,6 +354,19 @@ impl Default for DesktopPreferences {
 
 const fn default_true() -> bool {
     true
+}
+
+fn default_mcp_network_settings() -> McpNetworkSettings {
+    #[cfg(feature = "dev-app")]
+    {
+        let mut settings = McpNetworkSettings::default();
+        settings.port = 47_654;
+        settings
+    }
+    #[cfg(not(feature = "dev-app"))]
+    {
+        McpNetworkSettings::default()
+    }
 }
 
 #[derive(Debug)]
@@ -526,7 +539,10 @@ impl LifecycleState {
 
 #[derive(Serialize)]
 struct RuntimeInfo {
+    app_name: String,
     app_version: String,
+    app_channel: AppChannel,
+    updates_enabled: bool,
     data_dir: PathBuf,
     database_path: PathBuf,
     mcp_package_root: PathBuf,
@@ -545,6 +561,21 @@ struct RuntimeInfo {
     onboarding: OnboardingState,
     quota_auto_refresh_enabled: bool,
     quota_auto_refresh_prompt_seen: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum AppChannel {
+    Stable,
+    Development,
+}
+
+const fn app_channel() -> AppChannel {
+    if cfg!(feature = "dev-app") {
+        AppChannel::Development
+    } else {
+        AppChannel::Stable
+    }
 }
 
 #[derive(Serialize)]
@@ -2371,7 +2402,10 @@ fn runtime_info(
     let theme_preference = state.theme_preference();
     let data_dir = default_data_dir().map_err(format_error)?;
     Ok(RuntimeInfo {
+        app_name: app.package_info().name.clone(),
         app_version: app.package_info().version.to_string(),
+        app_channel: app_channel(),
+        updates_enabled: updates_enabled(),
         database_path: data_dir.join("agentkib.db"),
         data_dir,
         mcp_package_root: installation_root().map_err(format_error)?,
@@ -3105,6 +3139,10 @@ fn request_guarded_exit(app: &AppHandle) {
     let _ = app.emit("agentkib:quit-requested", ());
 }
 
+fn translate_app_name(locale: SupportedLocale, key: &str, app_name: &str) -> String {
+    translate(locale, key, &[("appName", app_name.to_string())])
+}
+
 #[tauri::command]
 fn quit_app(app: AppHandle, lifecycle: tauri::State<'_, Arc<LifecycleState>>) {
     request_real_exit(&app, lifecycle.inner());
@@ -3129,6 +3167,7 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         return;
     }
     let locale = lifecycle.effective_locale();
+    let app_name = app.package_info().name.clone();
     let tray_available = lifecycle.tray_available();
     let hide_label = translate(
         locale,
@@ -3143,9 +3182,9 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         },
         &[],
     );
-    let quit_label = translate(locale, "dialog.close.quit", &[]);
+    let quit_label = translate_app_name(locale, "dialog.close.quit", &app_name);
     app.dialog()
-        .message(translate(
+        .message(translate_app_name(
             locale,
             if tray_available {
                 if cfg!(target_os = "linux") {
@@ -3156,9 +3195,9 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
             } else {
                 "dialog.close.messageNoTray"
             },
-            &[],
+            &app_name,
         ))
-        .title(translate(locale, "dialog.close.title", &[]))
+        .title(translate_app_name(locale, "dialog.close.title", &app_name))
         .parent(window)
         .buttons(MessageDialogButtons::YesNoCancelCustom(
             hide_label.clone(),
@@ -3681,12 +3720,13 @@ const QUOTA_POPOVER_HEIGHT: f64 = 560.0;
 
 #[cfg(target_os = "macos")]
 fn setup_quota_popover(app: &tauri::App) -> tauri::Result<()> {
+    let title = format!("{} Quota", app.package_info().name);
     WebviewWindowBuilder::new(
         app,
         "quota-popover",
         WebviewUrl::App("index.html?surface=quota-popover".into()),
     )
-    .title("AgentKib Quota")
+    .title(title)
     .inner_size(QUOTA_POPOVER_WIDTH, QUOTA_POPOVER_HEIGHT)
     .resizable(false)
     .decorations(false)
@@ -3780,12 +3820,13 @@ fn refresh_app_menu(app: &AppHandle) -> tauri::Result<()> {
         MenuItem::with_id(app, id, translate(locale, key, &[]), true, accelerator)
     };
 
+    let app_name = &app.package_info().name;
     let about = PredefinedMenuItem::about(
         app,
-        Some(&translate(locale, "menu.about", &[])),
+        Some(&translate_app_name(locale, "menu.about", app_name)),
         Some(
             AboutMetadataBuilder::new()
-                .name(Some("AgentKib"))
+                .name(Some(app_name))
                 .version(Some(app.package_info().version.to_string()))
                 .icon(app.default_window_icon().cloned())
                 .build(),
@@ -3794,13 +3835,22 @@ fn refresh_app_menu(app: &AppHandle) -> tauri::Result<()> {
     let settings = item("app-menu:settings", "menu.settings", Some("CmdOrCtrl+,"))?;
     let services =
         PredefinedMenuItem::services(app, Some(&translate(locale, "menu.services", &[])))?;
-    let hide = PredefinedMenuItem::hide(app, Some(&translate(locale, "menu.hide", &[])))?;
+    let hide = PredefinedMenuItem::hide(
+        app,
+        Some(&translate_app_name(locale, "menu.hide", app_name)),
+    )?;
     let hide_others =
         PredefinedMenuItem::hide_others(app, Some(&translate(locale, "menu.hideOthers", &[])))?;
     let show_all =
         PredefinedMenuItem::show_all(app, Some(&translate(locale, "menu.showAll", &[])))?;
-    let quit = item("app-menu:quit", "menu.quit", Some("CmdOrCtrl+Q"))?;
-    let app_menu = SubmenuBuilder::new(app, "AgentKib")
+    let quit = MenuItem::with_id(
+        app,
+        "app-menu:quit",
+        translate_app_name(locale, "menu.quit", app_name),
+        true,
+        Some("CmdOrCtrl+Q"),
+    )?;
+    let app_menu = SubmenuBuilder::new(app, app_name)
         .items(&[&about, &settings])
         .separator()
         .item(&services)
@@ -3952,6 +4002,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::tray::TrayIconBuilder;
 
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
+    let app_name = &app.package_info().name;
     let status = MenuItem::with_id(
         app,
         "status",
@@ -3962,7 +4013,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let mcp_status =
         MenuItem::with_id(app, "mcp_status", "MCP Hub · starting", false, None::<&str>)?;
     let menu = MenuBuilder::new(app)
-        .text("show", translate(locale, "tray.open", &[]))
+        .text("show", translate_app_name(locale, "tray.open", app_name))
         .text("quota_all", translate(locale, "tray.quotaAll", &[]))
         .text(
             "refresh_quota",
@@ -3973,7 +4024,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .text("settings", translate(locale, "nav.settings", &[]))
         .text("refresh_all", translate(locale, "tray.refreshAll", &[]))
         .separator()
-        .text("quit", translate(locale, "tray.quit", &[]))
+        .text("quit", translate_app_name(locale, "tray.quit", app_name))
         .build()?;
     #[cfg(target_os = "windows")]
     let tray_image = tauri::include_image!("icons/tray-icon-windows.png");
@@ -3982,7 +4033,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let tray = TrayIconBuilder::with_id("agentkib-status")
         .icon(tray_image)
         .menu(&menu)
-        .tooltip(translate(locale, "tray.tooltip", &[]))
+        .tooltip(translate_app_name(locale, "tray.tooltip", app_name))
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
             "refresh_quota" => {
@@ -4164,6 +4215,7 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .filter(|workspace| !matches!(workspace.status, agentkib_core::WorkspaceStatus::Healthy))
         .count();
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
+    let app_name = &app.package_info().name;
     let hub_status = app.state::<Arc<HubController>>().status();
     let refresh_statuses = app.state::<Arc<RefreshCoordinator>>().statuses();
     let active_refreshes = refresh_statuses
@@ -4210,7 +4262,7 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let menu = MenuBuilder::new(app)
-        .text("show", translate(locale, "tray.open", &[]))
+        .text("show", translate_app_name(locale, "tray.open", app_name))
         .text("quota_all", translate(locale, "tray.quotaAll", &[]))
         .text(
             "refresh_quota",
@@ -4221,11 +4273,11 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .text("settings", translate(locale, "nav.settings", &[]))
         .text("refresh_all", translate(locale, "tray.refreshAll", &[]))
         .separator()
-        .text("quit", translate(locale, "tray.quit", &[]))
+        .text("quit", translate_app_name(locale, "tray.quit", app_name))
         .build()?;
     if let Some(tray) = app.tray_by_id("agentkib-status") {
         tray.set_menu(Some(menu))?;
-        tray.set_tooltip(Some(translate(locale, "tray.tooltip", &[])))?;
+        tray.set_tooltip(Some(translate_app_name(locale, "tray.tooltip", app_name)))?;
     }
     Ok(())
 }
@@ -4608,8 +4660,41 @@ fn format_obsidian_error(error: impl std::fmt::Display) -> LocalizedMessage {
     LocalizedMessage::with_detail(key, detail)
 }
 
+const STABLE_APP_IDENTIFIER: &str = "ai.agentkib";
+const DEVELOPMENT_APP_IDENTIFIER: &str = "ai.agentkib.dev";
+
+fn validate_app_identity(
+    identifier: &str,
+    development: bool,
+    debug_build: bool,
+) -> anyhow::Result<()> {
+    let expected = if development {
+        DEVELOPMENT_APP_IDENTIFIER
+    } else {
+        STABLE_APP_IDENTIFIER
+    };
+    if identifier != expected {
+        anyhow::bail!(
+            "AgentKib application identity mismatch: expected {expected}, received {identifier}"
+        );
+    }
+    if debug_build && !development {
+        anyhow::bail!(
+            "Debug desktop builds must use the isolated development identity; start AgentKib with `pnpm dev`"
+        );
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    validate_app_identity(
+        &context.config().identifier,
+        cfg!(feature = "dev-app"),
+        cfg!(debug_assertions),
+    )
+    .expect("Invalid AgentKib application identity");
     let preferences = load_desktop_preferences();
     let lifecycle = Arc::new(LifecycleState::new(&preferences));
     let hub = Arc::new(
@@ -4622,7 +4707,7 @@ pub fn run() {
     let storage = Arc::new(StorageRuntime::default());
     let conversations = Arc::new(ConversationRuntime::default());
     let refresh = Arc::new(RefreshCoordinator::default());
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
@@ -4637,9 +4722,14 @@ pub fn run() {
         .manage(AppUpdateRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_shell::init());
+    #[cfg(not(feature = "dev-app"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let app = builder
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_title(&app.package_info().name)?;
+            }
             let theme = app.state::<Arc<LifecycleState>>().theme_preference();
             let app_icon = app.state::<Arc<LifecycleState>>().app_icon_preference();
             setup_quota_popover(app)?;
@@ -4813,7 +4903,7 @@ pub fn run() {
             list_mcp_installations,
             uninstall_mcp
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("Failed to build AgentKib");
     app.run(|app, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
@@ -4833,6 +4923,26 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn application_identity_requires_the_matching_runtime_channel() {
+        assert!(validate_app_identity(STABLE_APP_IDENTIFIER, false, false).is_ok());
+        assert!(validate_app_identity(DEVELOPMENT_APP_IDENTIFIER, true, true).is_ok());
+        assert!(validate_app_identity(STABLE_APP_IDENTIFIER, true, true).is_err());
+        assert!(validate_app_identity(DEVELOPMENT_APP_IDENTIFIER, false, false).is_err());
+        assert!(validate_app_identity(STABLE_APP_IDENTIFIER, false, true).is_err());
+    }
+
+    #[test]
+    fn runtime_channel_uses_an_isolated_mcp_port() {
+        let expected = if cfg!(feature = "dev-app") {
+            (AppChannel::Development, 47_654)
+        } else {
+            (AppChannel::Stable, 47_653)
+        };
+        assert_eq!(app_channel(), expected.0);
+        assert_eq!(default_mcp_network_settings().port, expected.1);
+    }
 
     #[test]
     fn doctor_summary_marks_workspace_failures_as_errors() {

@@ -32,8 +32,12 @@ pub struct Store {
     connection: Connection,
 }
 
+#[cfg(not(feature = "dev-app"))]
 const APP_DATA_DIRECTORY: &str = "ai.agentkib";
+#[cfg(feature = "dev-app")]
+const APP_DATA_DIRECTORY: &str = "ai.agentkib.dev";
 // Remove after every supported preview build has migrated to `APP_DATA_DIRECTORY`.
+#[cfg(not(feature = "dev-app"))]
 const LEGACY_APP_DATA_DIRECTORY: &str = "com.agentkib.desktop";
 
 impl Store {
@@ -3057,9 +3061,21 @@ fn row_to_catalog_asset(row: &Row<'_>) -> rusqlite::Result<CatalogAsset> {
 pub fn default_data_dir() -> Result<PathBuf> {
     let base =
         dirs::data_local_dir().context("Could not determine the local app data directory")?;
-    migrate_legacy_data_dir(&base)
+    resolve_data_dir(&base)
 }
 
+fn resolve_data_dir(base: &Path) -> Result<PathBuf> {
+    #[cfg(feature = "dev-app")]
+    {
+        Ok(base.join(APP_DATA_DIRECTORY))
+    }
+    #[cfg(not(feature = "dev-app"))]
+    {
+        migrate_legacy_data_dir(base)
+    }
+}
+
+#[cfg(not(feature = "dev-app"))]
 fn migrate_legacy_data_dir(base: &Path) -> Result<PathBuf> {
     let current = base.join(APP_DATA_DIRECTORY);
     if current.exists() {
@@ -3285,6 +3301,7 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(not(feature = "dev-app"))]
     #[test]
     fn legacy_app_data_is_moved_to_the_current_identifier() {
         let base = tempdir().unwrap();
@@ -3302,6 +3319,7 @@ mod tests {
         assert!(!legacy.exists());
     }
 
+    #[cfg(not(feature = "dev-app"))]
     #[test]
     fn legacy_app_data_never_overwrites_the_current_identifier() {
         let base = tempdir().unwrap();
@@ -3318,6 +3336,24 @@ mod tests {
             b"current"
         );
         assert!(legacy.exists());
+    }
+
+    #[cfg(feature = "dev-app")]
+    #[test]
+    fn development_data_never_migrates_the_legacy_directory() {
+        let base = tempdir().unwrap();
+        let legacy = base.path().join("com.agentkib.desktop");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("agentkib.db"), b"production preview data").unwrap();
+
+        let development = resolve_data_dir(base.path()).unwrap();
+
+        assert_eq!(development, base.path().join("ai.agentkib.dev"));
+        assert!(!development.exists());
+        assert_eq!(
+            fs::read(legacy.join("agentkib.db")).unwrap(),
+            b"production preview data"
+        );
     }
 
     #[test]
