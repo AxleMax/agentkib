@@ -10,7 +10,9 @@ branch pushes run platform checks but do not publish installers.
    `apps/desktop/package.json`, and
    `apps/desktop/src-tauri/tauri.conf.json`.
 2. Merge the version change into `main` and make sure the required checks pass.
-3. Create an annotated version tag on that `main` commit and push only the tag:
+3. Run the workflow manually without `release_tag`, then complete the
+   [Beta acceptance guide](BETA.md) against the candidate artifacts.
+4. Create an annotated version tag on that `main` commit and push only the tag:
 
    ```bash
    git switch main
@@ -19,7 +21,7 @@ branch pushes run platform checks but do not publish installers.
    git push origin v0.1.0
    ```
 
-4. Wait for every job in **Desktop Package Artifacts** to pass. The workflow
+5. Wait for every job in **Desktop Package Artifacts** to pass. The workflow
    creates a draft GitHub Release only after all platform builds complete. It
    verifies the complete asset manifest, SHA-256 checksums, updater signatures,
    and `latest.json`, uploads the files, checks their remote names and sizes,

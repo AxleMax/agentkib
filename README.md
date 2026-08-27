@@ -133,7 +133,7 @@ AgentKib 会区分“已安装”和“只发现了卸载后留下的本地数�
 
 Windows 的完整环境、启动、打包和安装说明见 [Windows 指南](docs/WINDOWS.md)。维护者按 [桌面发布流程](docs/RELEASE.md) 推送版本标签后，CI 会构建并校验多平台预览包，对 macOS 包完成签名和公证后再发布；PR 和普通分支 push 只运行检查，不发布安装包。开发和验证命令见文末的[开发说明](#development)。
 
-安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。v0.3.1 是首个包含更新器的版本；更早版本需先手动升级，此后的正式版本可按上文所述在应用内检查更新。
+安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)，发布候选版本按 [Beta 验收指南](docs/BETA.md) 检查。v0.3.1 是首个包含更新器的版本；更早版本需先手动升级，此后的正式版本可按上文所述在应用内检查更新。
 
 macOS v0.3.2 及以后版本已签名并通过 Apple 公证，可在核对 SHA-256 后将 AgentKib 拖入“应用程序”并正常打开。只有使用 v0.3.1 及更早的历史包时，才需要执行以下命令解除隔离属性：
 
@@ -292,4 +292,4 @@ pnpm typecheck
 pnpm build
 ```
 
-AgentKib is a development preview. Checksums are published with every package on [Releases](https://github.com/starroyhq/agentkib/releases). macOS releases starting with v0.3.2 are signed and notarized by Apple; Windows installers remain unsigned and may trigger SmartScreen. For feedback, use [GitHub Issues](https://github.com/starroyhq/agentkib/issues).
+AgentKib is a development preview. Checksums are published with every package on [Releases](https://github.com/starroyhq/agentkib/releases). macOS releases starting with v0.3.2 are signed and notarized by Apple; Windows installers remain unsigned and may trigger SmartScreen. For feedback, use [GitHub Issues](https://github.com/starroyhq/agentkib/issues); release candidates follow the [Beta acceptance guide](docs/BETA.md).
