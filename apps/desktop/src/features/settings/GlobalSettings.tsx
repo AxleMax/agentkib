@@ -29,7 +29,12 @@ import { QuotaDiagnostics } from "@/features/quota/QuotaDiagnostics";
 import { RemoteGatewaysSettings } from "./RemoteGateways";
 import { api } from "@/core/api";
 import { changeLocale, formatDateTime, localizeMessage, tr } from "@/core/i18n";
-import { applyTheme } from "@/core/theme";
+import {
+  accentThemePreference,
+  applyAccentTheme,
+  applyTheme,
+  type AccentTheme,
+} from "@/core/theme";
 import { normalizePlatform, primaryShortcutModifier, usesSystemTrayWording } from "@/core/platform";
 import type { SettingsSection } from "./SettingsSidebar";
 import type {
@@ -108,6 +113,7 @@ export function GlobalSettings({
       <div className="grid gap-5">
         <SettingGroup title={tr("settings.interface")}>
           <ThemeSetting runtime={runtime} onChanged={onLocaleChanged} />
+          <AccentThemeSetting />
           <AppIconSetting runtime={runtime} onChanged={onLocaleChanged} />
           <LanguageSetting runtime={runtime} onChanged={onLocaleChanged} />
           <SettingsRow>
@@ -783,6 +789,42 @@ function ThemeSetting({
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
+    </SettingsRow>
+  );
+}
+
+function AccentThemeSetting() {
+  const [selected, setSelected] = useState<AccentTheme>(() => accentThemePreference());
+
+  return (
+    <SettingsRow>
+      <SettingsCopy>
+        <strong>{tr("settings.accentTheme")}</strong>
+      </SettingsCopy>
+      <SelectControl
+        aria-label={tr("settings.accentTheme")}
+        className={settingsControlClass}
+        value={selected}
+        onChange={(event) => {
+          const theme = event.target.value;
+          if (
+            theme !== "black" &&
+            theme !== "sky" &&
+            theme !== "claude" &&
+            theme !== "violet" &&
+            theme !== "emerald"
+          )
+            return;
+          applyAccentTheme(theme);
+          setSelected(theme);
+        }}
+      >
+        {(["black", "sky", "claude", "violet", "emerald"] as AccentTheme[]).map((theme) => (
+          <option key={theme} value={theme}>
+            {tr(`settings.accentTheme.${theme}`)}
+          </option>
+        ))}
+      </SelectControl>
     </SettingsRow>
   );
 }
