@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a reproducible AgentKib problem
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve AgentKib. Do not include API keys, tokens, cookies, complete transcripts, or other sensitive project content.
+  - type: input
+    id: version
+    attributes:
+      label: AgentKib version
+      description: Find this in Settings → General.
+      placeholder: 0.4.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and architecture
+      placeholder: macOS 15.6 arm64 / Windows 11 x64 / Ubuntu 24.04 x64
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Related Agent
+      options:
+        - None or not sure
+        - Codex
+        - Claude Code
+        - Cursor
+        - OpenClaw
+        - Hermes
+        - DeepSeek Harness
+        - Multiple Agents
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use the smallest reproducible sequence and replace private paths or names with placeholders.
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Additional diagnostics
+      description: Optional. Include only redacted error text or screenshots; do not upload full transcripts, credentials, or private configuration files.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Sensitive data check
+      options:
+        - label: I removed secrets, cookies, full transcripts, and private project content.
+          required: true

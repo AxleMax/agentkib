@@ -584,6 +584,7 @@ jobs:
       RELEASE_ASSETS_DIR: dist/github-release
       RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}
       RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+      RELEASE_WORKFLOW_SCRIPTS_DIR: .release-workflow-source/.github/scripts
       WORKFLOW_ARTIFACTS_DIR: dist/workflow-artifacts
 
     steps:
@@ -592,6 +593,18 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.release_sha }}
           fetch-depth: 1
+
+      - name: Checkout release workflow helpers
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .release-workflow-source
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Test release workflow helpers
+        shell: bash
+        run: node --test "$RELEASE_WORKFLOW_SCRIPTS_DIR"/*.test.mjs
 
       - name: Download platform artifacts
         uses: actions/download-artifact@v8
@@ -682,7 +695,7 @@ jobs:
             -f tag_name="$RELEASE_TAG" \
             -f target_commitish="$RELEASE_SHA" \
             --jq '.body' > "$notes_file"
-          node .github/scripts/build-updater-manifest.mjs \
+          node "$RELEASE_WORKFLOW_SCRIPTS_DIR/build-updater-manifest.mjs" \
             "$RELEASE_ASSETS_DIR" "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$APP_VERSION" \
             "$published_at" "$notes_file"
           test -s "$RELEASE_ASSETS_DIR/latest.json"
@@ -703,7 +716,7 @@ jobs:
             exit 1
           fi
 
-          release_json=$(node .github/scripts/resolve-draft-release.mjs)
+          release_json=$(node "$RELEASE_WORKFLOW_SCRIPTS_DIR/resolve-draft-release.mjs")
           if [[ -n "$release_json" ]]; then
             echo "Resuming existing draft release $RELEASE_TAG"
           else
@@ -729,7 +742,7 @@ jobs:
               create_args+=(--prerelease)
             fi
             gh "${create_args[@]}"
-            release_json=$(node .github/scripts/resolve-draft-release.mjs --wait)
+            release_json=$(node "$RELEASE_WORKFLOW_SCRIPTS_DIR/resolve-draft-release.mjs" --wait)
           fi
 
           release_id=$(jq -r '.id // empty' <<<"$release_json")

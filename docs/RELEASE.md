@@ -10,7 +10,12 @@ branch pushes run platform checks but do not publish installers.
    `apps/desktop/package.json`, and
    `apps/desktop/src-tauri/tauri.conf.json`.
 2. Merge the version change into `main` and make sure the required checks pass.
-3. Create an annotated version tag on that `main` commit and push only the tag:
+3. Run the workflow manually without `release_tag`, then complete the
+   pre-release parts of the [Beta acceptance guide](BETA.md) against the
+   candidate artifacts. Artifact-only runs intentionally produce unsigned
+   macOS previews and omit updater signatures and `latest.json`; they cannot
+   validate Gatekeeper, notarization, or the end-to-end updater path.
+4. Create an annotated version tag on that `main` commit and push only the tag:
 
    ```bash
    git switch main
@@ -19,11 +24,15 @@ branch pushes run platform checks but do not publish installers.
    git push origin v0.1.0
    ```
 
-4. Wait for every job in **Desktop Package Artifacts** to pass. The workflow
+5. Wait for every job in **Desktop Package Artifacts** to pass. The workflow
    creates a draft GitHub Release only after all platform builds complete. It
    verifies the complete asset manifest, SHA-256 checksums, updater signatures,
    and `latest.json`, uploads the files, checks their remote names and sizes,
    and then publishes the release.
+6. Complete the release-only signing, notarization, installation, and updater
+   checks in the [Beta acceptance guide](BETA.md) against the published,
+   immutable Release assets. If a defect is found, publish a new patch version;
+   do not move or replace the tag.
 
 Do not create an empty GitHub Release before pushing the tag. Stable SemVer
 tags such as `v0.1.0` become the latest release. Tags containing a prerelease
@@ -45,17 +54,26 @@ gh workflow run release-desktop.yml --ref main -f release_tag=vX.Y.Z
 ```
 
 The retry rebuilds every platform, resumes an existing draft, and replaces
-same-named draft assets. Draft lookup uses the release-by-tag API with a bounded
-retry window because a newly created draft can be briefly unavailable through
-the GitHub API. It refuses to overwrite a release that is already public. A
-product-code fix requires a new version and tag rather than moving an existing
-tag. Workflow artifacts remain available for diagnosing failed builds.
+same-named draft assets. GitHub's release-by-tag API can omit draft releases,
+so draft lookup falls back to the authenticated, paginated Releases list and
+uses a bounded retry window. Manual retries build the immutable tagged source
+but use the reviewed release helpers from the selected workflow revision. The
+workflow refuses duplicate tags and will not overwrite a release that is
+already public. A product-code fix requires a new version and tag rather than
+moving an existing tag. Workflow artifacts remain available for diagnosing
+failed builds.
 
 ## Build artifacts without publishing
 
 To create packages for a branch without creating a GitHub Release, open
 **Actions**, select **Desktop Package Artifacts**, choose **Run workflow**, pick
 the branch, and leave `release_tag` empty.
+
+These packages are intended for pre-release functional checks only. macOS
+artifacts from this path are unsigned previews, and the workflow does not
+create updater signatures or `latest.json`. Release signing, notarization, and
+end-to-end update checks must use the assets produced by the tagged release
+run.
 
 The run produces these downloadable workflow artifacts:
 

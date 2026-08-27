@@ -51,6 +51,7 @@ import type {
   ModelUsageBreakdown,
   ObsidianIntegration,
   ObsidianWorkspaceLink,
+  OnboardingEvent,
   PlannedSessionHandoff,
   QuotaCollectorStatus,
   QuotaPopoverPreferences,
@@ -110,6 +111,7 @@ export const api = {
   reviewMemory: (id: string, status: MemoryStatus, editedContent?: string) =>
     invoke<MemoryRecord>("review_memory", { id, status, editedContent }),
   runtime: () => invoke<RuntimeInfo>("runtime_info"),
+  updateOnboarding: (event: OnboardingEvent) => invoke<RuntimeInfo>("update_onboarding", { event }),
   openFilesAndFoldersSettings: () => invoke<void>("open_files_and_folders_settings"),
   quitApp: () => invoke<void>("quit_app"),
   setCloseBehavior: (behavior?: CloseBehavior) =>
