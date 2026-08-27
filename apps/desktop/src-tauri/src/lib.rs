@@ -218,6 +218,88 @@ struct WorkspaceOpenerPreferences {
     by_workspace: BTreeMap<String, String>,
 }
 
+const ONBOARDING_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct OnboardingPreferences {
+    #[serde(default)]
+    acknowledged_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    workspace_id: Option<String>,
+    #[serde(default)]
+    doctor_completed: bool,
+    #[serde(default)]
+    repairable_count: usize,
+    #[serde(default)]
+    repair_applied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct OnboardingState {
+    version: u32,
+    acknowledged_version: u32,
+    workspace_id: Option<String>,
+    doctor_completed: bool,
+    repairable_count: usize,
+    repair_applied: bool,
+}
+
+impl From<OnboardingPreferences> for OnboardingState {
+    fn from(preferences: OnboardingPreferences) -> Self {
+        Self {
+            version: ONBOARDING_VERSION,
+            acknowledged_version: preferences.acknowledged_version,
+            workspace_id: preferences.workspace_id,
+            doctor_completed: preferences.doctor_completed,
+            repairable_count: preferences.repairable_count,
+            repair_applied: preferences.repair_applied,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "event", rename_all = "kebab-case")]
+enum OnboardingEvent {
+    DoctorCompleted {
+        workspace_id: String,
+        repairable_count: usize,
+    },
+    RepairApplied {
+        workspace_id: String,
+    },
+    Dismissed,
+    Restarted,
+}
+
+fn apply_onboarding_event(preferences: &mut OnboardingPreferences, event: OnboardingEvent) {
+    match event {
+        OnboardingEvent::DoctorCompleted {
+            workspace_id,
+            repairable_count,
+        } => {
+            if preferences.workspace_id.as_deref() != Some(workspace_id.as_str()) {
+                preferences.repair_applied = false;
+            }
+            preferences.workspace_id = Some(workspace_id);
+            preferences.doctor_completed = true;
+            preferences.repairable_count = repairable_count;
+            if repairable_count == 0 {
+                preferences.acknowledged_version = ONBOARDING_VERSION;
+            }
+        }
+        OnboardingEvent::RepairApplied { workspace_id } => {
+            preferences.workspace_id = Some(workspace_id);
+            preferences.repair_applied = true;
+        }
+        OnboardingEvent::Dismissed => {
+            preferences.acknowledged_version = ONBOARDING_VERSION;
+        }
+        OnboardingEvent::Restarted => {
+            *preferences = OnboardingPreferences::default();
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct WorkspaceOpener {
     id: String,
@@ -244,6 +326,8 @@ struct DesktopPreferences {
     workspace_openers: WorkspaceOpenerPreferences,
     #[serde(default = "default_true")]
     session_index_enabled: bool,
+    #[serde(default)]
+    onboarding: OnboardingPreferences,
 }
 
 impl Default for DesktopPreferences {
@@ -257,6 +341,7 @@ impl Default for DesktopPreferences {
             quota_popover: QuotaPopoverPreferences::default(),
             workspace_openers: WorkspaceOpenerPreferences::default(),
             session_index_enabled: true,
+            onboarding: OnboardingPreferences::default(),
         }
     }
 }
@@ -273,6 +358,7 @@ struct LifecycleState {
     theme_preference: Mutex<ThemePreference>,
     app_icon_preference: Mutex<AppIconPreference>,
     session_index_enabled: AtomicBool,
+    onboarding: Mutex<OnboardingPreferences>,
     close_prompt_open: AtomicBool,
     quitting: AtomicBool,
     tray_available: AtomicBool,
@@ -324,6 +410,7 @@ impl LifecycleState {
             theme_preference: Mutex::new(preferences.theme_preference),
             app_icon_preference: Mutex::new(preferences.app_icon_preference),
             session_index_enabled: AtomicBool::new(preferences.session_index_enabled),
+            onboarding: Mutex::new(preferences.onboarding.clone()),
             close_prompt_open: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
             tray_available: AtomicBool::new(false),
@@ -387,6 +474,17 @@ impl LifecycleState {
         self.session_index_enabled.store(enabled, Ordering::SeqCst);
     }
 
+    fn onboarding(&self) -> OnboardingPreferences {
+        self.onboarding
+            .lock()
+            .expect("onboarding state lock")
+            .clone()
+    }
+
+    fn set_onboarding(&self, onboarding: OnboardingPreferences) {
+        *self.onboarding.lock().expect("onboarding state lock") = onboarding;
+    }
+
     fn tray_available(&self) -> bool {
         self.tray_available.load(Ordering::SeqCst)
     }
@@ -414,6 +512,7 @@ struct RuntimeInfo {
     app_icon_preference: AppIconPreference,
     tray_available: bool,
     session_index_enabled: bool,
+    onboarding: OnboardingState,
 }
 
 #[derive(Serialize)]
@@ -2223,7 +2322,24 @@ fn runtime_info(
         app_icon_preference: state.app_icon_preference(),
         tray_available: state.tray_available(),
         session_index_enabled: state.session_index_enabled(),
+        onboarding: state.onboarding().into(),
     })
+}
+
+#[tauri::command]
+fn update_onboarding(
+    event: OnboardingEvent,
+    app: AppHandle,
+    state: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    let mut onboarding = state.onboarding();
+    apply_onboarding_event(&mut onboarding, event);
+    let persisted = onboarding.clone();
+    update_preferences(move |preferences| preferences.onboarding = persisted)
+        .map_err(format_error)?;
+    state.set_onboarding(onboarding);
+    runtime_info(app, state, hub)
 }
 
 #[tauri::command]
@@ -4542,6 +4658,7 @@ pub fn run() {
             launch_session_handoff,
             get_workspace_doctor_report,
             get_workspace_doctor_summaries,
+            update_onboarding,
             clear_session_index,
             set_session_index_enabled,
             add_workspace,
@@ -4708,6 +4825,7 @@ mod tests {
                 },
                 workspace_openers: WorkspaceOpenerPreferences::default(),
                 session_index_enabled: false,
+                onboarding: OnboardingPreferences::default(),
             },
         )
         .unwrap();
@@ -4735,6 +4853,73 @@ mod tests {
             ["claude"]
         );
         assert!(!load_preferences(&path).unwrap().session_index_enabled);
+    }
+
+    #[test]
+    fn old_preferences_default_to_unacknowledged_onboarding() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("preferences.json");
+        fs::write(&path, r#"{"session_index_enabled":true}"#).unwrap();
+
+        let preferences = load_preferences(&path).unwrap();
+        assert_eq!(preferences.onboarding, OnboardingPreferences::default());
+        let state = OnboardingState::from(preferences.onboarding);
+        assert_eq!(state.version, ONBOARDING_VERSION);
+        assert_eq!(state.acknowledged_version, 0);
+    }
+
+    #[test]
+    fn onboarding_completes_only_after_no_repairable_issues_remain() {
+        let mut preferences = OnboardingPreferences::default();
+        apply_onboarding_event(
+            &mut preferences,
+            OnboardingEvent::DoctorCompleted {
+                workspace_id: "workspace-1".into(),
+                repairable_count: 2,
+            },
+        );
+        assert!(preferences.doctor_completed);
+        assert_eq!(preferences.acknowledged_version, 0);
+
+        apply_onboarding_event(
+            &mut preferences,
+            OnboardingEvent::RepairApplied {
+                workspace_id: "workspace-1".into(),
+            },
+        );
+        assert!(preferences.repair_applied);
+        assert_eq!(preferences.acknowledged_version, 0);
+
+        apply_onboarding_event(
+            &mut preferences,
+            OnboardingEvent::DoctorCompleted {
+                workspace_id: "workspace-1".into(),
+                repairable_count: 0,
+            },
+        );
+        assert_eq!(preferences.acknowledged_version, ONBOARDING_VERSION);
+    }
+
+    #[test]
+    fn onboarding_can_be_dismissed_and_restarted() {
+        let mut preferences = OnboardingPreferences::default();
+        apply_onboarding_event(&mut preferences, OnboardingEvent::Dismissed);
+        assert_eq!(preferences.acknowledged_version, ONBOARDING_VERSION);
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("preferences.json");
+        save_preferences(
+            &path,
+            &DesktopPreferences {
+                onboarding: preferences.clone(),
+                ..DesktopPreferences::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(load_preferences(&path).unwrap().onboarding, preferences);
+
+        apply_onboarding_event(&mut preferences, OnboardingEvent::Restarted);
+        assert_eq!(preferences, OnboardingPreferences::default());
     }
 
     #[test]

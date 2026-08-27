@@ -62,6 +62,16 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("check_app_update");
   });
 
+  it("persists onboarding events through the preference boundary", async () => {
+    vi.mocked(invoke).mockResolvedValue({ onboarding: { acknowledged_version: 1 } });
+
+    await api.updateOnboarding({ event: "dismissed" });
+
+    expect(invoke).toHaveBeenCalledWith("update_onboarding", {
+      event: { event: "dismissed" },
+    });
+  });
+
   it("queues refresh work without waiting for collector results", async () => {
     vi.mocked(invoke).mockResolvedValue({
       kind: "insights",

@@ -82,6 +82,7 @@ export type GlobalSettingsProps = {
   onRestore: (path: string) => Promise<void>;
   onCloseBehaviorChanged: (behavior?: CloseBehavior) => Promise<void>;
   onLocaleChanged: (runtime: RuntimeInfo) => void;
+  onOnboardingRestarted: () => Promise<void>;
   onRemoteGatewaysChanged: () => Promise<void>;
 };
 
@@ -101,6 +102,7 @@ export function GlobalSettings({
   onRestore,
   onCloseBehaviorChanged,
   onLocaleChanged,
+  onOnboardingRestarted,
   onRemoteGatewaysChanged,
 }: GlobalSettingsProps) {
   if (section === "general")
@@ -122,6 +124,15 @@ export function GlobalSettings({
             />
           </SettingsRow>
           <AppUpdateSetting currentVersion={runtime?.app_version} />
+          <SettingsRow>
+            <SettingsCopy>
+              <strong>{tr("settings.onboarding")}</strong>
+              <small>{tr("settings.onboardingDescription")}</small>
+            </SettingsCopy>
+            <Button variant="outline" onClick={() => void onOnboardingRestarted()}>
+              {tr("settings.onboardingRestart")}
+            </Button>
+          </SettingsRow>
           {runtime?.tray_available === false && (
             <SettingDetail variant="warning" role="status">
               <CircleAlert size={14} />

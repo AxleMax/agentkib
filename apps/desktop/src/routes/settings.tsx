@@ -87,6 +87,10 @@ function SettingsRoute() {
     });
 
   const changeRuntime = (nextRuntime: RuntimeInfo) => setRuntime(nextRuntime);
+  const restartOnboarding = () =>
+    run(async () => {
+      setRuntime(await api.updateOnboarding({ event: "restarted" }));
+    });
 
   return (
     <div className={cn("group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden")}>
@@ -132,6 +136,7 @@ function SettingsRoute() {
               onRestore={restoreExcluded}
               onCloseBehaviorChanged={changeCloseBehavior}
               onLocaleChanged={changeRuntime}
+              onOnboardingRestarted={restartOnboarding}
               onRemoteGatewaysChanged={refreshRemoteGateways}
             />
           </section>
