@@ -282,6 +282,8 @@ export interface RuntimeInfo {
   app_icon_preference: AppIconPreference;
   tray_available: boolean;
   session_index_enabled: boolean;
+  quota_auto_refresh_enabled: boolean;
+  quota_auto_refresh_prompt_seen: boolean;
 }
 export type AppUpdateInstallMode = "in-app" | "manual";
 export interface AppUpdateInfo {

@@ -244,6 +244,10 @@ struct DesktopPreferences {
     workspace_openers: WorkspaceOpenerPreferences,
     #[serde(default = "default_true")]
     session_index_enabled: bool,
+    #[serde(default)]
+    quota_auto_refresh_enabled: bool,
+    #[serde(default)]
+    quota_auto_refresh_prompt_seen: bool,
 }
 
 impl Default for DesktopPreferences {
@@ -257,6 +261,8 @@ impl Default for DesktopPreferences {
             quota_popover: QuotaPopoverPreferences::default(),
             workspace_openers: WorkspaceOpenerPreferences::default(),
             session_index_enabled: true,
+            quota_auto_refresh_enabled: false,
+            quota_auto_refresh_prompt_seen: false,
         }
     }
 }
@@ -273,6 +279,8 @@ struct LifecycleState {
     theme_preference: Mutex<ThemePreference>,
     app_icon_preference: Mutex<AppIconPreference>,
     session_index_enabled: AtomicBool,
+    quota_auto_refresh_enabled: AtomicBool,
+    quota_auto_refresh_prompt_seen: AtomicBool,
     close_prompt_open: AtomicBool,
     quitting: AtomicBool,
     tray_available: AtomicBool,
@@ -324,6 +332,10 @@ impl LifecycleState {
             theme_preference: Mutex::new(preferences.theme_preference),
             app_icon_preference: Mutex::new(preferences.app_icon_preference),
             session_index_enabled: AtomicBool::new(preferences.session_index_enabled),
+            quota_auto_refresh_enabled: AtomicBool::new(preferences.quota_auto_refresh_enabled),
+            quota_auto_refresh_prompt_seen: AtomicBool::new(
+                preferences.quota_auto_refresh_prompt_seen,
+            ),
             close_prompt_open: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
             tray_available: AtomicBool::new(false),
@@ -387,6 +399,24 @@ impl LifecycleState {
         self.session_index_enabled.store(enabled, Ordering::SeqCst);
     }
 
+    fn quota_auto_refresh_enabled(&self) -> bool {
+        self.quota_auto_refresh_enabled.load(Ordering::SeqCst)
+    }
+
+    fn set_quota_auto_refresh_enabled(&self, enabled: bool) {
+        self.quota_auto_refresh_enabled
+            .store(enabled, Ordering::SeqCst);
+    }
+
+    fn quota_auto_refresh_prompt_seen(&self) -> bool {
+        self.quota_auto_refresh_prompt_seen.load(Ordering::SeqCst)
+    }
+
+    fn set_quota_auto_refresh_prompt_seen(&self, seen: bool) {
+        self.quota_auto_refresh_prompt_seen
+            .store(seen, Ordering::SeqCst);
+    }
+
     fn tray_available(&self) -> bool {
         self.tray_available.load(Ordering::SeqCst)
     }
@@ -414,6 +444,8 @@ struct RuntimeInfo {
     app_icon_preference: AppIconPreference,
     tray_available: bool,
     session_index_enabled: bool,
+    quota_auto_refresh_enabled: bool,
+    quota_auto_refresh_prompt_seen: bool,
 }
 
 #[derive(Serialize)]
@@ -1602,6 +1634,39 @@ fn set_session_index_enabled(
 }
 
 #[tauri::command]
+fn set_quota_auto_refresh_enabled(
+    enabled: bool,
+    app: AppHandle,
+    lifecycle: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    update_preferences(|preferences| {
+        preferences.quota_auto_refresh_enabled = enabled;
+        preferences.quota_auto_refresh_prompt_seen = true;
+    })
+    .map_err(format_error)?;
+    lifecycle.set_quota_auto_refresh_enabled(enabled);
+    lifecycle.set_quota_auto_refresh_prompt_seen(true);
+    let _ = app.emit("agentkib:quota-auto-refresh-updated", enabled);
+    let _ = app.emit("agentkib:quota-auto-refresh-prompt-updated", true);
+    runtime_info(app, lifecycle, hub)
+}
+
+#[tauri::command]
+fn set_quota_auto_refresh_prompt_seen(
+    seen: bool,
+    app: AppHandle,
+    lifecycle: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    update_preferences(|preferences| preferences.quota_auto_refresh_prompt_seen = seen)
+        .map_err(format_error)?;
+    lifecycle.set_quota_auto_refresh_prompt_seen(seen);
+    let _ = app.emit("agentkib:quota-auto-refresh-prompt-updated", seen);
+    runtime_info(app, lifecycle, hub)
+}
+
+#[tauri::command]
 fn add_workspace(path: String) -> CommandResult<WorkspaceSummary> {
     Store::open_default()
         .and_then(|store| store.add_workspace(Path::new(&path)))
@@ -2223,6 +2288,8 @@ fn runtime_info(
         app_icon_preference: state.app_icon_preference(),
         tray_available: state.tray_available(),
         session_index_enabled: state.session_index_enabled(),
+        quota_auto_refresh_enabled: state.quota_auto_refresh_enabled(),
+        quota_auto_refresh_prompt_seen: state.quota_auto_refresh_prompt_seen(),
     })
 }
 
@@ -4348,6 +4415,10 @@ fn remote_gateways_configured() -> bool {
 }
 
 fn request_quota_if_due(app: &AppHandle) {
+    let lifecycle = app.state::<Arc<LifecycleState>>();
+    if !lifecycle.quota_auto_refresh_enabled() {
+        return;
+    }
     let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
     let (snapshot, last_success) = Store::open_default()
         .map(|store| {
@@ -4544,6 +4615,8 @@ pub fn run() {
             get_workspace_doctor_summaries,
             clear_session_index,
             set_session_index_enabled,
+            set_quota_auto_refresh_enabled,
+            set_quota_auto_refresh_prompt_seen,
             add_workspace,
             refresh_workspace,
             exclude_workspace,
@@ -4708,6 +4781,8 @@ mod tests {
                 },
                 workspace_openers: WorkspaceOpenerPreferences::default(),
                 session_index_enabled: false,
+                quota_auto_refresh_enabled: true,
+                quota_auto_refresh_prompt_seen: true,
             },
         )
         .unwrap();
@@ -4735,6 +4810,12 @@ mod tests {
             ["claude"]
         );
         assert!(!load_preferences(&path).unwrap().session_index_enabled);
+        assert!(load_preferences(&path).unwrap().quota_auto_refresh_enabled);
+        assert!(
+            load_preferences(&path)
+                .unwrap()
+                .quota_auto_refresh_prompt_seen
+        );
     }
 
     #[test]
@@ -4743,6 +4824,22 @@ mod tests {
         let preferences = load_preferences(&dir.path().join("missing.json")).unwrap();
         assert_eq!(preferences.close_behavior, None);
         assert!(preferences.session_index_enabled);
+        assert!(!preferences.quota_auto_refresh_enabled);
+        assert!(!preferences.quota_auto_refresh_prompt_seen);
+    }
+
+    #[test]
+    fn quota_auto_refresh_defaults_off_and_can_be_toggled() {
+        let lifecycle = LifecycleState::new(&DesktopPreferences::default());
+
+        assert!(!lifecycle.quota_auto_refresh_enabled());
+        lifecycle.set_quota_auto_refresh_enabled(true);
+        assert!(lifecycle.quota_auto_refresh_enabled());
+        lifecycle.set_quota_auto_refresh_enabled(false);
+        assert!(!lifecycle.quota_auto_refresh_enabled());
+        assert!(!lifecycle.quota_auto_refresh_prompt_seen());
+        lifecycle.set_quota_auto_refresh_prompt_seen(true);
+        assert!(lifecycle.quota_auto_refresh_prompt_seen());
     }
 
     #[test]
@@ -4795,6 +4892,8 @@ mod tests {
         assert_eq!(preferences.theme_preference, ThemePreference::System);
         assert_eq!(preferences.app_icon_preference, AppIconPreference::White);
         assert!(preferences.session_index_enabled);
+        assert!(!preferences.quota_auto_refresh_enabled);
+        assert!(!preferences.quota_auto_refresh_prompt_seen);
         assert_eq!(
             preferences.quota_popover,
             QuotaPopoverPreferences::default()

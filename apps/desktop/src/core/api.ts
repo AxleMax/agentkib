@@ -223,6 +223,10 @@ export const api = {
   clearSessionIndex: (workspaceId?: string) => invoke<void>("clear_session_index", { workspaceId }),
   setSessionIndexEnabled: (enabled: boolean) =>
     invoke<RuntimeInfo>("set_session_index_enabled", { enabled }),
+  setQuotaAutoRefreshEnabled: (enabled: boolean) =>
+    invoke<RuntimeInfo>("set_quota_auto_refresh_enabled", { enabled }),
+  setQuotaAutoRefreshPromptSeen: (seen: boolean) =>
+    invoke<RuntimeInfo>("set_quota_auto_refresh_prompt_seen", { seen }),
   addWorkspace: (path: string) => invoke<WorkspaceSummary>("add_workspace", { path }),
   refreshWorkspace: (id: string) => invoke<WorkspaceSummary>("refresh_workspace", { id }),
   excludeWorkspace: (id: string) => invoke<void>("exclude_workspace", { id }),
