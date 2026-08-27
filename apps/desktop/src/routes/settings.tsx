@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -14,6 +15,7 @@ import type { CloseBehavior, RuntimeInfo } from "../core/types";
 type SettingsSearch = { settingsSection?: SettingsSection };
 
 function SettingsRoute() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as SettingsSearch;
   const section = search.settingsSection ?? "general";
@@ -89,17 +91,23 @@ function SettingsRoute() {
   const changeRuntime = (nextRuntime: RuntimeInfo) => setRuntime(nextRuntime);
 
   return (
-    <div className={cn("group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden")}>
+    <div
+      className={cn(
+        "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden",
+        sidebarCollapsed && "app-shell-sidebar-collapsed",
+      )}
+    >
       <WindowToolbar />
       <SettingsSidebar
         active={section}
         onSelect={setSection}
         onBack={() => void navigate({ to: "/" })}
         onSettings={() => setSection("general")}
+        onCollapsedChange={setSidebarCollapsed}
       />
       <main
         className={cn(
-          "!col-start-1 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm",
+          "app-shell-main !col-start-2 !row-start-2 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm",
           `settings-section-${section}`,
         )}
       >

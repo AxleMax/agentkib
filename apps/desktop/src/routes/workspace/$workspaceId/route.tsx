@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createFileRoute,
   Outlet,
@@ -324,9 +324,13 @@ function WorkspaceLayout() {
       ? { ...entry, badge: globalMemories.filter((item) => item.status === "pending").length }
       : entry,
   );
-  const shellClass = cn("group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const shellClass = cn(
+    "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden",
+    sidebarCollapsed && "app-shell-sidebar-collapsed",
+  );
   const mainClass =
-    "!col-start-1 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
+    "app-shell-main !col-start-2 !row-start-2 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const contentClass =
     "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[22px] max-[900px]:!px-[18px]";
 
@@ -354,6 +358,7 @@ function WorkspaceLayout() {
           void navigate({ to: "/settings" });
         }}
         onBrandClick={() => navigateGlobal("home")}
+        onCollapsedChange={setSidebarCollapsed}
       />
       <main className={mainClass}>
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">

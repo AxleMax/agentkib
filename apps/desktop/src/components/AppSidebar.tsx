@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
-import type { ComponentType } from "react";
-import { Settings } from "lucide-react";
+import { useEffect, useId, useState, type ComponentType } from "react";
+import { Menu, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import { tr } from "../core/i18n";
 import { cn } from "@/lib/utils";
 import { SidebarBrand } from "./SidebarBrand";
@@ -18,55 +18,133 @@ export function AppSidebar<T extends string>({
   onNavigate,
   onSettings,
   onBrandClick,
+  onCollapsedChange,
 }: {
   active: T;
   entries: SidebarEntry<T>[];
   onNavigate: (page: T) => void;
   onSettings: () => void;
   onBrandClick: () => void;
+  onCollapsedChange: (collapsed: boolean) => void;
 }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const sidebarId = useId();
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [mobileOpen]);
+
+  const navigate = (page: T) => {
+    setMobileOpen(false);
+    onNavigate(page);
+  };
+
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    onCollapsedChange(next);
+  };
+
   return (
-    <header className="top-navbar col-start-1 row-start-2 flex min-w-0 items-center border-b border-border-subtle/70 bg-background px-4 sm:px-6">
-      <div className="top-navbar-inner">
-        <SidebarBrand onClick={onBrandClick} />
-        <nav className="min-w-0 flex-1 overflow-x-auto" aria-label={tr("common.primaryNavigation")}>
-          <div className="top-navbar-group mx-auto w-fit min-w-max">
+    <>
+      <Button
+        variant="bare"
+        size="content"
+        className={cn("sidebar-mobile-trigger", mobileOpen && "invisible")}
+        type="button"
+        aria-expanded={mobileOpen}
+        aria-controls={sidebarId}
+        aria-label={tr("common.primaryNavigation")}
+        onClick={() => setMobileOpen(true)}
+      >
+        <Menu size={19} />
+      </Button>
+      {mobileOpen && (
+        <button
+          className="sidebar-mobile-backdrop"
+          type="button"
+          aria-label={tr("common.close")}
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+      <Button
+        variant="bare"
+        size="content"
+        className="app-sidebar-collapse-button"
+        type="button"
+        aria-label={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
+        aria-expanded={!collapsed}
+        title={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
+        onClick={toggleCollapsed}
+      >
+        {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+      </Button>
+      <aside
+        id={sidebarId}
+        className={cn(
+          "app-sidebar",
+          collapsed && "app-sidebar-collapsed",
+          mobileOpen && "app-sidebar-open",
+        )}
+      >
+        <div className="app-sidebar-content">
+          <div className="app-sidebar-header">
+            <SidebarBrand
+              onClick={() => {
+                setMobileOpen(false);
+                onBrandClick();
+              }}
+            />
+          </div>
+          <nav className="app-sidebar-nav" aria-label={tr("common.primaryNavigation")}>
             {entries.map(({ id, label, icon: Icon, badge }) => (
               <Button
                 key={id}
                 variant="bare"
                 size="content"
-                className={cn(
-                  "relative flex h-9 items-center justify-center gap-2 rounded-[11px] px-3 text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 active:scale-[0.99]",
-                  active === id && "shadow-sm",
-                )}
+                className={cn("app-sidebar-item", active === id && "app-sidebar-item-active")}
                 aria-current={active === id ? "page" : undefined}
-                onClick={() => onNavigate(id)}
+                title={tr(label)}
+                onClick={() => navigate(id)}
               >
-                <Icon size={17} />
-                <span>{tr(label)}</span>
-                {badge ? (
-                  <em className="grid min-w-4 place-items-center rounded-full bg-sidebar-primary px-1 py-0.5 text-[9px] font-semibold not-italic leading-none text-sidebar-primary-foreground">
-                    {badge}
-                  </em>
-                ) : null}
+                <span className="app-sidebar-item-icon">
+                  <Icon size={18} />
+                </span>
+                <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
+                  {tr(label)}
+                </span>
+                {badge ? <em className="app-sidebar-item-badge">{badge}</em> : null}
               </Button>
             ))}
+          </nav>
+          <div className="app-sidebar-footer">
+            <Button
+              variant="bare"
+              size="content"
+              className="app-sidebar-item"
+              type="button"
+              title={tr("nav.settings")}
+              onClick={() => {
+                setMobileOpen(false);
+                onSettings();
+              }}
+            >
+              <span className="app-sidebar-item-icon">
+                <Settings size={18} />
+              </span>
+              <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
+                {tr("nav.settings")}
+              </span>
+            </Button>
           </div>
-        </nav>
-        <div className="shrink-0">
-          <Button
-            variant="bare"
-            size="content"
-            className="flex size-9 items-center justify-center rounded-xl px-0 text-left text-sm font-medium tracking-[0.01em] text-sidebar-foreground/70 transition-colors duration-200 active:scale-[0.99]"
-            type="button"
-            onClick={onSettings}
-          >
-            <Settings size={18} />
-            <span className="sr-only">{tr("nav.settings")}</span>
-          </Button>
         </div>
-      </div>
-    </header>
+      </aside>
+    </>
   );
 }
