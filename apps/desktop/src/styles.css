@@ -140,7 +140,7 @@
 
 :root[data-platform="windows"],
 :root[data-platform="linux"] {
-  --window-safe-top: 44px;
+  --window-safe-top: 0px;
 }
 
 /* Accent themes are intentionally independent from light/dark mode. */
