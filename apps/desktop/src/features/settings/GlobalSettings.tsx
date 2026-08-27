@@ -87,6 +87,7 @@ export type GlobalSettingsProps = {
   onRestore: (path: string) => Promise<void>;
   onCloseBehaviorChanged: (behavior?: CloseBehavior) => Promise<void>;
   onLocaleChanged: (runtime: RuntimeInfo) => void;
+  onOnboardingRestarted: () => Promise<void>;
   onRemoteGatewaysChanged: () => Promise<void>;
 };
 
@@ -106,6 +107,7 @@ export function GlobalSettings({
   onRestore,
   onCloseBehaviorChanged,
   onLocaleChanged,
+  onOnboardingRestarted,
   onRemoteGatewaysChanged,
 }: GlobalSettingsProps) {
   if (section === "general")
@@ -127,7 +129,19 @@ export function GlobalSettings({
               onChange={onCloseBehaviorChanged}
             />
           </SettingsRow>
-          <AppUpdateSetting currentVersion={runtime?.app_version} />
+          <AppUpdateSetting
+            currentVersion={runtime?.app_version}
+            updatesEnabled={runtime?.updates_enabled ?? false}
+          />
+          <SettingsRow>
+            <SettingsCopy>
+              <strong>{tr("settings.onboarding")}</strong>
+              <small>{tr("settings.onboardingDescription")}</small>
+            </SettingsCopy>
+            <Button variant="outline" onClick={() => void onOnboardingRestarted()}>
+              {tr("settings.onboardingRestart")}
+            </Button>
+          </SettingsRow>
           {runtime?.tray_available === false && (
             <SettingDetail variant="warning" role="status">
               <CircleAlert size={14} />
@@ -135,6 +149,7 @@ export function GlobalSettings({
             </SettingDetail>
           )}
         </SettingGroup>
+        <QuotaAutoRefreshSetting runtime={runtime} onChanged={onLocaleChanged} />
       </div>
     );
   if (section === "discovery")
@@ -313,7 +328,13 @@ export function GlobalSettings({
 
 type AppUpdateStatus = "idle" | "checking" | "up-to-date" | "available" | "downloading" | "failed";
 
-export function AppUpdateSetting({ currentVersion }: { currentVersion?: string }) {
+export function AppUpdateSetting({
+  currentVersion,
+  updatesEnabled = true,
+}: {
+  currentVersion?: string;
+  updatesEnabled?: boolean;
+}) {
   const dialogs = useAppDialogs();
   const [status, setStatus] = useState<AppUpdateStatus>("idle");
   const [update, setUpdate] = useState<AppUpdateInfo>();
@@ -326,7 +347,7 @@ export function AppUpdateSetting({ currentVersion }: { currentVersion?: string }
     : 0;
 
   const check = async () => {
-    if (busy) return;
+    if (busy || !updatesEnabled) return;
     setStatus("checking");
     setError("");
     setUpdate(undefined);
@@ -380,6 +401,7 @@ export function AppUpdateSetting({ currentVersion }: { currentVersion?: string }
   };
 
   const description = (() => {
+    if (!updatesEnabled) return tr("settings.updateUnavailableInDevelopment");
     if (status === "checking") return tr("settings.updateChecking");
     if (status === "up-to-date")
       return tr("settings.updateUpToDate", { version: currentVersion ?? "—" });
@@ -417,7 +439,11 @@ export function AppUpdateSetting({ currentVersion }: { currentVersion?: string }
             )}
           </Button>
         ) : (
-          <Button type="button" disabled={busy} onClick={() => void check()}>
+          <Button
+            type="button"
+            disabled={busy || !updatesEnabled}
+            onClick={() => void check()}
+          >
             <RefreshCw size={14} className={busy ? "animate-spin" : undefined} />
             {tr(status === "failed" ? "settings.updateRetry" : "settings.checkForUpdates")}
           </Button>
@@ -617,6 +643,54 @@ function FileAccessSettingsRow() {
         </SettingDetail>
       )}
     </>
+  );
+}
+
+function QuotaAutoRefreshSetting({
+  runtime,
+  onChanged,
+}: {
+  runtime?: RuntimeInfo;
+  onChanged: (runtime: RuntimeInfo) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toggle = async (enabled: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      onChanged(await api.setQuotaAutoRefreshEnabled(enabled));
+    } catch (reason) {
+      setError(localizeMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SettingGroup
+      title={tr("settings.quotaTitle")}
+      description={tr("settings.quotaAutoRefreshDescription")}
+    >
+      <SettingsRow border={false}>
+        <SettingsCopy>
+          <strong>{tr("settings.quotaAutoRefresh")}</strong>
+          <small>{tr("settings.quotaAutoRefreshHint")}</small>
+        </SettingsCopy>
+        <Label className="inline-flex items-center">
+          <Switch
+            checked={runtime?.quota_auto_refresh_enabled === true}
+            disabled={busy || !runtime}
+            onCheckedChange={(checked) => void toggle(checked)}
+          />
+        </Label>
+      </SettingsRow>
+      {error && (
+        <SettingDetail variant="error" role="alert">
+          {error}
+        </SettingDetail>
+      )}
+    </SettingGroup>
   );
 }
 

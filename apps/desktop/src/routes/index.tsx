@@ -19,6 +19,8 @@ function HomeRoute() {
     insightsSummary,
     catalog,
     workspacesLoaded,
+    runtime,
+    setRuntime,
   } = useAppStore();
   const groupedCatalog = groupCatalogAssets(catalog);
   const assetCounts = workspaceAssetCounts(groupedCatalog);
@@ -55,6 +57,8 @@ function HomeRoute() {
         void navigate({ to: "/catalog", search: { assetSection: section } as never })
       }
       onAddRoot={addScanRoot}
+      runtime={runtime}
+      onRuntimeChanged={setRuntime}
     />
   );
 }

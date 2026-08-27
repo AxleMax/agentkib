@@ -81,7 +81,7 @@ mod i18n;
 mod obsidian;
 mod platform;
 mod refresh;
-use app_updates::{AppUpdateRuntime, check_app_update, install_app_update};
+use app_updates::{AppUpdateRuntime, check_app_update, install_app_update, updates_enabled};
 use i18n::{LocalePreference, SupportedLocale, translate};
 use obsidian::{ObsidianIntegration, ObsidianWorkspaceLink};
 use refresh::{RefreshCoordinator, RefreshJobStatus, RefreshKind, RefreshReceipt};
@@ -218,6 +218,88 @@ struct WorkspaceOpenerPreferences {
     by_workspace: BTreeMap<String, String>,
 }
 
+const ONBOARDING_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct OnboardingPreferences {
+    #[serde(default)]
+    acknowledged_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    workspace_id: Option<String>,
+    #[serde(default)]
+    doctor_completed: bool,
+    #[serde(default)]
+    repairable_count: usize,
+    #[serde(default)]
+    repair_applied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct OnboardingState {
+    version: u32,
+    acknowledged_version: u32,
+    workspace_id: Option<String>,
+    doctor_completed: bool,
+    repairable_count: usize,
+    repair_applied: bool,
+}
+
+impl From<OnboardingPreferences> for OnboardingState {
+    fn from(preferences: OnboardingPreferences) -> Self {
+        Self {
+            version: ONBOARDING_VERSION,
+            acknowledged_version: preferences.acknowledged_version,
+            workspace_id: preferences.workspace_id,
+            doctor_completed: preferences.doctor_completed,
+            repairable_count: preferences.repairable_count,
+            repair_applied: preferences.repair_applied,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "event", rename_all = "kebab-case")]
+enum OnboardingEvent {
+    DoctorCompleted {
+        workspace_id: String,
+        repairable_count: usize,
+    },
+    RepairApplied {
+        workspace_id: String,
+    },
+    Dismissed,
+    Restarted,
+}
+
+fn apply_onboarding_event(preferences: &mut OnboardingPreferences, event: OnboardingEvent) {
+    match event {
+        OnboardingEvent::DoctorCompleted {
+            workspace_id,
+            repairable_count,
+        } => {
+            if preferences.workspace_id.as_deref() != Some(workspace_id.as_str()) {
+                preferences.repair_applied = false;
+            }
+            preferences.workspace_id = Some(workspace_id);
+            preferences.doctor_completed = true;
+            preferences.repairable_count = repairable_count;
+            if repairable_count == 0 {
+                preferences.acknowledged_version = ONBOARDING_VERSION;
+            }
+        }
+        OnboardingEvent::RepairApplied { workspace_id } => {
+            preferences.workspace_id = Some(workspace_id);
+            preferences.repair_applied = true;
+        }
+        OnboardingEvent::Dismissed => {
+            preferences.acknowledged_version = ONBOARDING_VERSION;
+        }
+        OnboardingEvent::Restarted => {
+            *preferences = OnboardingPreferences::default();
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct WorkspaceOpener {
     id: String,
@@ -236,7 +318,7 @@ struct DesktopPreferences {
     theme_preference: ThemePreference,
     #[serde(default)]
     app_icon_preference: AppIconPreference,
-    #[serde(default)]
+    #[serde(default = "default_mcp_network_settings")]
     mcp_network: McpNetworkSettings,
     #[serde(default)]
     quota_popover: QuotaPopoverPreferences,
@@ -244,6 +326,12 @@ struct DesktopPreferences {
     workspace_openers: WorkspaceOpenerPreferences,
     #[serde(default = "default_true")]
     session_index_enabled: bool,
+    #[serde(default)]
+    quota_auto_refresh_enabled: bool,
+    #[serde(default)]
+    quota_auto_refresh_prompt_seen: bool,
+    #[serde(default)]
+    onboarding: OnboardingPreferences,
 }
 
 impl Default for DesktopPreferences {
@@ -253,16 +341,32 @@ impl Default for DesktopPreferences {
             locale_preference: LocalePreference::default(),
             theme_preference: ThemePreference::default(),
             app_icon_preference: AppIconPreference::default(),
-            mcp_network: McpNetworkSettings::default(),
+            mcp_network: default_mcp_network_settings(),
             quota_popover: QuotaPopoverPreferences::default(),
             workspace_openers: WorkspaceOpenerPreferences::default(),
             session_index_enabled: true,
+            onboarding: OnboardingPreferences::default(),
+            quota_auto_refresh_enabled: false,
+            quota_auto_refresh_prompt_seen: false,
         }
     }
 }
 
 const fn default_true() -> bool {
     true
+}
+
+fn default_mcp_network_settings() -> McpNetworkSettings {
+    #[cfg(feature = "dev-app")]
+    {
+        let mut settings = McpNetworkSettings::default();
+        settings.port = 47_654;
+        settings
+    }
+    #[cfg(not(feature = "dev-app"))]
+    {
+        McpNetworkSettings::default()
+    }
 }
 
 #[derive(Debug)]
@@ -273,6 +377,9 @@ struct LifecycleState {
     theme_preference: Mutex<ThemePreference>,
     app_icon_preference: Mutex<AppIconPreference>,
     session_index_enabled: AtomicBool,
+    onboarding: Mutex<OnboardingPreferences>,
+    quota_auto_refresh_enabled: AtomicBool,
+    quota_auto_refresh_prompt_seen: AtomicBool,
     close_prompt_open: AtomicBool,
     quitting: AtomicBool,
     tray_available: AtomicBool,
@@ -324,6 +431,11 @@ impl LifecycleState {
             theme_preference: Mutex::new(preferences.theme_preference),
             app_icon_preference: Mutex::new(preferences.app_icon_preference),
             session_index_enabled: AtomicBool::new(preferences.session_index_enabled),
+            onboarding: Mutex::new(preferences.onboarding.clone()),
+            quota_auto_refresh_enabled: AtomicBool::new(preferences.quota_auto_refresh_enabled),
+            quota_auto_refresh_prompt_seen: AtomicBool::new(
+                preferences.quota_auto_refresh_prompt_seen,
+            ),
             close_prompt_open: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
             tray_available: AtomicBool::new(false),
@@ -387,6 +499,35 @@ impl LifecycleState {
         self.session_index_enabled.store(enabled, Ordering::SeqCst);
     }
 
+    fn onboarding(&self) -> OnboardingPreferences {
+        self.onboarding
+            .lock()
+            .expect("onboarding state lock")
+            .clone()
+    }
+
+    fn set_onboarding(&self, onboarding: OnboardingPreferences) {
+        *self.onboarding.lock().expect("onboarding state lock") = onboarding;
+    }
+
+    fn quota_auto_refresh_enabled(&self) -> bool {
+        self.quota_auto_refresh_enabled.load(Ordering::SeqCst)
+    }
+
+    fn set_quota_auto_refresh_enabled(&self, enabled: bool) {
+        self.quota_auto_refresh_enabled
+            .store(enabled, Ordering::SeqCst);
+    }
+
+    fn quota_auto_refresh_prompt_seen(&self) -> bool {
+        self.quota_auto_refresh_prompt_seen.load(Ordering::SeqCst)
+    }
+
+    fn set_quota_auto_refresh_prompt_seen(&self, seen: bool) {
+        self.quota_auto_refresh_prompt_seen
+            .store(seen, Ordering::SeqCst);
+    }
+
     fn tray_available(&self) -> bool {
         self.tray_available.load(Ordering::SeqCst)
     }
@@ -398,7 +539,10 @@ impl LifecycleState {
 
 #[derive(Serialize)]
 struct RuntimeInfo {
+    app_name: String,
     app_version: String,
+    app_channel: AppChannel,
+    updates_enabled: bool,
     data_dir: PathBuf,
     database_path: PathBuf,
     mcp_package_root: PathBuf,
@@ -414,6 +558,24 @@ struct RuntimeInfo {
     app_icon_preference: AppIconPreference,
     tray_available: bool,
     session_index_enabled: bool,
+    onboarding: OnboardingState,
+    quota_auto_refresh_enabled: bool,
+    quota_auto_refresh_prompt_seen: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum AppChannel {
+    Stable,
+    Development,
+}
+
+const fn app_channel() -> AppChannel {
+    if cfg!(feature = "dev-app") {
+        AppChannel::Development
+    } else {
+        AppChannel::Stable
+    }
 }
 
 #[derive(Serialize)]
@@ -1602,6 +1764,39 @@ fn set_session_index_enabled(
 }
 
 #[tauri::command]
+fn set_quota_auto_refresh_enabled(
+    enabled: bool,
+    app: AppHandle,
+    lifecycle: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    update_preferences(|preferences| {
+        preferences.quota_auto_refresh_enabled = enabled;
+        preferences.quota_auto_refresh_prompt_seen = true;
+    })
+    .map_err(format_error)?;
+    lifecycle.set_quota_auto_refresh_enabled(enabled);
+    lifecycle.set_quota_auto_refresh_prompt_seen(true);
+    let _ = app.emit("agentkib:quota-auto-refresh-updated", enabled);
+    let _ = app.emit("agentkib:quota-auto-refresh-prompt-updated", true);
+    runtime_info(app, lifecycle, hub)
+}
+
+#[tauri::command]
+fn set_quota_auto_refresh_prompt_seen(
+    seen: bool,
+    app: AppHandle,
+    lifecycle: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    update_preferences(|preferences| preferences.quota_auto_refresh_prompt_seen = seen)
+        .map_err(format_error)?;
+    lifecycle.set_quota_auto_refresh_prompt_seen(seen);
+    let _ = app.emit("agentkib:quota-auto-refresh-prompt-updated", seen);
+    runtime_info(app, lifecycle, hub)
+}
+
+#[tauri::command]
 fn add_workspace(path: String) -> CommandResult<WorkspaceSummary> {
     Store::open_default()
         .and_then(|store| store.add_workspace(Path::new(&path)))
@@ -2207,7 +2402,10 @@ fn runtime_info(
     let theme_preference = state.theme_preference();
     let data_dir = default_data_dir().map_err(format_error)?;
     Ok(RuntimeInfo {
+        app_name: app.package_info().name.clone(),
         app_version: app.package_info().version.to_string(),
+        app_channel: app_channel(),
+        updates_enabled: updates_enabled(),
         database_path: data_dir.join("agentkib.db"),
         data_dir,
         mcp_package_root: installation_root().map_err(format_error)?,
@@ -2223,7 +2421,26 @@ fn runtime_info(
         app_icon_preference: state.app_icon_preference(),
         tray_available: state.tray_available(),
         session_index_enabled: state.session_index_enabled(),
+        quota_auto_refresh_enabled: state.quota_auto_refresh_enabled(),
+        quota_auto_refresh_prompt_seen: state.quota_auto_refresh_prompt_seen(),
+        onboarding: state.onboarding().into(),
     })
+}
+
+#[tauri::command]
+fn update_onboarding(
+    event: OnboardingEvent,
+    app: AppHandle,
+    state: tauri::State<'_, Arc<LifecycleState>>,
+    hub: tauri::State<'_, Arc<HubController>>,
+) -> CommandResult<RuntimeInfo> {
+    let mut onboarding = state.onboarding();
+    apply_onboarding_event(&mut onboarding, event);
+    let persisted = onboarding.clone();
+    update_preferences(move |preferences| preferences.onboarding = persisted)
+        .map_err(format_error)?;
+    state.set_onboarding(onboarding);
+    runtime_info(app, state, hub)
 }
 
 #[tauri::command]
@@ -2922,6 +3139,10 @@ fn request_guarded_exit(app: &AppHandle) {
     let _ = app.emit("agentkib:quit-requested", ());
 }
 
+fn translate_app_name(locale: SupportedLocale, key: &str, app_name: &str) -> String {
+    translate(locale, key, &[("appName", app_name.to_string())])
+}
+
 #[tauri::command]
 fn quit_app(app: AppHandle, lifecycle: tauri::State<'_, Arc<LifecycleState>>) {
     request_real_exit(&app, lifecycle.inner());
@@ -2946,6 +3167,7 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         return;
     }
     let locale = lifecycle.effective_locale();
+    let app_name = app.package_info().name.clone();
     let tray_available = lifecycle.tray_available();
     let hide_label = translate(
         locale,
@@ -2960,9 +3182,9 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
         },
         &[],
     );
-    let quit_label = translate(locale, "dialog.close.quit", &[]);
+    let quit_label = translate_app_name(locale, "dialog.close.quit", &app_name);
     app.dialog()
-        .message(translate(
+        .message(translate_app_name(
             locale,
             if tray_available {
                 if cfg!(target_os = "linux") {
@@ -2973,9 +3195,9 @@ fn show_first_close_prompt(window: &tauri::Window, app: AppHandle, lifecycle: Ar
             } else {
                 "dialog.close.messageNoTray"
             },
-            &[],
+            &app_name,
         ))
-        .title(translate(locale, "dialog.close.title", &[]))
+        .title(translate_app_name(locale, "dialog.close.title", &app_name))
         .parent(window)
         .buttons(MessageDialogButtons::YesNoCancelCustom(
             hide_label.clone(),
@@ -3498,12 +3720,13 @@ const QUOTA_POPOVER_HEIGHT: f64 = 560.0;
 
 #[cfg(target_os = "macos")]
 fn setup_quota_popover(app: &tauri::App) -> tauri::Result<()> {
+    let title = format!("{} Quota", app.package_info().name);
     WebviewWindowBuilder::new(
         app,
         "quota-popover",
         WebviewUrl::App("index.html?surface=quota-popover".into()),
     )
-    .title("AgentKib Quota")
+    .title(title)
     .inner_size(QUOTA_POPOVER_WIDTH, QUOTA_POPOVER_HEIGHT)
     .resizable(false)
     .decorations(false)
@@ -3597,12 +3820,13 @@ fn refresh_app_menu(app: &AppHandle) -> tauri::Result<()> {
         MenuItem::with_id(app, id, translate(locale, key, &[]), true, accelerator)
     };
 
+    let app_name = &app.package_info().name;
     let about = PredefinedMenuItem::about(
         app,
-        Some(&translate(locale, "menu.about", &[])),
+        Some(&translate_app_name(locale, "menu.about", app_name)),
         Some(
             AboutMetadataBuilder::new()
-                .name(Some("AgentKib"))
+                .name(Some(app_name))
                 .version(Some(app.package_info().version.to_string()))
                 .icon(app.default_window_icon().cloned())
                 .build(),
@@ -3611,13 +3835,22 @@ fn refresh_app_menu(app: &AppHandle) -> tauri::Result<()> {
     let settings = item("app-menu:settings", "menu.settings", Some("CmdOrCtrl+,"))?;
     let services =
         PredefinedMenuItem::services(app, Some(&translate(locale, "menu.services", &[])))?;
-    let hide = PredefinedMenuItem::hide(app, Some(&translate(locale, "menu.hide", &[])))?;
+    let hide = PredefinedMenuItem::hide(
+        app,
+        Some(&translate_app_name(locale, "menu.hide", app_name)),
+    )?;
     let hide_others =
         PredefinedMenuItem::hide_others(app, Some(&translate(locale, "menu.hideOthers", &[])))?;
     let show_all =
         PredefinedMenuItem::show_all(app, Some(&translate(locale, "menu.showAll", &[])))?;
-    let quit = item("app-menu:quit", "menu.quit", Some("CmdOrCtrl+Q"))?;
-    let app_menu = SubmenuBuilder::new(app, "AgentKib")
+    let quit = MenuItem::with_id(
+        app,
+        "app-menu:quit",
+        translate_app_name(locale, "menu.quit", app_name),
+        true,
+        Some("CmdOrCtrl+Q"),
+    )?;
+    let app_menu = SubmenuBuilder::new(app, app_name)
         .items(&[&about, &settings])
         .separator()
         .item(&services)
@@ -3769,6 +4002,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::tray::TrayIconBuilder;
 
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
+    let app_name = &app.package_info().name;
     let status = MenuItem::with_id(
         app,
         "status",
@@ -3779,7 +4013,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let mcp_status =
         MenuItem::with_id(app, "mcp_status", "MCP Hub · starting", false, None::<&str>)?;
     let menu = MenuBuilder::new(app)
-        .text("show", translate(locale, "tray.open", &[]))
+        .text("show", translate_app_name(locale, "tray.open", app_name))
         .text("quota_all", translate(locale, "tray.quotaAll", &[]))
         .text(
             "refresh_quota",
@@ -3790,7 +4024,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .text("settings", translate(locale, "nav.settings", &[]))
         .text("refresh_all", translate(locale, "tray.refreshAll", &[]))
         .separator()
-        .text("quit", translate(locale, "tray.quit", &[]))
+        .text("quit", translate_app_name(locale, "tray.quit", app_name))
         .build()?;
     #[cfg(target_os = "windows")]
     let tray_image = tauri::include_image!("icons/tray-icon-windows.png");
@@ -3799,7 +4033,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let tray = TrayIconBuilder::with_id("agentkib-status")
         .icon(tray_image)
         .menu(&menu)
-        .tooltip(translate(locale, "tray.tooltip", &[]))
+        .tooltip(translate_app_name(locale, "tray.tooltip", app_name))
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
             "refresh_quota" => {
@@ -3981,6 +4215,7 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .filter(|workspace| !matches!(workspace.status, agentkib_core::WorkspaceStatus::Healthy))
         .count();
     let locale = app.state::<Arc<LifecycleState>>().effective_locale();
+    let app_name = &app.package_info().name;
     let hub_status = app.state::<Arc<HubController>>().status();
     let refresh_statuses = app.state::<Arc<RefreshCoordinator>>().statuses();
     let active_refreshes = refresh_statuses
@@ -4027,7 +4262,7 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let menu = MenuBuilder::new(app)
-        .text("show", translate(locale, "tray.open", &[]))
+        .text("show", translate_app_name(locale, "tray.open", app_name))
         .text("quota_all", translate(locale, "tray.quotaAll", &[]))
         .text(
             "refresh_quota",
@@ -4038,11 +4273,11 @@ fn refresh_tray_status(app: &AppHandle) -> tauri::Result<()> {
         .text("settings", translate(locale, "nav.settings", &[]))
         .text("refresh_all", translate(locale, "tray.refreshAll", &[]))
         .separator()
-        .text("quit", translate(locale, "tray.quit", &[]))
+        .text("quit", translate_app_name(locale, "tray.quit", app_name))
         .build()?;
     if let Some(tray) = app.tray_by_id("agentkib-status") {
         tray.set_menu(Some(menu))?;
-        tray.set_tooltip(Some(translate(locale, "tray.tooltip", &[])))?;
+        tray.set_tooltip(Some(translate_app_name(locale, "tray.tooltip", app_name)))?;
     }
     Ok(())
 }
@@ -4348,6 +4583,10 @@ fn remote_gateways_configured() -> bool {
 }
 
 fn request_quota_if_due(app: &AppHandle) {
+    let lifecycle = app.state::<Arc<LifecycleState>>();
+    if !lifecycle.quota_auto_refresh_enabled() {
+        return;
+    }
     let coordinator = app.state::<Arc<RefreshCoordinator>>().inner().clone();
     let (snapshot, last_success) = Store::open_default()
         .map(|store| {
@@ -4421,8 +4660,41 @@ fn format_obsidian_error(error: impl std::fmt::Display) -> LocalizedMessage {
     LocalizedMessage::with_detail(key, detail)
 }
 
+const STABLE_APP_IDENTIFIER: &str = "ai.agentkib";
+const DEVELOPMENT_APP_IDENTIFIER: &str = "ai.agentkib.dev";
+
+fn validate_app_identity(
+    identifier: &str,
+    development: bool,
+    debug_build: bool,
+) -> anyhow::Result<()> {
+    let expected = if development {
+        DEVELOPMENT_APP_IDENTIFIER
+    } else {
+        STABLE_APP_IDENTIFIER
+    };
+    if identifier != expected {
+        anyhow::bail!(
+            "AgentKib application identity mismatch: expected {expected}, received {identifier}"
+        );
+    }
+    if debug_build && !development {
+        anyhow::bail!(
+            "Debug desktop builds must use the isolated development identity; start AgentKib with `pnpm dev`"
+        );
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    validate_app_identity(
+        &context.config().identifier,
+        cfg!(feature = "dev-app"),
+        cfg!(debug_assertions),
+    )
+    .expect("Invalid AgentKib application identity");
     let preferences = load_desktop_preferences();
     let lifecycle = Arc::new(LifecycleState::new(&preferences));
     let hub = Arc::new(
@@ -4435,7 +4707,7 @@ pub fn run() {
     let storage = Arc::new(StorageRuntime::default());
     let conversations = Arc::new(ConversationRuntime::default());
     let refresh = Arc::new(RefreshCoordinator::default());
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
@@ -4450,9 +4722,14 @@ pub fn run() {
         .manage(AppUpdateRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_shell::init());
+    #[cfg(not(feature = "dev-app"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let app = builder
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_title(&app.package_info().name)?;
+            }
             let theme = app.state::<Arc<LifecycleState>>().theme_preference();
             let app_icon = app.state::<Arc<LifecycleState>>().app_icon_preference();
             setup_quota_popover(app)?;
@@ -4542,8 +4819,11 @@ pub fn run() {
             launch_session_handoff,
             get_workspace_doctor_report,
             get_workspace_doctor_summaries,
+            update_onboarding,
             clear_session_index,
             set_session_index_enabled,
+            set_quota_auto_refresh_enabled,
+            set_quota_auto_refresh_prompt_seen,
             add_workspace,
             refresh_workspace,
             exclude_workspace,
@@ -4623,7 +4903,7 @@ pub fn run() {
             list_mcp_installations,
             uninstall_mcp
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("Failed to build AgentKib");
     app.run(|app, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
@@ -4643,6 +4923,26 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn application_identity_requires_the_matching_runtime_channel() {
+        assert!(validate_app_identity(STABLE_APP_IDENTIFIER, false, false).is_ok());
+        assert!(validate_app_identity(DEVELOPMENT_APP_IDENTIFIER, true, true).is_ok());
+        assert!(validate_app_identity(STABLE_APP_IDENTIFIER, true, true).is_err());
+        assert!(validate_app_identity(DEVELOPMENT_APP_IDENTIFIER, false, false).is_err());
+        assert!(validate_app_identity(STABLE_APP_IDENTIFIER, false, true).is_err());
+    }
+
+    #[test]
+    fn runtime_channel_uses_an_isolated_mcp_port() {
+        let expected = if cfg!(feature = "dev-app") {
+            (AppChannel::Development, 47_654)
+        } else {
+            (AppChannel::Stable, 47_653)
+        };
+        assert_eq!(app_channel(), expected.0);
+        assert_eq!(default_mcp_network_settings().port, expected.1);
+    }
 
     #[test]
     fn doctor_summary_marks_workspace_failures_as_errors() {
@@ -4708,6 +5008,9 @@ mod tests {
                 },
                 workspace_openers: WorkspaceOpenerPreferences::default(),
                 session_index_enabled: false,
+                quota_auto_refresh_enabled: true,
+                quota_auto_refresh_prompt_seen: true,
+                onboarding: OnboardingPreferences::default(),
             },
         )
         .unwrap();
@@ -4735,6 +5038,79 @@ mod tests {
             ["claude"]
         );
         assert!(!load_preferences(&path).unwrap().session_index_enabled);
+        assert!(load_preferences(&path).unwrap().quota_auto_refresh_enabled);
+        assert!(
+            load_preferences(&path)
+                .unwrap()
+                .quota_auto_refresh_prompt_seen
+        );
+    }
+
+    #[test]
+    fn old_preferences_default_to_unacknowledged_onboarding() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("preferences.json");
+        fs::write(&path, r#"{"session_index_enabled":true}"#).unwrap();
+
+        let preferences = load_preferences(&path).unwrap();
+        assert_eq!(preferences.onboarding, OnboardingPreferences::default());
+        let state = OnboardingState::from(preferences.onboarding);
+        assert_eq!(state.version, ONBOARDING_VERSION);
+        assert_eq!(state.acknowledged_version, 0);
+    }
+
+    #[test]
+    fn onboarding_completes_only_after_no_repairable_issues_remain() {
+        let mut preferences = OnboardingPreferences::default();
+        apply_onboarding_event(
+            &mut preferences,
+            OnboardingEvent::DoctorCompleted {
+                workspace_id: "workspace-1".into(),
+                repairable_count: 2,
+            },
+        );
+        assert!(preferences.doctor_completed);
+        assert_eq!(preferences.acknowledged_version, 0);
+
+        apply_onboarding_event(
+            &mut preferences,
+            OnboardingEvent::RepairApplied {
+                workspace_id: "workspace-1".into(),
+            },
+        );
+        assert!(preferences.repair_applied);
+        assert_eq!(preferences.acknowledged_version, 0);
+
+        apply_onboarding_event(
+            &mut preferences,
+            OnboardingEvent::DoctorCompleted {
+                workspace_id: "workspace-1".into(),
+                repairable_count: 0,
+            },
+        );
+        assert_eq!(preferences.acknowledged_version, ONBOARDING_VERSION);
+    }
+
+    #[test]
+    fn onboarding_can_be_dismissed_and_restarted() {
+        let mut preferences = OnboardingPreferences::default();
+        apply_onboarding_event(&mut preferences, OnboardingEvent::Dismissed);
+        assert_eq!(preferences.acknowledged_version, ONBOARDING_VERSION);
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("preferences.json");
+        save_preferences(
+            &path,
+            &DesktopPreferences {
+                onboarding: preferences.clone(),
+                ..DesktopPreferences::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(load_preferences(&path).unwrap().onboarding, preferences);
+
+        apply_onboarding_event(&mut preferences, OnboardingEvent::Restarted);
+        assert_eq!(preferences, OnboardingPreferences::default());
     }
 
     #[test]
@@ -4743,6 +5119,22 @@ mod tests {
         let preferences = load_preferences(&dir.path().join("missing.json")).unwrap();
         assert_eq!(preferences.close_behavior, None);
         assert!(preferences.session_index_enabled);
+        assert!(!preferences.quota_auto_refresh_enabled);
+        assert!(!preferences.quota_auto_refresh_prompt_seen);
+    }
+
+    #[test]
+    fn quota_auto_refresh_defaults_off_and_can_be_toggled() {
+        let lifecycle = LifecycleState::new(&DesktopPreferences::default());
+
+        assert!(!lifecycle.quota_auto_refresh_enabled());
+        lifecycle.set_quota_auto_refresh_enabled(true);
+        assert!(lifecycle.quota_auto_refresh_enabled());
+        lifecycle.set_quota_auto_refresh_enabled(false);
+        assert!(!lifecycle.quota_auto_refresh_enabled());
+        assert!(!lifecycle.quota_auto_refresh_prompt_seen());
+        lifecycle.set_quota_auto_refresh_prompt_seen(true);
+        assert!(lifecycle.quota_auto_refresh_prompt_seen());
     }
 
     #[test]
@@ -4795,6 +5187,8 @@ mod tests {
         assert_eq!(preferences.theme_preference, ThemePreference::System);
         assert_eq!(preferences.app_icon_preference, AppIconPreference::White);
         assert!(preferences.session_index_enabled);
+        assert!(!preferences.quota_auto_refresh_enabled);
+        assert!(!preferences.quota_auto_refresh_prompt_seen);
         assert_eq!(
             preferences.quota_popover,
             QuotaPopoverPreferences::default()

@@ -103,7 +103,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-首次编译 Rust 依赖耗时会明显长于后续启动。编译完成后会打开带 Windows 原生标题栏的 AgentKib 主窗口。
+首次编译 Rust 依赖耗时会明显长于后续启动。编译完成后会打开带 Windows 原生标题栏的 **AgentKib Dev** 主窗口。开发版 identifier 为 `ai.agentkib.dev`，可以与正式安装版同时运行。
 
 - 停止开发服务：回到运行命令的终端按 `Ctrl+C`。
 - 关闭主窗口：首次关闭会询问“隐藏到托盘”或“退出”；选择隐藏后会记住该行为，应用继续在后台运行。
@@ -138,15 +138,21 @@ target\release\bundle\nsis\*.exe
 
 ## 六、本地数据位置
 
-应用数据默认存放在：
+正式安装版数据默认存放在：
 
 ```text
 %LOCALAPPDATA%\ai.agentkib
 ```
 
-其中包含 SQLite 数据库、MCP 包和本机设置。卸载前如需保留数据，请备份该目录。不要把这个目录、`node_modules`、`target` 或安装包提交到 Git。
+`pnpm dev` 启动的开发版使用独立目录：
 
-从旧预览版首次启动时，如果新目录尚不存在，AgentKib 会将旧数据目录一次性迁移到上述位置；已存在的新目录不会被覆盖。
+```text
+%LOCALAPPDATA%\ai.agentkib.dev
+```
+
+两个目录分别保存 SQLite 数据库、偏好、缓存、备份、会话索引、额度与 Obsidian 配置以及 MCP 包。开发版不会复制、迁移或合并正式版数据。卸载前如需保留数据，请备份对应目录；不要把这些目录、`node_modules`、`target` 或安装包提交到 Git。
+
+从旧预览版首次启动正式版时，如果新目录尚不存在，AgentKib 会将旧数据目录一次性迁移到正式版目录；开发版不会执行该迁移。
 
 ## 七、常见问题
 
@@ -184,7 +190,7 @@ pnpm dev
 
 ### 窗口空白或 WebView2 报错
 
-更新、修复或重新安装 WebView2 Evergreen Runtime 111+，然后删除开发构建缓存并重新编译。不要删除 `%LOCALAPPDATA%\ai.agentkib`，除非已经备份并确定要清空应用数据。
+更新、修复或重新安装 WebView2 Evergreen Runtime 111+，然后删除开发构建缓存并重新编译。不要删除 `%LOCALAPPDATA%\ai.agentkib.dev`；正式版数据位于 `%LOCALAPPDATA%\ai.agentkib`，两者都应在备份并确认要清空后才能删除。
 
 ### `localhost:1420` 端口被占用
 
@@ -202,6 +208,6 @@ Get-NetTCPConnection -LocalPort 1420 -ErrorAction SilentlyContinue
 
 - 已验收目标仅为 Windows 11 x64 的编译、开发启动、NSIS 安装和启动。
 - Windows ARM64 仅提供 Preview 安装包，尚未完成与 x64 等价的原生回归。
-- GitHub Release 已由版本标签自动发布；Windows 代码签名和自动更新仍不在本阶段范围内。
+- GitHub Release 已由版本标签自动发布；v0.3.1 起可在设置中检查并安装正式更新。Windows 安装包仍未进行代码签名，ARM64 仍为 Preview。
 - macOS/Linux 行为通过平台隔离和现有 CI 保持，本机无法替代对应平台的原生回归。
 - 完整 Windows 功能等价测试仍需后续阶段逐项完成。

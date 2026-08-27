@@ -77,6 +77,8 @@ export function AppRuntimeBridge() {
     let unlistenInsights: (() => void) | undefined;
     let unlistenGateways: (() => void) | undefined;
     let unlistenQuota: (() => void) | undefined;
+    let unlistenQuotaAutoRefresh: (() => void) | undefined;
+    let unlistenQuotaAutoRefreshPrompt: (() => void) | undefined;
     let unlistenNavigate: (() => void) | undefined;
     let unlistenMenuCommand: (() => void) | undefined;
     let unlistenTheme: (() => void) | undefined;
@@ -135,6 +137,30 @@ export function AppRuntimeBridge() {
           unlistenQuota?.();
           return;
         }
+        unlistenQuotaAutoRefresh = await listen<boolean>(
+          "agentkib:quota-auto-refresh-updated",
+          ({ payload }) => {
+            setRuntime((current) =>
+              current ? { ...current, quota_auto_refresh_enabled: payload } : current,
+            );
+          },
+        );
+        if (disposed) {
+          unlistenQuotaAutoRefresh?.();
+          return;
+        }
+        unlistenQuotaAutoRefreshPrompt = await listen<boolean>(
+          "agentkib:quota-auto-refresh-prompt-updated",
+          ({ payload }) => {
+            setRuntime((current) =>
+              current ? { ...current, quota_auto_refresh_prompt_seen: payload } : current,
+            );
+          },
+        );
+        if (disposed) {
+          unlistenQuotaAutoRefreshPrompt?.();
+          return;
+        }
         unlistenNavigate = await listen<AppNavigationRequest>("agentkib:navigate", (event) => {
           setNavigationRequest(event.payload);
         });
@@ -183,6 +209,8 @@ export function AppRuntimeBridge() {
       unlistenInsights?.();
       unlistenGateways?.();
       unlistenQuota?.();
+      unlistenQuotaAutoRefresh?.();
+      unlistenQuotaAutoRefreshPrompt?.();
       unlistenNavigate?.();
       unlistenMenuCommand?.();
       unlistenTheme?.();

@@ -416,8 +416,16 @@ function WorkspaceChangesRoute() {
       onPlanHome={() => void planHome()}
       onApplied={async (keepLaunchRequest) => {
         const targetProject = project;
+        const appliedDoctorRepair = changeSetOrigin === "doctor";
         setChangeSet(undefined);
         if (!keepLaunchRequest) setHandoffLaunchRequest(undefined);
+        if (appliedDoctorRepair) {
+          try {
+            await api.updateOnboarding({ event: "repair-applied", workspace_id: workspaceId });
+          } catch (error) {
+            setMessage(localizeMessage(error));
+          }
+        }
         try {
           const runtime = await reload();
           if (runtime) await refreshGlobalState(runtime);
@@ -426,7 +434,15 @@ function WorkspaceChangesRoute() {
             useWorkspaceStore.getState().selectedWorkspace?.id === workspaceId &&
             useWorkspaceStore.getState().project === targetProject
           )
-            setMessage(String(error));
+            setMessage(localizeMessage(error));
+        } finally {
+          if (appliedDoctorRepair) {
+            void navigate({
+              to: "/workspace/$workspaceId/doctor",
+              params: { workspaceId },
+              search: (current) => ({ ...current, doctorVerification: "applied" }) as never,
+            });
+          }
         }
       }}
       onLaunchCompleted={() => setHandoffLaunchRequest(undefined)}

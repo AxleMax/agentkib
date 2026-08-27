@@ -62,6 +62,16 @@ describe("AgentKib API boundary", () => {
     expect(invoke).toHaveBeenCalledWith("check_app_update");
   });
 
+  it("persists onboarding events through the preference boundary", async () => {
+    vi.mocked(invoke).mockResolvedValue({ onboarding: { acknowledged_version: 1 } });
+
+    await api.updateOnboarding({ event: "dismissed" });
+
+    expect(invoke).toHaveBeenCalledWith("update_onboarding", {
+      event: { event: "dismissed" },
+    });
+  });
+
   it("queues refresh work without waiting for collector results", async () => {
     vi.mocked(invoke).mockResolvedValue({
       kind: "insights",
@@ -91,6 +101,22 @@ describe("AgentKib API boundary", () => {
     });
 
     expect(invoke).toHaveBeenCalledWith("refresh_quota");
+  });
+
+  it("updates the persisted automatic quota query preference through IPC", async () => {
+    vi.mocked(invoke).mockResolvedValue({ quota_auto_refresh_enabled: false });
+
+    await api.setQuotaAutoRefreshEnabled(false);
+
+    expect(invoke).toHaveBeenCalledWith("set_quota_auto_refresh_enabled", { enabled: false });
+  });
+
+  it("records that the automatic quota query prompt has been handled", async () => {
+    vi.mocked(invoke).mockResolvedValue({ quota_auto_refresh_prompt_seen: true });
+
+    await api.setQuotaAutoRefreshPromptSeen(true);
+
+    expect(invoke).toHaveBeenCalledWith("set_quota_auto_refresh_prompt_seen", { seen: true });
   });
 
   it("keeps workspace storage scanning explicit", async () => {

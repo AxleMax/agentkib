@@ -22,6 +22,7 @@ import type {
   RefreshJobStatus,
 } from "@/core/types";
 import { ProviderIcon, QuotaWindowRow } from "./QuotaDisplay";
+import { QuotaAutoRefreshPrompt } from "./QuotaAutoRefreshPrompt";
 import { cn } from "@/lib/utils";
 
 export function QuotaPopover() {
@@ -33,19 +34,29 @@ export function QuotaPopover() {
   const [selectedId, setSelectedId] = useState("");
   const [refreshJob, setRefreshJob] = useState<RefreshJobStatus>();
   const [error, setError] = useState("");
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [promptSeen, setPromptSeen] = useState(false);
   const initialRefreshRequested = useRef(false);
 
   const load = async () => {
-    const [nextSnapshot, nextPreferences, jobs] = await Promise.all([
+    const [nextSnapshot, nextPreferences, jobs, runtime] = await Promise.all([
       api.quotaSnapshot(),
       api.quotaPopoverPreferences(),
       api.refreshStatus(),
+      api.runtime(),
     ]);
     setSnapshot(nextSnapshot);
     setPreferences(nextPreferences);
+    setAutoRefreshEnabled(runtime.quota_auto_refresh_enabled);
+    setPromptSeen(runtime.quota_auto_refresh_prompt_seen);
     const job = jobs.find((item) => item.kind === "quota");
     setRefreshJob(job);
-    return { snapshot: nextSnapshot, job };
+    return {
+      snapshot: nextSnapshot,
+      job,
+      autoRefreshEnabled: runtime.quota_auto_refresh_enabled,
+      promptSeen: runtime.quota_auto_refresh_prompt_seen,
+    };
   };
 
   useEffect(() => {
@@ -53,8 +64,17 @@ export function QuotaPopover() {
     let unlistenQuota: (() => void) | undefined;
     let unlistenRefresh: (() => void) | undefined;
     let unlistenPreferences: (() => void) | undefined;
+    let unlistenQuotaAutoRefresh: (() => void) | undefined;
+    let unlistenQuotaAutoRefreshPrompt: (() => void) | undefined;
     void (async () => {
-      [unlistenQuota, unlistenRefresh, unlistenPreferences] = await Promise.all([
+      [
+        unlistenQuota,
+        unlistenRefresh,
+        unlistenPreferences,
+        unlistenQuotaAutoRefresh,
+        unlistenQuotaAutoRefreshPrompt,
+      ] =
+        await Promise.all([
         listen<QuotaSnapshot>("agentkib:quota-updated", ({ payload }) => {
           if (!disposed) setSnapshot(payload);
         }),
@@ -70,10 +90,17 @@ export function QuotaPopover() {
             if (!disposed) setPreferences(payload);
           },
         ),
-      ]);
+        listen<boolean>("agentkib:quota-auto-refresh-updated", ({ payload }) => {
+          if (!disposed) setAutoRefreshEnabled(payload);
+        }),
+          listen<boolean>("agentkib:quota-auto-refresh-prompt-updated", ({ payload }) => {
+            if (!disposed) setPromptSeen(payload);
+          }),
+        ]);
       const current = await load();
       if (
         !disposed &&
+        current.autoRefreshEnabled &&
         !initialRefreshRequested.current &&
         (!current.snapshot || current.snapshot.freshness !== "fresh") &&
         !["queued", "running", "backoff"].includes(current.job?.state ?? "")
@@ -94,6 +121,8 @@ export function QuotaPopover() {
       unlistenQuota?.();
       unlistenRefresh?.();
       unlistenPreferences?.();
+      unlistenQuotaAutoRefresh?.();
+      unlistenQuotaAutoRefreshPrompt?.();
       window.removeEventListener("keydown", onKeyDown);
     };
   }, []);
@@ -179,6 +208,16 @@ export function QuotaPopover() {
       setError(localizeMessage(reason));
     }
   };
+  const markPromptSeen = async () => {
+    const nextRuntime = await api.setQuotaAutoRefreshPromptSeen(true);
+    setPromptSeen(nextRuntime.quota_auto_refresh_prompt_seen);
+    setAutoRefreshEnabled(nextRuntime.quota_auto_refresh_enabled);
+  };
+  const enableAutoRefresh = async () => {
+    const nextRuntime = await api.setQuotaAutoRefreshEnabled(true);
+    setPromptSeen(nextRuntime.quota_auto_refresh_prompt_seen);
+    setAutoRefreshEnabled(nextRuntime.quota_auto_refresh_enabled);
+  };
   const openDashboard = async (
     provider?: QuotaProvider,
     configure = false,
@@ -253,6 +292,13 @@ export function QuotaPopover() {
       )}
 
       <section className="overflow-y-auto p-4">
+        {!autoRefreshEnabled && !promptSeen && (
+          <QuotaAutoRefreshPrompt
+            compact
+            onEnableAutoRefresh={enableAutoRefresh}
+            onNotNow={markPromptSeen}
+          />
+        )}
         {!snapshot && (
           <div className="grid min-h-[300px] place-content-center justify-items-center gap-2 text-center text-muted-foreground">
             <Gauge size={25} />

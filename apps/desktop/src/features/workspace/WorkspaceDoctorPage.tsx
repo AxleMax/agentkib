@@ -6,16 +6,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Minus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { api } from "@/core/api";
 import { localizeMessage, tr } from "@/core/i18n";
-import type { ContextDoctorReport, DoctorAssetStatus, WorkspaceSummary } from "@/core/types";
+import type {
+  ContextDoctorReport,
+  ContextDoctorSummary,
+  DoctorAssetStatus,
+  WorkspaceSummary,
+} from "@/core/types";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { cn } from "@/lib/utils";
 
 export function WorkspaceDoctorPage({
   workspace,
   onRepair,
+  verification,
+  onDiagnosed,
 }: {
   workspace: WorkspaceSummary;
   onRepair: () => Promise<void>;
+  verification?: "applied";
+  onDiagnosed: (summary: ContextDoctorSummary) => void | Promise<void>;
 }) {
   const [report, setReport] = useState<ContextDoctorReport>();
   const [loading, setLoading] = useState(true);
@@ -32,13 +41,14 @@ export function WorkspaceDoctorPage({
       const nextReport = await api.workspaceDoctorReport(workspace.id);
       if (requestId === requestIdRef.current && nextReport.summary.workspace_id === workspace.id) {
         setReport(nextReport);
+        await onDiagnosed(nextReport.summary);
       }
     } catch (reason) {
       if (requestId === requestIdRef.current) setError(localizeMessage(reason));
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [workspace.id]);
+  }, [onDiagnosed, workspace.id]);
 
   useEffect(() => {
     void load();
@@ -67,6 +77,16 @@ export function WorkspaceDoctorPage({
 
   return (
     <div className="mx-auto grid max-w-[1120px] gap-4">
+      {verification && activeReport && (
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700">
+          <Check size={16} />
+          {activeReport.summary.repairable_count === 0
+            ? tr("doctor.recheckSuccess")
+            : tr("doctor.recheckRemaining", {
+                count: activeReport.summary.repairable_count,
+              })}
+        </div>
+      )}
       <Card className="grid items-center gap-5 p-5 md:grid-cols-[minmax(260px,1fr)_auto_auto]">
         <div>
           <span className="text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground">

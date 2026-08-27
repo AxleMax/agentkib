@@ -63,6 +63,21 @@ describe("AppUpdateSetting", () => {
     expect(await screen.findByText("You're up to date (0.2.0)")).toBeTruthy();
   });
 
+  it("disables stable update checks for development builds", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppDialogProvider>
+        <AppUpdateSetting currentVersion="0.4.0" updatesEnabled={false} />
+      </AppDialogProvider>,
+    );
+
+    expect(screen.getByText("Development builds do not check for stable updates")).toBeTruthy();
+    const button = screen.getByRole("button", { name: "Check for updates" });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    await user.click(button);
+    expect(api.checkAppUpdate).not.toHaveBeenCalled();
+  });
+
   it("opens the Release page for package-manager installations", async () => {
     vi.mocked(api.checkAppUpdate).mockResolvedValue({
       ...availableUpdate,

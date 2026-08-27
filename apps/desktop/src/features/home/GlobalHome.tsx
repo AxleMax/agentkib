@@ -26,7 +26,9 @@ import type {
   InsightsSummary,
   MemoryRecord,
   WorkspaceSummary,
+  RuntimeInfo,
 } from "@/core/types";
+import { GettingStartedCard } from "./GettingStartedCard";
 
 export type AssetSection = "instructions" | "skills" | "mcp" | "memory" | "other";
 
@@ -56,6 +58,8 @@ export function GlobalHome({
   onOpenDoctor,
   onOpenAssets,
   onAddRoot,
+  runtime,
+  onRuntimeChanged,
 }: {
   workspaces: WorkspaceSummary[];
   doctorSummaries: Record<string, ContextDoctorSummary>;
@@ -73,6 +77,8 @@ export function GlobalHome({
   onOpenDoctor: (workspace: WorkspaceSummary) => Promise<void>;
   onOpenAssets: (section: AssetSection) => void;
   onAddRoot: () => Promise<void>;
+  runtime?: RuntimeInfo;
+  onRuntimeChanged: (runtime: RuntimeInfo) => void;
 }) {
   const attention = workspaces.filter(
     (item) =>
@@ -161,6 +167,14 @@ export function GlobalHome({
   );
   return (
     <div className="grid gap-4">
+      <GettingStartedCard
+        onboarding={runtime?.onboarding}
+        workspaces={workspaces}
+        doctorSummaries={doctorSummaries}
+        onRuntimeChanged={onRuntimeChanged}
+        onAddRoot={onAddRoot}
+        onOpenDoctor={onOpenDoctor}
+      />
       <div className="grid grid-cols-4 gap-3 max-[800px]:grid-cols-2">
         {metrics.map(({ label, value, icon: Icon, onClick }) => (
           <Button
@@ -260,9 +274,7 @@ export function GlobalHome({
       {!workspaces.length ? (
         <div
           className={
-            insightCard
-              ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,.45fr)]"
-              : "grid"
+            insightCard ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,.45fr)]" : "grid"
           }
         >
           <Card className="grid min-h-[260px] place-content-center justify-items-center gap-3 rounded-2xl border-dashed bg-card p-8 text-center">
