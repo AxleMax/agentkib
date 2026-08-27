@@ -76,6 +76,8 @@ pnpm install
 pnpm dev
 ```
 
+`pnpm dev` 启动独立的 **AgentKib Dev**（identifier 为 `ai.agentkib.dev`）。它使用单独的数据库、偏好、缓存和 MCP 包目录，不会读取、迁移或合并正式版 `ai.agentkib` 的数据。macOS 开发数据位于 `~/Library/Application Support/ai.agentkib.dev`；Windows 与 Linux 路径见对应平台文档或系统标准应用数据目录。
+
 启动后：
 
 1. 等待 AgentKib 自动发现本机已有工作区，或手动添加扫描目录。
@@ -198,6 +200,8 @@ Install Rust stable, Node.js, pnpm 10, and the [Tauri 2 prerequisites](https://v
 pnpm install
 pnpm dev
 ```
+
+`pnpm dev` launches the isolated **AgentKib Dev** app with identifier `ai.agentkib.dev`. Its database, preferences, caches, and MCP packages are separate from the stable `ai.agentkib` installation; stable data is never copied, migrated, or merged automatically. On macOS, development data lives under `~/Library/Application Support/ai.agentkib.dev`.
 
 After launch:
 
