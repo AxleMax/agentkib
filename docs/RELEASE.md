@@ -88,11 +88,37 @@ both that backup and the GitHub Secret breaks the update path for already
 installed clients. Tauri updater signatures verify update origin and integrity;
 they do not replace Apple notarization or Windows Authenticode signing.
 
+## macOS signing and notarization
+
+Published tags also require these GitHub Actions Secrets:
+
+- `APPLE_CERTIFICATE`: base64-encoded Developer ID Application `.p12` file.
+- `APPLE_CERTIFICATE_PASSWORD`: password used when exporting the `.p12` file.
+- `APPLE_SIGNING_IDENTITY`: full Developer ID Application identity.
+- `APPLE_TEAM_ID`: Apple Developer team ID.
+- `APPLE_API_ISSUER`, `APPLE_API_KEY`, and `APPLE_API_PRIVATE_KEY`: App Store
+  Connect team API credentials used only for notarization.
+
+The macOS jobs write the API private key to an owner-only temporary file, pass
+its path to Tauri, and remove it after the build. Tauri signs the application,
+submits it to Apple, waits for approval, and staples the notarization ticket.
+The workflow then verifies the Developer ID authority, team identifier,
+stapled ticket, and Gatekeeper assessment before staging release assets. A
+missing credential or failed verification prevents the Release from being
+published.
+
+The `.p12`, its password, and the App Store Connect `.p8` key must be backed up
+outside GitHub and shared only with authorized release maintainers. Rotate or
+revoke credentials deliberately; revoking them immediately blocks new macOS
+releases, but does not invalidate packages that were already signed and
+notarized.
+
 ## Preview limitations
 
-Release packages are unsigned development previews. They do not include macOS
-notarization, Windows code signing, MSI packages, or a macOS universal binary.
-macOS Gatekeeper and Windows SmartScreen may therefore display warnings.
+Releases newer than v0.3.1 include signed and notarized macOS packages. v0.3.1
+and earlier remain unsigned historical packages. Windows packages are still
+not Authenticode-signed, and the project does not yet provide MSI packages or a
+macOS universal binary. Windows SmartScreen may therefore display warnings.
 
 v0.3.1 is the first updater-capable release. Clients older than v0.3.1 require
 one manual upgrade; later stable releases can be installed in-app on macOS,
@@ -100,9 +126,9 @@ Windows, and Linux AppImage. DEB and RPM installations check for updates but
 continue through the GitHub Release page so their system package state is not
 modified behind the package manager.
 
-After verifying the downloaded DMG against its `.sha256` file and copying
-AgentKib into Applications, macOS users must currently remove the quarantine
-attributes before opening the app:
+For v0.3.1 and earlier only, after verifying the downloaded DMG against its
+`.sha256` file and copying AgentKib into Applications, macOS users must remove
+the quarantine attributes before opening the app:
 
 ```bash
 xattr -cr /Applications/AgentKib.app
