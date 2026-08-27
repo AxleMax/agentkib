@@ -181,8 +181,8 @@ jobs:
             fi
           done
 
-      - name: Test updater manifest generator
-        run: node --test .github/scripts/build-updater-manifest.test.mjs
+      - name: Test release scripts
+        run: node --test .github/scripts/*.test.mjs
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -692,20 +692,10 @@ jobs:
 
       - name: Prepare draft release
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          find_release() {
-            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              | jq -s --arg tag "$RELEASE_TAG" '
-                  add
-                  | map(select(.tag_name == $tag))
-                  | if length > 1 then error("multiple releases found for tag " + $tag)
-                    elif length == 1 then .[0]
-                    else empty
-                    end
-                '
-          }
 
           remote_tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')
           if [[ "$remote_tag_sha" != "$RELEASE_SHA" ]]; then
@@ -713,12 +703,8 @@ jobs:
             exit 1
           fi
 
-          release_json=$(find_release)
+          release_json=$(node .github/scripts/resolve-draft-release.mjs)
           if [[ -n "$release_json" ]]; then
-            if [[ "$(jq -r '.draft' <<<"$release_json")" != true ]]; then
-              echo "Release $RELEASE_TAG is already public; refusing to overwrite it" >&2
-              exit 1
-            fi
             echo "Resuming existing draft release $RELEASE_TAG"
           else
             release_notes=$(
@@ -743,7 +729,7 @@ jobs:
               create_args+=(--prerelease)
             fi
             gh "${create_args[@]}"
-            release_json=$(find_release)
+            release_json=$(node .github/scripts/resolve-draft-release.mjs --wait)
           fi
 
           release_id=$(jq -r '.id // empty' <<<"$release_json")

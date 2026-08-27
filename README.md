@@ -19,8 +19,8 @@
 </p>
 
 > [!WARNING]
-> AgentKib 仍处于开发预览阶段，[Releases](https://github.com/starroyhq/agentkib/releases) 提供的安装包尚未签名。本地数据格式和部分功能可能继续调整；macOS Gatekeeper 和 Windows SmartScreen 可能显示安全提醒。
-> AgentKib is a development preview. Installers on [Releases](https://github.com/starroyhq/agentkib/releases) are currently unsigned, and local data formats and some features may still change. macOS Gatekeeper and Windows SmartScreen may show warnings.
+> AgentKib 仍处于开发预览阶段。本地数据格式和部分功能可能继续调整；macOS v0.3.2 及以后版本已签名并通过 Apple 公证，Windows 安装包仍未进行 Authenticode 签名。
+> AgentKib is a development preview. Local data formats and some features may still change. macOS releases starting with v0.3.2 are signed and notarized by Apple; Windows installers are not yet Authenticode-signed.
 
 ## 简体中文
 
@@ -63,7 +63,7 @@ AgentKib 会读取本机已有的工作区和配置，让你在一个界面里�
 - Windows 11：x64 的 `.exe`；ARM64 安装包仍为 Preview
 - Linux：Ubuntu 的 `.deb` 或 AppImage、Fedora 的 `.rpm`；ARM64 安装包仍为 Preview
 
-当前安装包尚未进行 macOS 公证或 Windows 代码签名，请只使用官方 Release 中的文件并核对对应 `.sha256`。macOS 的额外安装步骤见下方[平台状态](#平台状态)。
+macOS v0.3.2 及以后版本已签名并通过 Apple 公证；Windows 安装包仍未进行 Authenticode 签名。请只使用官方 Release 中的文件并核对对应 `.sha256`。历史 macOS 版本的额外安装步骤见下方[平台状态](#平台状态)。
 
 **v0.3.1 是首个支持应用内更新的版本。** 从更早版本升级时，需要先手动安装 v0.3.1 或更新版本；之后可在“设置 → 常规”中检查更新。macOS、Windows 和 Linux AppImage 支持应用内下载安装，DEB/RPM 会打开 Release 页面交由系统包管理方式更新。
 
@@ -131,11 +131,11 @@ AgentKib 会区分“已安装”和“只发现了卸载后留下的本地数�
 | Fedora x64 | PR 验证平台代码；发布工作流构建并验证 `.rpm` |
 | Windows ARM64 / Linux ARM64 | Preview；发布工作流生成并验证预览包 |
 
-Windows 的完整环境、启动、打包和安装说明见 [Windows 指南](docs/WINDOWS.md)。维护者按 [桌面发布流程](docs/RELEASE.md) 推送版本标签后，CI 会构建、校验并发布未签名的多平台预览包；PR 和普通分支 push 只运行检查，不发布安装包。开发和验证命令见文末的[开发说明](#development)。
+Windows 的完整环境、启动、打包和安装说明见 [Windows 指南](docs/WINDOWS.md)。维护者按 [桌面发布流程](docs/RELEASE.md) 推送版本标签后，CI 会构建并校验多平台预览包，对 macOS 包完成签名和公证后再发布；PR 和普通分支 push 只运行检查，不发布安装包。开发和验证命令见文末的[开发说明](#development)。
 
 安装包与校验文件发布在 [Releases](https://github.com/starroyhq/agentkib/releases)，问题反馈请前往 [GitHub Issues](https://github.com/starroyhq/agentkib/issues)。v0.3.1 是首个包含更新器的版本；更早版本需先手动升级，此后的正式版本可按上文所述在应用内检查更新。
 
-macOS 安装包目前尚未签名和公证。请先核对 Release 中的 SHA-256 校验文件，将 AgentKib 拖入“应用程序”后，再执行以下命令解除隔离属性：
+macOS v0.3.2 及以后版本已签名并通过 Apple 公证，可在核对 SHA-256 后将 AgentKib 拖入“应用程序”并正常打开。只有使用 v0.3.1 及更早的历史包时，才需要执行以下命令解除隔离属性：
 
 ```bash
 xattr -cr /Applications/AgentKib.app
@@ -292,4 +292,4 @@ pnpm typecheck
 pnpm build
 ```
 
-AgentKib is a development preview. Unsigned preview installers and checksums are published on [Releases](https://github.com/starroyhq/agentkib/releases); macOS Gatekeeper and Windows SmartScreen may show warnings. For feedback, use [GitHub Issues](https://github.com/starroyhq/agentkib/issues).
+AgentKib is a development preview. Checksums are published with every package on [Releases](https://github.com/starroyhq/agentkib/releases). macOS releases starting with v0.3.2 are signed and notarized by Apple; Windows installers remain unsigned and may trigger SmartScreen. For feedback, use [GitHub Issues](https://github.com/starroyhq/agentkib/issues).
