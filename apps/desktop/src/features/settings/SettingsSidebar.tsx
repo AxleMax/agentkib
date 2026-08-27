@@ -82,7 +82,9 @@ export function SettingsSidebar({
         <Menu size={19} />
       </Button>
       {mobileOpen && (
-        <button
+        <Button
+          variant="bare"
+          size="content"
           className="sidebar-mobile-backdrop"
           type="button"
           aria-label={tr("common.close")}
