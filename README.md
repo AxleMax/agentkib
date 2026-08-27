@@ -186,7 +186,7 @@ Download the package for your platform from the [Latest Release](https://github.
 - Windows 11: x64 `.exe`; the ARM64 installer remains a preview
 - Linux: Ubuntu `.deb` or AppImage, or Fedora `.rpm`; ARM64 packages remain previews
 
-The packages are not yet notarized on macOS or code-signed on Windows. Only use files from the official Release and verify the matching `.sha256` file. See [Platform status](#platform-status) below for the additional macOS installation step.
+macOS packages newer than v0.3.1 are signed with AgentKib's Developer ID Application certificate and notarized by Apple. v0.3.1 and earlier remain unsigned historical packages. Windows packages are not yet Authenticode-signed. Only use files from the official Release and verify the matching `.sha256` file.
 
 **v0.3.1 is the first release with in-app update support.** Versions older than v0.3.1 must first be upgraded manually. After that, check for updates under Settings → General. macOS, Windows, and Linux AppImage support in-app installation; DEB/RPM installations open the Release page for a package-manager-safe update.
 
@@ -254,9 +254,9 @@ Optional Obsidian and OpenClaw/Hermes Remote Gateway integrations must be config
 | Fedora x64 | Platform code checked on PRs; release workflow builds and verifies `.rpm` |
 | Windows ARM64 / Linux ARM64 | Preview; release workflow builds and verifies preview packages |
 
-See the [Windows guide](docs/WINDOWS.md) for setup, development, packaging, installation, and usage. Maintainers publish unsigned multi-platform preview packages through the [desktop release workflow](docs/RELEASE.md). Pull requests and ordinary pushes run checks without publishing installers. v0.3.1 is the first updater-capable release; older versions require one manual upgrade before later stable releases can update in-app.
+See the [Windows guide](docs/WINDOWS.md) for setup, development, packaging, installation, and usage. Maintainers publish verified multi-platform packages through the [desktop release workflow](docs/RELEASE.md); macOS packages newer than v0.3.1 are signed and notarized, while Windows and preview architectures retain the limitations above. Pull requests and ordinary pushes run checks without publishing installers. v0.3.1 is the first updater-capable release; older versions require one manual upgrade before later stable releases can update in-app.
 
-The macOS package is not currently signed or notarized. Verify it against the SHA-256 file in the Release, drag AgentKib into Applications, and then remove its quarantine attributes:
+For the unsigned v0.3.1 and earlier macOS packages only, verify the DMG against its SHA-256 file, drag AgentKib into Applications, and then remove its quarantine attributes:
 
 ```bash
 xattr -cr /Applications/AgentKib.app
