@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { LoadingState } from "@/components/ui/loading-state";
+import { QuotaSkeleton } from "@/features/quota/QuotaSkeleton";
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useAppStore } from "../stores/app-store";
 import type { QuotaWindowSelector } from "../core/types";
@@ -15,7 +15,7 @@ function QuotaRoute() {
   const configurePopoverRequest = useAppStore((state) => state.quotaConfigureRequest);
 
   return (
-    <Suspense fallback={<LoadingState label="Loading…" />}>
+    <Suspense fallback={<QuotaSkeleton />}>
       <QuotaPageLazy
         initialProvider={search.quotaProvider}
         initialWindow={search.quotaWindow}

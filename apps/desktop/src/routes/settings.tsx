@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { cn } from "@/lib/utils";
 import { api } from "../core/api";
 import { GlobalSettings } from "@/features/settings/GlobalSettings";
+import { SettingsContentSkeleton } from "@/features/settings/SettingsSkeleton";
 import { localizeMessage, tr } from "../core/i18n";
 import { SettingsSidebar, type SettingsSection } from "@/features/settings/SettingsSidebar";
 import { WindowToolbar } from "@/components/WindowToolbar";
@@ -20,6 +21,7 @@ function SettingsRoute() {
   const search = useSearch({ strict: false }) as SettingsSearch;
   const section = search.settingsSection ?? "general";
   const runtime = useAppStore((state) => state.runtime);
+  const workspacesLoaded = useAppStore((state) => state.workspacesLoaded);
   const setRuntime = useAppStore((state) => state.setRuntime);
   const workspaces = useAppStore((state) => state.workspaces);
   const discovery = useAppStore((state) => state.discovery);
@@ -124,24 +126,28 @@ function SettingsRoute() {
               section === "general" && "pt-4",
             )}
           >
-            <GlobalSettings
-              section={section}
-              runtime={runtime}
-              workspaces={workspaces}
-              discovery={discovery}
-              insightsStatus={insightsStatus}
-              quotaStatus={quotaStatus}
-              remoteGateways={remoteGateways}
-              scanRoots={scanRoots}
-              excluded={excluded}
-              activity={activity}
-              onAddRoot={addRoot}
-              onRemoveRoot={removeRoot}
-              onRestore={restoreExcluded}
-              onCloseBehaviorChanged={changeCloseBehavior}
-              onLocaleChanged={changeRuntime}
-              onRemoteGatewaysChanged={refreshRemoteGateways}
-            />
+            {!runtime && !workspacesLoaded ? (
+              <SettingsContentSkeleton />
+            ) : (
+              <GlobalSettings
+                section={section}
+                runtime={runtime}
+                workspaces={workspaces}
+                discovery={discovery}
+                insightsStatus={insightsStatus}
+                quotaStatus={quotaStatus}
+                remoteGateways={remoteGateways}
+                scanRoots={scanRoots}
+                excluded={excluded}
+                activity={activity}
+                onAddRoot={addRoot}
+                onRemoveRoot={removeRoot}
+                onRestore={restoreExcluded}
+                onCloseBehaviorChanged={changeCloseBehavior}
+                onLocaleChanged={changeRuntime}
+                onRemoteGatewaysChanged={refreshRemoteGateways}
+              />
+            )}
           </section>
         </div>
       </main>

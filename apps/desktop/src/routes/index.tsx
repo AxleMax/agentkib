@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { GlobalHome } from "@/features/home/GlobalHome";
+import { HomeSkeleton } from "@/features/home/HomeSkeleton";
 import { api } from "../core/api";
 import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/catalog";
 import { useAppStore } from "../stores/app-store";
@@ -17,6 +18,7 @@ function HomeRoute() {
     activity,
     insightsSummary,
     catalog,
+    workspacesLoaded,
   } = useAppStore();
   const groupedCatalog = groupCatalogAssets(catalog);
   const assetCounts = workspaceAssetCounts(groupedCatalog);
@@ -32,6 +34,7 @@ function HomeRoute() {
       await api.requestRefresh("discovery", true);
     }
   };
+  if (!workspacesLoaded) return <HomeSkeleton />;
   return (
     <GlobalHome
       workspaces={workspaces}

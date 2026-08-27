@@ -26,7 +26,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LoadingState } from "@/components/ui/loading-state";
+import {
+  WorkspaceAssetsSkeleton,
+  WorkspaceChangesSkeleton,
+  WorkspaceContextSkeleton,
+  WorkspaceDoctorSkeleton,
+  WorkspaceGitSkeleton,
+  WorkspaceLayoutSkeleton,
+  WorkspaceOverviewSkeleton,
+  WorkspaceSessionsSkeleton,
+} from "@/features/workspace/WorkspaceSkeleton";
 import { AppSidebar, type SidebarEntry } from "@/components/AppSidebar";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { WindowToolbar } from "@/components/WindowToolbar";
@@ -340,7 +349,7 @@ function WorkspaceLayout() {
         {tr("common.notFound")}
       </div>
     ) : (
-      <LoadingState label={tr("common.loading")} />
+      <WorkspaceLayoutSkeleton />
     );
   }
   return (
@@ -422,7 +431,7 @@ function WorkspaceLayout() {
               className={cn("min-w-0", currentPage === "git" && "min-h-[calc(100vh-170px)]")}
             >
               {busy || (currentPage !== "doctor" && (!scan || !manifest)) ? (
-                <LoadingState label={tr("common.loading")} />
+                <WorkspacePageSkeleton page={currentPage} />
               ) : (
                 <Outlet />
               )}
@@ -444,6 +453,25 @@ function getPage(pathname: string): Page {
     value === "changes"
     ? value
     : "overview";
+}
+
+function WorkspacePageSkeleton({ page }: { page: Page }) {
+  switch (page) {
+    case "assets":
+      return <WorkspaceAssetsSkeleton />;
+    case "changes":
+      return <WorkspaceChangesSkeleton />;
+    case "context":
+      return <WorkspaceContextSkeleton />;
+    case "doctor":
+      return <WorkspaceDoctorSkeleton />;
+    case "git":
+      return <WorkspaceGitSkeleton />;
+    case "sessions":
+      return <WorkspaceSessionsSkeleton />;
+    default:
+      return <WorkspaceOverviewSkeleton />;
+  }
 }
 
 export const Route = createFileRoute("/workspace/$workspaceId")({ component: WorkspaceLayout });

@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
-import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceDoctorSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { WorkspaceDoctorPage } from "@/features/workspace/WorkspaceDoctorPage";
 import { api } from "../../../core/api";
 import { localizeMessage } from "../../../core/i18n";
@@ -24,7 +24,7 @@ function WorkspaceDoctorRoute() {
     },
     [],
   );
-  if (!selectedWorkspace) return <LoadingState label="Loading…" />;
+  if (!selectedWorkspace) return <WorkspaceDoctorSkeleton />;
   const planRepairs = async () => {
     if (!project) return;
     const requestId = ++repairRequest.current;

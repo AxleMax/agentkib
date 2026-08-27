@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceGitSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { WorkspaceGitPage, type GitSubview } from "@/features/workspace/WorkspaceGitPage";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 
@@ -10,7 +10,7 @@ function WorkspaceGitRoute() {
   const { workspaceId } = useParams({ from: "/workspace/$workspaceId/git" });
   const search = useSearch({ strict: false }) as GitSearch;
   const { selectedWorkspace } = useWorkspaceStore();
-  if (!selectedWorkspace) return <LoadingState label="Loading…" />;
+  if (!selectedWorkspace) return <WorkspaceGitSkeleton />;
   return (
     <WorkspaceGitPage
       workspace={selectedWorkspace}

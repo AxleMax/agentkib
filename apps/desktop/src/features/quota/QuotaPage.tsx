@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { LoadingState } from "@/components/ui/loading-state";
+import { QuotaSkeleton } from "./QuotaSkeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -271,7 +271,7 @@ export function QuotaPage({
               : tr("quota.empty");
   const emptyDetail = error || (refreshJob?.state === "failed" ? refreshJob.error : undefined);
 
-  if (initializing) return <LoadingState label={tr("common.loading")} />;
+  if (initializing) return <QuotaSkeleton />;
 
   return (
     <div className="relative grid gap-5 pb-8">

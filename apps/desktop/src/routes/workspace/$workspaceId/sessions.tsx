@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
-import { LoadingState } from "@/components/ui/loading-state";
+import { WorkspaceSessionsSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { WorkspaceSessionsPage } from "@/features/workspace/WorkspaceSessionsPage";
 import { api } from "../../../core/api";
 import { useAppStore } from "../../../stores/app-store";
@@ -11,7 +11,7 @@ function WorkspaceSessionsRoute() {
   const { runtime, installations, setRuntime } = useAppStore();
   const { selectedWorkspace, scan, setChangeSet, setChangeSetOrigin, setHandoffLaunchRequest } =
     useWorkspaceStore();
-  if (!selectedWorkspace || !scan) return <LoadingState label="Loading…" />;
+  if (!selectedWorkspace || !scan) return <WorkspaceSessionsSkeleton />;
   const targetAgents = Array.from(
     new Set([
       ...scan.agents.filter((agent) => agent.detected).map((agent) => agent.agent),

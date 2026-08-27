@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { api } from "@/core/api";
 import { formatDateTime, localizeMessage, tr } from "@/core/i18n";
+import { WorkspaceGitSkeleton } from "./WorkspaceSkeleton";
 import type {
   GitCommitSummary,
   GitDiff,
@@ -395,6 +396,8 @@ export function WorkspaceGitPage({ workspace, subview, onSubviewChange }: Worksp
     setSection("worktree");
     setSubview(undefined);
   };
+
+  if (loading && !summary) return <WorkspaceGitSkeleton />;
 
   if (summary && activeSubview) {
     const commitDetail = activeSubview.kind === "commit";

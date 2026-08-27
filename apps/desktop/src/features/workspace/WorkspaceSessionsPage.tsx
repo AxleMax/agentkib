@@ -32,6 +32,7 @@ import type {
   WorkspaceSummary,
 } from "@/core/types";
 import { SessionHandoffDialog } from "./SessionHandoffDialog";
+import { WorkspaceSessionsSkeleton } from "./WorkspaceSkeleton";
 
 type SessionFilter = "current" | "archived" | "metadata" | "all";
 type AgentFilter = "all" | ConversationSessionSummary["agent"];
@@ -243,6 +244,8 @@ export function WorkspaceSessionsPage({
       </div>
     );
   }
+
+  if (refreshing && !sessions.length && !error) return <WorkspaceSessionsSkeleton />;
 
   return (
     <>

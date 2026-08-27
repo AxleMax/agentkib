@@ -2,6 +2,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/ui/select-control";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useEffect, useState } from "react";
@@ -96,7 +97,15 @@ export function ObsidianSettingsCard() {
       {integration ? (
         <InstallationStatus integration={integration} />
       ) : (
-        <p className="px-5 py-3 text-sm text-muted-foreground">{tr("common.loading")}</p>
+        <div
+          className="grid gap-2 px-5 py-4"
+          role="status"
+          aria-busy="true"
+          aria-label="Loading Obsidian integration"
+        >
+          <Skeleton className="h-3.5 w-40" />
+          <Skeleton className="h-3 w-64" />
+        </div>
       )}
       {integration?.installation.app_path && (
         <code className="mx-5 mb-3 block break-all text-xs text-muted-foreground">
@@ -206,7 +215,15 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
         </div>
       )}
       {!integration && (
-        <p className="px-5 py-3 text-sm text-muted-foreground">{tr("common.loading")}</p>
+        <div
+          className="grid gap-2 px-5 py-4"
+          role="status"
+          aria-busy="true"
+          aria-label="Loading Obsidian integration"
+        >
+          <Skeleton className="h-3.5 w-40" />
+          <Skeleton className="h-3 w-64" />
+        </div>
       )}
       {integration && !integration.installation.installed && (
         <p className="px-5 py-3 text-sm text-muted-foreground">
