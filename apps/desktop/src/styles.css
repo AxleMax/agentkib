@@ -281,9 +281,8 @@ button {
 /* Application shell: layout variables are shared by the desktop and settings shells. */
 .app-shell {
   display: grid;
-  position: relative;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  grid-template-rows: var(--window-safe-top) minmax(0, 1fr);
+  grid-template-rows: var(--window-safe-top) 3.5rem minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -305,7 +304,7 @@ button {
 
 .app-sidebar {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 2 / span 2;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -425,10 +424,6 @@ button {
   color: var(--sidebar-primary);
 }
 .app-sidebar-collapse-button {
-  position: absolute;
-  z-index: 65;
-  top: 1.25rem;
-  left: calc(var(--sidebar-width) - 2.625rem);
   display: grid;
   width: 2rem;
   height: 2rem;
@@ -443,10 +438,17 @@ button {
     background-color 180ms ease,
     color 180ms ease;
 }
-:root[data-platform="macos"] .app-sidebar-collapse-button {
-  position: fixed;
-  top: 0.75rem;
-  left: calc(var(--sidebar-width) + 0.625rem);
+.app-shell-header {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--background);
+}
+.app-sidebar-collapse-button {
+  margin-left: 0.875rem;
 }
 .app-sidebar-collapse-button:hover {
   background: color-mix(in srgb, var(--sidebar-accent) 68%, transparent);
@@ -463,9 +465,6 @@ button {
   gap: 0.5rem;
   padding-right: 0;
   padding-left: 0;
-}
-:root:not([data-platform="macos"]) .app-shell-sidebar-collapsed .app-sidebar-header {
-  padding-bottom: 4rem;
 }
 .app-sidebar-collapsed .sidebar-brand {
   width: 100%;
@@ -498,14 +497,6 @@ button {
   padding: 0;
   border-radius: 999px;
   font-size: 0;
-}
-.app-shell-sidebar-collapsed .app-sidebar-collapse-button {
-  top: 4.25rem;
-  left: calc((var(--sidebar-width) / 2) - 1rem);
-}
-:root[data-platform="macos"] .app-shell-sidebar-collapsed .app-sidebar-collapse-button {
-  top: 0.75rem;
-  left: calc(var(--sidebar-width) + 0.625rem);
 }
 .app-sidebar-item-badge {
   display: grid;
@@ -586,11 +577,15 @@ button {
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--window-safe-top) minmax(0, 1fr);
   }
   .app-shell-main {
     grid-column: 1 !important;
     grid-row: 2 !important;
     padding-top: 3.5rem;
+  }
+  .app-shell-header {
+    display: none;
   }
   .app-sidebar {
     position: fixed;

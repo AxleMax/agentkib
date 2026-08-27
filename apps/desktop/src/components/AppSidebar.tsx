@@ -73,18 +73,20 @@ export function AppSidebar<T extends string>({
           onClick={() => setMobileOpen(false)}
         />
       )}
-      <Button
-        variant="bare"
-        size="content"
-        className="app-sidebar-collapse-button"
-        type="button"
-        aria-label={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
-        aria-expanded={!collapsed}
-        title={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
-        onClick={toggleCollapsed}
-      >
-        {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-      </Button>
+      <div className="app-shell-header">
+        <Button
+          variant="bare"
+          size="content"
+          className="app-sidebar-collapse-button"
+          type="button"
+          aria-label={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
+          aria-expanded={!collapsed}
+          title={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
+          onClick={toggleCollapsed}
+        >
+          {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+        </Button>
+      </div>
       <aside
         id={sidebarId}
         className={cn(

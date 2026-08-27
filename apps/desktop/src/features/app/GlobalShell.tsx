@@ -43,7 +43,7 @@ export function GlobalShell({
     sidebarCollapsed && "app-shell-sidebar-collapsed",
   );
   const mainClass =
-    "app-shell-main !col-start-2 !row-start-2 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
+    "app-shell-main !col-start-2 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm";
   const contentClass =
     "content !mx-auto !max-w-[1540px] !px-7 !pb-10 !pt-[14px] max-[900px]:!px-[18px]";
   const discoveryFailure = refreshJobs.find(

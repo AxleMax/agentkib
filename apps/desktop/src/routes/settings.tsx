@@ -107,7 +107,7 @@ function SettingsRoute() {
       />
       <main
         className={cn(
-          "app-shell-main !col-start-2 !row-start-2 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm",
+          "app-shell-main !col-start-2 !row-start-3 !flex !min-h-0 !min-w-0 !h-full !flex-col !overflow-hidden !text-sm",
           `settings-section-${section}`,
         )}
       >
