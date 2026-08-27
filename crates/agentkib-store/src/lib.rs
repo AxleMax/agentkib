@@ -24,7 +24,7 @@ use agentkib_quota::{QuotaBackend, QuotaCollectorStatus, QuotaSnapshot, sanitize
 use agentkib_storage::{StorageMeasurement, StorageOverview, StorageQuality, WorkspaceStorage};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Days, Local, NaiveDate, TimeZone, Timelike, Utc};
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, params, types::ValueRef};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -399,6 +399,15 @@ impl Store {
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '9');
                  COMMIT;",
             )?;
+        }
+        if current_version.is_none_or(|version| version < 10) {
+            let transaction = self.connection.unchecked_transaction()?;
+            normalize_legacy_workspace_timestamps(&transaction)?;
+            transaction.execute(
+                "INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '10')",
+                [],
+            )?;
+            transaction.commit()?;
         }
         let has_usage_events: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'usage_events')",
@@ -1358,7 +1367,9 @@ impl Store {
         let mut output = BTreeMap::new();
         for row in rows {
             let (agent, cursor) = row?;
-            output.insert(parse_enum(&agent)?, cursor);
+            if let Some(agent) = parse_agent_kind(&agent) {
+                output.insert(agent, cursor);
+            }
         }
         Ok(output)
     }
@@ -1830,9 +1841,12 @@ impl Store {
         )?;
         let rows = statement.query_map([], |row| {
             let provider: String = row.get(0)?;
-            Ok((
+            let Some(agent) = parse_agent_kind(&provider) else {
+                return Ok(None);
+            };
+            Ok(Some((
                 ProviderStatus {
-                    agent: parse_enum(&provider).map_err(sql_error)?,
+                    agent,
                     available: row.get(1)?,
                     quality: parse_enum(&row.get::<_, String>(2)?).map_err(sql_error)?,
                     coverage_from: row
@@ -1852,12 +1866,14 @@ impl Store {
                         .map_err(|error| sql_error(error.into()))?,
                 },
                 row.get::<_, String>(9)?,
-            ))
+            )))
         })?;
         let mut providers = Vec::new();
         let mut refreshed_at = None;
         for row in rows {
-            let (status, updated) = row?;
+            let Some((status, updated)) = row? else {
+                continue;
+            };
             let updated = parse_time(&updated)?;
             refreshed_at =
                 Some(refreshed_at.map_or(updated, |current: DateTime<Utc>| current.max(updated)));
@@ -2424,7 +2440,6 @@ impl Store {
         let rows = statement.query_map(params![id], |row| {
             let agent: String = row.get(0)?;
             let evidence: String = row.get(1)?;
-            let last_active_at: Option<String> = row.get(3)?;
             Ok(WorkspaceSource {
                 agent: if agent.is_empty() {
                     None
@@ -2433,10 +2448,7 @@ impl Store {
                 },
                 evidence: parse_enum(&evidence).map_err(sql_error)?,
                 session_count: row.get::<_, i64>(2)?.max(0) as u64,
-                last_active_at: last_active_at
-                    .map(|value| parse_time(&value))
-                    .transpose()
-                    .map_err(sql_error)?,
+                last_active_at: row_optional_time(row, 3)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -2970,8 +2982,8 @@ fn catalog_id(
 
 fn row_to_workspace(row: &Row<'_>) -> rusqlite::Result<WorkspaceSummary> {
     let status: String = row.get(5)?;
-    let last_active: Option<String> = row.get(8)?;
-    let last_scanned: Option<String> = row.get(9)?;
+    let last_active = row_optional_time(row, 8)?;
+    let last_scanned = row_optional_time(row, 9)?;
     Ok(WorkspaceSummary {
         id: row.get(0)?,
         path: PathBuf::from(row.get::<_, String>(1)?),
@@ -2981,14 +2993,8 @@ fn row_to_workspace(row: &Row<'_>) -> rusqlite::Result<WorkspaceSummary> {
         status: parse_enum(&status).map_err(sql_error)?,
         asset_count: row.get::<_, i64>(6)?.max(0) as u64,
         warning_count: row.get::<_, i64>(7)?.max(0) as u64,
-        last_active_at: last_active
-            .map(|value| parse_time(&value))
-            .transpose()
-            .map_err(sql_error)?,
-        last_scanned_at: last_scanned
-            .map(|value| parse_time(&value))
-            .transpose()
-            .map_err(sql_error)?,
+        last_active_at: last_active,
+        last_scanned_at: last_scanned,
         sources: Vec::new(),
     })
 }
@@ -3115,6 +3121,104 @@ fn row_to_memory(row: &Row<'_>) -> rusqlite::Result<MemoryRecord> {
 fn parse_time(value: &str) -> Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
 }
+
+fn parse_unix_timestamp(value: i64) -> Result<DateTime<Utc>> {
+    if value.unsigned_abs() >= 100_000_000_000 {
+        let seconds = value.div_euclid(1_000);
+        let milliseconds = value.rem_euclid(1_000) as u32;
+        Utc.timestamp_opt(seconds, milliseconds * 1_000_000)
+            .single()
+            .context("Invalid Unix millisecond timestamp")
+    } else {
+        Utc.timestamp_opt(value, 0)
+            .single()
+            .context("Invalid Unix timestamp")
+    }
+}
+
+fn decode_optional_time(value: ValueRef<'_>) -> Option<DateTime<Utc>> {
+    match value {
+        ValueRef::Null => None,
+        ValueRef::Text(value) => std::str::from_utf8(value).ok().and_then(|value| {
+            parse_time(value)
+                .or_else(|_| {
+                    value
+                        .parse::<i64>()
+                        .map_err(Into::into)
+                        .and_then(parse_unix_timestamp)
+                })
+                .ok()
+        }),
+        ValueRef::Integer(value) => parse_unix_timestamp(value).ok(),
+        ValueRef::Real(_) | ValueRef::Blob(_) => None,
+    }
+}
+
+fn row_optional_time(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<DateTime<Utc>>> {
+    Ok(decode_optional_time(row.get_ref(index)?))
+}
+
+fn table_has_column(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+    column: &str,
+) -> Result<bool> {
+    let mut statement = transaction.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn normalize_legacy_workspace_timestamps(transaction: &rusqlite::Transaction<'_>) -> Result<()> {
+    if table_has_column(transaction, "workspaces", "last_active_at")? {
+        let workspaces = {
+            let mut statement = transaction.prepare(
+                "SELECT id, last_active_at FROM workspaces WHERE last_active_at IS NOT NULL",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    decode_optional_time(row.get_ref(1)?).map(|value| value.to_rfc3339()),
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (id, last_active_at) in workspaces {
+            transaction.execute(
+                "UPDATE workspaces SET last_active_at = ?1 WHERE id = ?2",
+                params![last_active_at, id],
+            )?;
+        }
+    }
+
+    if table_has_column(transaction, "workspace_sources", "last_active_at")? {
+        let workspace_sources = {
+            let mut statement = transaction.prepare(
+                "SELECT workspace_id, agent, evidence, last_active_at FROM workspace_sources WHERE last_active_at IS NOT NULL",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    decode_optional_time(row.get_ref(3)?).map(|value| value.to_rfc3339()),
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (workspace_id, agent, evidence, last_active_at) in workspace_sources {
+            transaction.execute(
+                "UPDATE workspace_sources SET last_active_at = ?1 WHERE workspace_id = ?2 AND agent = ?3 AND evidence = ?4",
+                params![last_active_at, workspace_id, agent, evidence],
+            )?;
+        }
+    }
+    Ok(())
+}
 #[cfg(unix)]
 fn default_storage_measurement() -> StorageMeasurement {
     StorageMeasurement::AllocatedExact
@@ -3133,6 +3237,10 @@ fn parse_enum<T: serde::de::DeserializeOwned>(value: &str) -> Result<T> {
     Ok(serde_json::from_value(serde_json::Value::String(
         value.into(),
     ))?)
+}
+
+fn parse_agent_kind(value: &str) -> Option<AgentKind> {
+    serde_json::from_value(serde_json::Value::String(value.into())).ok()
 }
 fn sql_error(error: anyhow::Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, error.into())
@@ -3482,7 +3590,7 @@ mod tests {
     }
 
     #[test]
-    fn version_nine_adds_conversation_index_without_touching_existing_data() {
+    fn version_nine_adds_conversation_index_and_version_ten_preserves_existing_data() {
         let dir = tempdir().unwrap();
         let database = dir.path().join("db.sqlite");
         let connection = Connection::open(&database).unwrap();
@@ -3522,9 +3630,191 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "9");
+        assert_eq!(version, "10");
         assert_eq!(tables, 2);
         assert_eq!(kept, 1);
+    }
+
+    #[test]
+    fn version_ten_normalizes_legacy_workspace_timestamps_and_skips_unknown_providers() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO schema_meta(key, value) VALUES ('schema_version', '9');
+                 CREATE TABLE workspaces(
+                   id TEXT PRIMARY KEY, canonical_path TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+                   repository_group_id TEXT, manifest_workspace_id TEXT, status TEXT NOT NULL,
+                   asset_count INTEGER NOT NULL DEFAULT 0, warning_count INTEGER NOT NULL DEFAULT 0,
+                   last_active_at, last_discovered_at TEXT NOT NULL, last_scanned_at
+                 );
+                 CREATE TABLE workspace_sources(
+                   workspace_id TEXT NOT NULL, agent TEXT NOT NULL, evidence TEXT NOT NULL,
+                   session_count INTEGER NOT NULL DEFAULT 0, last_active_at,
+                   PRIMARY KEY(workspace_id, agent, evidence)
+                 );
+                 CREATE TABLE insight_cursors(
+                   provider TEXT PRIMARY KEY, cursor_json TEXT, available INTEGER NOT NULL DEFAULT 0,
+                   quality TEXT NOT NULL, coverage_from TEXT, coverage_to TEXT,
+                   imported_events INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at TEXT NOT NULL,
+                   error_key TEXT, error_params TEXT NOT NULL DEFAULT '{}'
+                 );",
+            )
+            .unwrap();
+        let workspace_seconds = 1_700_000_000_i64;
+        let source_milliseconds = 1_700_000_123_456_i64;
+        let updated_at = Utc::now().to_rfc3339();
+
+        connection
+            .execute(
+                "INSERT INTO workspaces(id, canonical_path, name, status, last_discovered_at, last_active_at, last_scanned_at)
+                 VALUES (?1, ?2, ?3, 'healthy', ?4, ?5, ?6)",
+                params![
+                    "legacy",
+                    "/tmp/legacy",
+                    "Legacy",
+                    updated_at,
+                    workspace_seconds,
+                    "not-a-time"
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO workspaces(id, canonical_path, name, status, last_discovered_at, last_active_at)
+                 VALUES ('invalid', '/tmp/invalid', 'Invalid', 'healthy', ?1, 'not-a-time')",
+                [updated_at.as_str()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO workspaces(id, canonical_path, name, status, last_discovered_at, last_active_at)
+                 VALUES ('text-unix', '/tmp/text-unix', 'Text Unix', 'healthy', ?1, '1700000001')",
+                [updated_at.as_str()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO workspaces(id, canonical_path, name, status, last_discovered_at, last_active_at)
+                 VALUES ('empty', '/tmp/empty', 'Empty', 'healthy', ?1, NULL)",
+                [updated_at.as_str()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO workspace_sources(workspace_id, agent, evidence, session_count, last_active_at)
+                 VALUES ('legacy', 'codex', 'session-cwd', 3, ?1)",
+                [source_milliseconds],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO insight_cursors(provider, cursor_json, available, quality, imported_events, updated_at)
+                 VALUES ('codex', '{\"offset\":1}', 1, 'exact', 4, ?1)",
+                [updated_at.as_str()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO insight_cursors(provider, cursor_json, available, quality, imported_events, updated_at)
+                 VALUES ('gemini-cli', '{\"offset\":2}', 1, 'exact', 7, ?1)",
+                [updated_at.as_str()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = Store::open(&database).unwrap();
+        let version: String = store
+            .connection
+            .query_row(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "10");
+
+        let workspace_type: String = store
+            .connection
+            .query_row(
+                "SELECT typeof(last_active_at) FROM workspaces WHERE id = 'legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let source_type: String = store
+            .connection
+            .query_row(
+                "SELECT typeof(last_active_at) FROM workspace_sources WHERE workspace_id = 'legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(workspace_type, "text");
+        assert_eq!(source_type, "text");
+
+        let expected_workspace = Utc.timestamp_opt(workspace_seconds, 0).single().unwrap();
+        let expected_source = Utc
+            .timestamp_opt(1_700_000_123, 456_000_000)
+            .single()
+            .unwrap();
+        let workspaces = store.list_workspaces().unwrap();
+        let legacy = workspaces
+            .iter()
+            .find(|value| value.id == "legacy")
+            .unwrap();
+        assert_eq!(legacy.last_active_at, Some(expected_workspace));
+        assert!(legacy.last_scanned_at.is_none());
+        assert_eq!(legacy.sources[0].last_active_at, Some(expected_source));
+        assert!(
+            workspaces
+                .iter()
+                .find(|value| value.id == "invalid")
+                .unwrap()
+                .last_active_at
+                .is_none()
+        );
+        assert_eq!(
+            workspaces
+                .iter()
+                .find(|value| value.id == "text-unix")
+                .unwrap()
+                .last_active_at,
+            Some(Utc.timestamp_opt(1_700_000_001, 0).single().unwrap())
+        );
+        assert!(
+            workspaces
+                .iter()
+                .find(|value| value.id == "empty")
+                .unwrap()
+                .last_active_at
+                .is_none()
+        );
+
+        let statuses = store.insights_status(false).unwrap();
+        assert_eq!(statuses.providers.len(), AgentKind::ALL.len());
+        assert!(
+            statuses
+                .providers
+                .iter()
+                .any(|value| value.agent == AgentKind::Codex && value.available)
+        );
+        let cursors = store.insight_usage_cursors().unwrap();
+        assert_eq!(
+            cursors.get(&AgentKind::Codex),
+            Some(&"{\"offset\":1}".to_string())
+        );
+        let unknown_rows: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM insight_cursors WHERE provider = 'gemini-cli'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unknown_rows, 1);
     }
 
     #[test]
