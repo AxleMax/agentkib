@@ -4,7 +4,7 @@
   "version": "0.4.0",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "tauri dev --features dev-app --config src-tauri/tauri.dev.conf.json",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "build:web": "tsc -b && vite build",
