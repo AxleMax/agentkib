@@ -282,7 +282,7 @@ button {
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  grid-template-rows: var(--window-safe-top) 3.5rem minmax(0, 1fr);
+  grid-template-rows: var(--window-safe-top) 2.75rem minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -425,8 +425,8 @@ button {
 }
 .app-sidebar-collapse-button {
   display: grid;
-  width: 2rem;
-  height: 2rem;
+  width: 1.5rem;
+  height: 1.5rem;
   place-items: center;
   border-radius: 0.625rem;
   border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
@@ -439,6 +439,7 @@ button {
     color 180ms ease;
 }
 .app-shell-header {
+  position: relative;
   grid-column: 2;
   grid-row: 2;
   display: flex;
@@ -448,7 +449,11 @@ button {
   background: var(--background);
 }
 .app-sidebar-collapse-button {
-  margin-left: 0.875rem;
+  position: absolute;
+  top: 50%;
+  left: 0.875rem;
+  margin-left: 0;
+  transform: translateY(-50%);
 }
 .app-sidebar-collapse-button:hover {
   background: color-mix(in srgb, var(--sidebar-accent) 68%, transparent);
@@ -582,7 +587,7 @@ button {
   .app-shell-main {
     grid-column: 1 !important;
     grid-row: 2 !important;
-    padding-top: 3.5rem;
+    padding-top: 3rem;
   }
   .app-shell-header {
     display: none;
