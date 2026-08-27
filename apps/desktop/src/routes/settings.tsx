@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -16,11 +15,12 @@ import type { CloseBehavior, RuntimeInfo } from "../core/types";
 type SettingsSearch = { settingsSection?: SettingsSection };
 
 function SettingsRoute() {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as SettingsSearch;
   const section = search.settingsSection ?? "general";
   const runtime = useAppStore((state) => state.runtime);
+  const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useAppStore((state) => state.setSidebarCollapsed);
   const workspacesLoaded = useAppStore((state) => state.workspacesLoaded);
   const setRuntime = useAppStore((state) => state.setRuntime);
   const workspaces = useAppStore((state) => state.workspaces);
@@ -102,6 +102,7 @@ function SettingsRoute() {
       <WindowToolbar />
       <SettingsSidebar
         active={section}
+        collapsed={sidebarCollapsed}
         onSelect={setSection}
         onBack={() => void navigate({ to: "/" })}
         onSettings={() => setSection("general")}

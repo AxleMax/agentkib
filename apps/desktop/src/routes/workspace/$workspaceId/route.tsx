@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   createFileRoute,
   Outlet,
@@ -333,7 +333,8 @@ function WorkspaceLayout() {
       ? { ...entry, badge: globalMemories.filter((item) => item.status === "pending").length }
       : entry,
   );
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarCollapsed = app.sidebarCollapsed;
+  const setSidebarCollapsed = app.setSidebarCollapsed;
   const shellClass = cn(
     "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden",
     sidebarCollapsed && "app-shell-sidebar-collapsed",
@@ -357,6 +358,7 @@ function WorkspaceLayout() {
       <WindowToolbar />
       <AppSidebar
         active="workspaces"
+        collapsed={sidebarCollapsed}
         entries={navigation}
         onNavigate={navigateGlobal}
         onSettings={() => {

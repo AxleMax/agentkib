@@ -35,16 +35,17 @@ export function SettingsSidebar({
   onSelect,
   onBack,
   onSettings,
+  collapsed,
   onCollapsedChange,
 }: {
   active: SettingsSection;
   onSelect: (section: SettingsSection) => void;
   onBack: () => void;
   onSettings: () => void;
+  collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
   const sidebarId = useId();
 
   useEffect(() => {
@@ -63,7 +64,6 @@ export function SettingsSidebar({
 
   const toggleCollapsed = () => {
     const next = !collapsed;
-    setCollapsed(next);
     onCollapsedChange(next);
   };
 
@@ -97,10 +97,20 @@ export function SettingsSidebar({
           type="button"
           aria-label={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
           aria-expanded={!collapsed}
+          data-collapsed={collapsed}
           title={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
           onClick={toggleCollapsed}
         >
-          {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          <span className="app-sidebar-collapse-icon" aria-hidden="true">
+            <PanelLeftClose
+              className={cn("app-sidebar-collapse-icon-close", collapsed && "is-hidden")}
+              size={17}
+            />
+            <PanelLeftOpen
+              className={cn("app-sidebar-collapse-icon-open", !collapsed && "is-hidden")}
+              size={17}
+            />
+          </span>
         </Button>
       </div>
       <aside

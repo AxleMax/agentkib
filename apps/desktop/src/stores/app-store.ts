@@ -21,6 +21,7 @@ type Updater<T> = T | ((current: T) => T);
 
 interface AppState {
   isFullscreen: boolean;
+  sidebarCollapsed: boolean;
   runtime?: RuntimeInfo;
   workspaces: WorkspaceSummary[];
   workspacesLoaded: boolean;
@@ -46,6 +47,7 @@ interface AppState {
 interface AppActions {
   reset: () => void;
   setIsFullscreen: (value: Updater<boolean>) => void;
+  setSidebarCollapsed: (value: Updater<boolean>) => void;
   setRuntime: (value: Updater<RuntimeInfo | undefined>) => void;
   setWorkspaces: (value: Updater<WorkspaceSummary[]>) => void;
   setWorkspacesLoaded: (value: Updater<boolean>) => void;
@@ -75,6 +77,7 @@ const resolve = <T>(value: Updater<T>, current: T): T =>
 
 export const useAppStore = create<AppState & AppActions>((set) => ({
   isFullscreen: false,
+  sidebarCollapsed: false,
   workspaces: [],
   workspacesLoaded: false,
   installations: [],
@@ -90,6 +93,7 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   reset: () =>
     set({
       isFullscreen: false,
+      sidebarCollapsed: false,
       runtime: undefined,
       workspaces: [],
       workspacesLoaded: false,
@@ -113,6 +117,8 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
     }),
   setIsFullscreen: (value) =>
     set((state) => ({ isFullscreen: resolve(value, state.isFullscreen) })),
+  setSidebarCollapsed: (value) =>
+    set((state) => ({ sidebarCollapsed: resolve(value, state.sidebarCollapsed) })),
   setRuntime: (value) => set((state) => ({ runtime: resolve(value, state.runtime) })),
   setWorkspaces: (value) => set((state) => ({ workspaces: resolve(value, state.workspaces) })),
   setWorkspacesLoaded: (value) =>

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Award, Bot, CircleAlert, FolderGit2, Gauge, Home, Library } from "lucide-react";
 import { Outlet } from "@tanstack/react-router";
 import { AppSidebar, type SidebarEntry } from "@/components/AppSidebar";
@@ -6,6 +5,7 @@ import { WindowToolbar } from "@/components/WindowToolbar";
 import { cn } from "@/lib/utils";
 import type { RefreshJobStatus } from "@/core/types";
 import type { GlobalPage } from "./app-route";
+import { useAppStore } from "@/stores/app-store";
 
 const globalNav: SidebarEntry<GlobalPage>[] = [
   { id: "home", label: "nav.home", icon: Home },
@@ -37,7 +37,8 @@ export function GlobalShell({
   onNavigate: (page: GlobalPage) => void;
   onSettings: () => void;
 }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useAppStore((state) => state.setSidebarCollapsed);
   const shellClass = cn(
     "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden",
     sidebarCollapsed && "app-shell-sidebar-collapsed",
@@ -55,6 +56,7 @@ export function GlobalShell({
       <WindowToolbar />
       <AppSidebar
         active={active}
+        collapsed={sidebarCollapsed}
         entries={entries}
         onNavigate={onNavigate}
         onSettings={onSettings}
