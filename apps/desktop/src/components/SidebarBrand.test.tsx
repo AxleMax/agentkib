@@ -20,4 +20,9 @@ describe("SidebarBrand", () => {
 
     expect(screen.getByRole("button", { name: "AgentKib Dev" })).toBeTruthy();
   });
+
+  it("keeps the sidebar usable when storage is unavailable", () => {
+    expect(() => useAppStore.getState().setSidebarCollapsed(true)).not.toThrow();
+    expect(useAppStore.getState().sidebarCollapsed).toBe(true);
+  });
 });
