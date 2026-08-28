@@ -293,7 +293,15 @@ export function useAppNavigation() {
       next();
     }
   };
-  const openSettings = () => void navigate({ to: "/settings", search: (current) => current });
+  const openSettings = () => {
+    const next = () =>
+      void navigate({
+        to: "/settings",
+        search: (current) => ({ ...current, settingsSection: "general" }) as never,
+      });
+    if (selectedWorkspace) void leaveWorkspace(next);
+    else next();
+  };
 
   useEffect(() => {
     if (!navigationRequest) return;
@@ -404,5 +412,8 @@ export function useAppNavigation() {
     ),
     navigateGlobal,
     openSettings,
+    refreshCurrentView,
+    addWorkspace: selectProject,
+    addScanRoot: addScanRootFromDialog,
   };
 }

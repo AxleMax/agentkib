@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Database,
   FolderSearch,
+  Keyboard,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
@@ -15,6 +16,13 @@ import {
 import { tr } from "@/core/i18n";
 import { cn } from "@/lib/utils";
 import { SidebarBrand } from "@/components/SidebarBrand";
+import {
+  ariaShortcut,
+  currentAppPlatform,
+  formatShortcut,
+  getShortcutDefinition,
+} from "@/core/keyboard-shortcuts";
+import { useShortcutHelp } from "@/features/app/ShortcutHelpContext";
 
 export type SettingsSection = "general" | "discovery" | "integrations" | "privacy" | "diagnostics";
 
@@ -47,6 +55,8 @@ export function SettingsSidebar({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebarId = useId();
+  const { openShortcutHelp } = useShortcutHelp();
+  const platform = currentAppPlatform();
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -98,9 +108,13 @@ export function SettingsSidebar({
           className="app-sidebar-collapse-button"
           type="button"
           aria-label={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
+          aria-keyshortcuts={ariaShortcut(getShortcutDefinition("toggle-sidebar"), platform)}
           aria-expanded={!collapsed}
           data-collapsed={collapsed}
-          title={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
+          title={`${tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")} (${formatShortcut(
+            getShortcutDefinition("toggle-sidebar"),
+            platform,
+          )})`}
           onClick={toggleCollapsed}
         >
           <span className="app-sidebar-collapse-icon" aria-hidden="true">
@@ -176,7 +190,35 @@ export function SettingsSidebar({
               size="content"
               className="app-sidebar-item"
               type="button"
-              title={tr("nav.settings")}
+              title={tr("shortcuts.openHelp")}
+              aria-label={tr("shortcuts.openHelp")}
+              aria-keyshortcuts={ariaShortcut(getShortcutDefinition("open-help"), platform)}
+              onClick={() => {
+                setMobileOpen(false);
+                openShortcutHelp();
+              }}
+            >
+              <span className="app-sidebar-item-icon">
+                <Keyboard size={18} />
+              </span>
+              <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
+                {tr("shortcuts.openHelp")}
+              </span>
+              <kbd className="app-sidebar-shortcut hidden shrink-0 rounded border border-current/20 px-1.5 py-0.5 font-mono text-[10px] font-medium opacity-60 group-hover/button:opacity-100 group-focus-visible/button:opacity-100 md:inline">
+                {formatShortcut(getShortcutDefinition("open-help"), platform)}
+              </kbd>
+            </Button>
+            <Button
+              variant="bare"
+              size="content"
+              className="app-sidebar-item"
+              type="button"
+              aria-label={tr("nav.settings")}
+              title={`${tr("nav.settings")} (${formatShortcut(
+                getShortcutDefinition("open-settings"),
+                platform,
+              )})`}
+              aria-keyshortcuts={ariaShortcut(getShortcutDefinition("open-settings"), platform)}
               onClick={() => {
                 setMobileOpen(false);
                 onSettings();
@@ -188,6 +230,9 @@ export function SettingsSidebar({
               <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
                 {tr("nav.settings")}
               </span>
+              <kbd className="app-sidebar-shortcut hidden shrink-0 rounded border border-current/20 px-1.5 py-0.5 font-mono text-[10px] font-medium opacity-60 group-hover/button:opacity-100 group-focus-visible/button:opacity-100 md:inline">
+                {formatShortcut(getShortcutDefinition("open-settings"), platform)}
+              </kbd>
             </Button>
           </div>
         </div>

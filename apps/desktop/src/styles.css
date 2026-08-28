@@ -612,6 +612,9 @@ button {
 .app-sidebar-collapsed .app-sidebar-item-label {
   display: none;
 }
+.app-sidebar-collapsed .app-sidebar-shortcut {
+  display: none;
+}
 .app-sidebar-collapsed .app-sidebar-item {
   justify-content: center;
   gap: 0;
