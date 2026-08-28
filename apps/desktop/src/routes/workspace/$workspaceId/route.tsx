@@ -377,7 +377,7 @@ function WorkspaceLayout() {
         onCollapsedChange={setSidebarCollapsed}
       />
       <main className={mainClass}>
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="page-scroll-container min-h-0 flex-1">
           {message && (
             <div className="mx-7 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               {message}
