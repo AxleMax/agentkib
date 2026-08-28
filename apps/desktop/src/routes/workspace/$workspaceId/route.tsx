@@ -371,7 +371,10 @@ function WorkspaceLayout() {
             void dialogs.notify(tr("dialog.quit.changesApplying"));
             return;
           }
-          void navigate({ to: "/settings" });
+          void navigate({
+            to: "/settings",
+            search: (current) => ({ ...current, settingsSection: "general" }) as never,
+          });
         }}
         onBrandClick={() => navigateGlobal("home")}
         onCollapsedChange={setSidebarCollapsed}

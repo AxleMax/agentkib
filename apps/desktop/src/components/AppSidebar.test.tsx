@@ -35,4 +35,28 @@ describe("AppSidebar shortcut help", () => {
     await user.click(helpButton);
     expect(opened).toBe(true);
   });
+
+  it("keeps shortcut semantics without rendering inline shortcut hints", () => {
+    const { container } = render(
+      <ShortcutHelpProvider openShortcutHelp={() => undefined}>
+        <AppSidebar
+          active="home"
+          entries={[
+            { id: "home", label: "nav.home", icon: () => null, shortcut: "navigate-home" },
+          ]}
+          onNavigate={() => undefined}
+          onSettings={() => undefined}
+          onBrandClick={() => undefined}
+          collapsed={false}
+          onCollapsedChange={() => undefined}
+        />
+      </ShortcutHelpProvider>,
+    );
+
+    expect(container.querySelectorAll("kbd")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-keyshortcuts")).toBe(
+      "Control+1",
+    );
+    expect(screen.getByRole("button", { name: "Home" }).getAttribute("title")).toBe("Home");
+  });
 });
