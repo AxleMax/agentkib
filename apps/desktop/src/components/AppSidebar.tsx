@@ -7,7 +7,6 @@ import { SidebarBrand } from "./SidebarBrand";
 import {
   ariaShortcut,
   currentAppPlatform,
-  formatShortcut,
   getShortcutDefinition,
   type ShortcutId,
 } from "@/core/keyboard-shortcuts";
@@ -96,10 +95,7 @@ export function AppSidebar<T extends string>({
           aria-keyshortcuts={ariaShortcut(getShortcutDefinition("toggle-sidebar"), platform)}
           aria-expanded={!collapsed}
           data-collapsed={collapsed}
-          title={`${tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")} (${formatShortcut(
-            getShortcutDefinition("toggle-sidebar"),
-            platform,
-          )})`}
+          title={tr(collapsed ? "common.expandSidebar" : "common.collapseSidebar")}
           onClick={toggleCollapsed}
         >
           <span className="app-sidebar-collapse-icon" aria-hidden="true">
@@ -134,9 +130,6 @@ export function AppSidebar<T extends string>({
           <nav className="app-sidebar-nav" aria-label={tr("common.primaryNavigation")}>
             {entries.map(({ id, label, icon: Icon, badge, shortcut }) => {
               const shortcutDefinition = shortcut ? getShortcutDefinition(shortcut) : undefined;
-              const shortcutText = shortcutDefinition
-                ? formatShortcut(shortcutDefinition, platform)
-                : undefined;
               return (
                 <Button
                   key={id}
@@ -148,7 +141,7 @@ export function AppSidebar<T extends string>({
                   aria-keyshortcuts={
                     shortcutDefinition ? ariaShortcut(shortcutDefinition, platform) : undefined
                   }
-                  title={shortcutText ? `${tr(label)} (${shortcutText})` : tr(label)}
+                  title={tr(label)}
                   onClick={() => navigate(id)}
                 >
                   <span className="app-sidebar-item-icon">
@@ -157,11 +150,6 @@ export function AppSidebar<T extends string>({
                   <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
                     {tr(label)}
                   </span>
-                  {shortcutText && (
-                    <kbd className="app-sidebar-shortcut hidden shrink-0 rounded border border-current/20 px-1.5 py-0.5 font-mono text-[10px] font-medium opacity-60 group-hover/button:opacity-100 group-focus-visible/button:opacity-100 md:inline">
-                      {shortcutText}
-                    </kbd>
-                  )}
                   {badge ? <em className="app-sidebar-item-badge">{badge}</em> : null}
                 </Button>
               );
@@ -187,9 +175,6 @@ export function AppSidebar<T extends string>({
               <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
                 {tr("shortcuts.openHelp")}
               </span>
-              <kbd className="app-sidebar-shortcut hidden shrink-0 rounded border border-current/20 px-1.5 py-0.5 font-mono text-[10px] font-medium opacity-60 group-hover/button:opacity-100 group-focus-visible/button:opacity-100 md:inline">
-                {formatShortcut(getShortcutDefinition("open-help"), platform)}
-              </kbd>
             </Button>
             <Button
               variant="bare"
@@ -197,10 +182,7 @@ export function AppSidebar<T extends string>({
               className="app-sidebar-item"
               type="button"
               aria-label={tr("nav.settings")}
-              title={`${tr("nav.settings")} (${formatShortcut(
-                getShortcutDefinition("open-settings"),
-                platform,
-              )})`}
+              title={tr("nav.settings")}
               aria-keyshortcuts={ariaShortcut(getShortcutDefinition("open-settings"), platform)}
               onClick={() => {
                 setMobileOpen(false);
@@ -213,9 +195,6 @@ export function AppSidebar<T extends string>({
               <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
                 {tr("nav.settings")}
               </span>
-              <kbd className="app-sidebar-shortcut hidden shrink-0 rounded border border-current/20 px-1.5 py-0.5 font-mono text-[10px] font-medium opacity-60 group-hover/button:opacity-100 group-focus-visible/button:opacity-100 md:inline">
-                {formatShortcut(getShortcutDefinition("open-settings"), platform)}
-              </kbd>
             </Button>
           </div>
         </div>
