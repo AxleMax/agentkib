@@ -78,9 +78,23 @@ const resolve = <T>(value: Updater<T>, current: T): T =>
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "agentkib.sidebar-collapsed";
 
 function initialSidebarCollapsed() {
-  return typeof localStorage !== "undefined"
-    ? localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true"
-    : false;
+  try {
+    return typeof localStorage?.getItem === "function"
+      ? localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true"
+      : false;
+  } catch {
+    return false;
+  }
+}
+
+function persistSidebarCollapsed(value: boolean) {
+  try {
+    if (typeof localStorage?.setItem === "function") {
+      localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(value));
+    }
+  } catch {
+    // Persisting this UI preference is best-effort in restricted webviews.
+  }
 }
 
 export const useAppStore = create<AppState & AppActions>((set) => ({
@@ -128,9 +142,7 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   setSidebarCollapsed: (value) =>
     set((state) => {
       const next = resolve(value, state.sidebarCollapsed);
-      if (typeof localStorage !== "undefined") {
-        localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next));
-      }
+      persistSidebarCollapsed(next);
       return { sidebarCollapsed: next };
     }),
   setRuntime: (value) => set((state) => ({ runtime: resolve(value, state.runtime) })),
