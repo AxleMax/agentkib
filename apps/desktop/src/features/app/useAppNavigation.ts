@@ -1,9 +1,8 @@
+import { useI18n } from "@/core/useI18n";
 import { useCallback, useEffect, useRef } from "react";
-import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { api } from "@/core/api";
-import { localizeMessage, tr } from "@/core/i18n";
 import { useAppStore } from "@/stores/app-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import type { Manifest, RefreshKind, WorkspaceSummary } from "@/core/types";
@@ -24,7 +23,7 @@ import {
 export type { AppSearch, GlobalPage, Page, ParsedRoute } from "./app-route";
 
 export function useAppNavigation() {
-  useTranslation();
+  const { localizeMessage, tr } = useI18n();
   const dialogs = useAppDialogs();
   const navigate = useNavigate();
   const location = useLocation();

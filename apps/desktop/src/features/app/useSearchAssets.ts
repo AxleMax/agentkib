@@ -1,10 +1,11 @@
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/core/api";
-import { localizeMessage } from "@/core/i18n";
 import { groupCatalogAssets, type CatalogAssetGroup } from "@/features/catalog/catalog";
 
 export const SEARCH_ASSET_LIMIT = 500;
 export function useSearchAssets(query: string, open: boolean) {
+  const { localizeMessage } = useI18n();
   const term = query.trim();
   const [revision, setRevision] = useState(0);
   const generation = useRef(0);
@@ -12,7 +13,7 @@ export function useSearchAssets(query: string, open: boolean) {
     term: "",
     loading: false,
     assets: [] as CatalogAssetGroup[],
-    error: "",
+    error: "" as unknown,
     limited: false,
   });
   useEffect(() => {
@@ -38,7 +39,7 @@ export function useSearchAssets(query: string, open: boolean) {
               term,
               loading: false,
               assets: [],
-              error: localizeMessage(error),
+              error,
               limited: false,
             });
         });
@@ -52,7 +53,7 @@ export function useSearchAssets(query: string, open: boolean) {
   return {
     assets: visible ? state.assets : [],
     loading: open && Boolean(term) && (!visible || state.loading),
-    error: visible ? state.error : "",
+    error: visible && state.error ? localizeMessage(state.error) : "",
     limited: visible && state.limited,
     retry: () => setRevision((value) => value + 1),
   };

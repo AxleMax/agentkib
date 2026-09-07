@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -14,7 +15,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useEffect, useState } from "react";
 import { ChevronRight, CircleAlert, FileCode2, FolderGit2, PlugZap, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatRelativeTime, tr } from "@/core/i18n";
+import { tr } from "@/core/i18n";
 import type {
   AgentInstallation,
   AgentKind,
@@ -71,6 +72,7 @@ export function AgentsPage({
   selectedAgent?: AgentKind;
   onSelectedAgentChange: (agent: AgentKind) => void;
 }) {
+  const { tr, formatRelativeTime } = useI18n();
   const [selected, setSelected] = useState<AgentKind>(selectedAgent ?? "codex");
   const [section, setSection] = useState<AgentDetailSection>("overview");
   const [agentQuery, setAgentQuery] = useState("");
@@ -203,7 +205,9 @@ export function AgentsPage({
                     <span className="min-w-0">
                       <strong className="flex items-center gap-2 truncate text-sm text-foreground">
                         {agentLabels[agent]}
-                        {agent === "deepseek-harness" && <Badge variant="outline">Beta</Badge>}
+                        {agent === "deepseek-harness" && (
+                          <Badge variant="outline">{tr("common.beta")}</Badge>
+                        )}
                       </strong>
                       <small className="mt-1 block text-xs text-muted-foreground">
                         {count} {tr("common.workspaces")}
@@ -244,7 +248,9 @@ export function AgentsPage({
                 </span>
               )}
             </div>
-            {selected === "deepseek-harness" && <Badge variant="outline">Beta</Badge>}
+            {selected === "deepseek-harness" && (
+              <Badge variant="outline">{tr("common.beta")}</Badge>
+            )}
             <Tabs
               value={section}
               onValueChange={(value) => setSection(value as AgentDetailSection)}
@@ -319,7 +325,7 @@ export function AgentsPage({
                   key={warning}
                 >
                   <CircleAlert size={16} />
-                  {installationWarningLabel(warning)}
+                  {installationWarningLabel(warning, tr)}
                 </div>
               ))}
 
@@ -524,6 +530,7 @@ export function AgentsPage({
 }
 
 function RemoteAgentGatewayDetails({ gateways }: { gateways: RemoteGatewaySummary[] }) {
+  const { tr } = useI18n();
   const sectionClass = "grid gap-3 rounded-xl border border-border bg-background p-4";
   return (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -608,9 +615,9 @@ function RemoteAgentGatewayDetails({ gateways }: { gateways: RemoteGatewaySummar
   );
 }
 
-function installationWarningLabel(warning: string) {
+function installationWarningLabel(warning: string, translate = tr) {
   if (warning === "DeepSeek Harness workspace storage version is not supported")
-    return tr("errors.deepseekWorkspaceVersion");
+    return translate("errors.deepseekWorkspaceVersion");
   return warning;
 }
 

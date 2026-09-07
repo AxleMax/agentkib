@@ -1,10 +1,11 @@
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/core/api";
 import { desktopApi } from "@/core/desktop";
-import { cacheEffectiveLocale, changeLocale, localizeMessage, tr } from "@/core/i18n";
+import { cacheEffectiveLocale, changeLocale } from "@/core/i18n";
 import {
   accentThemePreference,
   applyAccentTheme,
@@ -23,6 +24,7 @@ import type { AppMenuCommandRequest, AppNavigationRequest, EffectiveTheme } from
 import type { DesktopRuntimeStatus } from "../../../electron/api";
 
 export function AppRuntimeBridge() {
+  const { localizeMessage, tr } = useI18n();
   const dialogs = useAppDialogs();
   const queryClient = useQueryClient();
   const appStore = useAppStore();

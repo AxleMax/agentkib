@@ -3,6 +3,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/core/api";
+import { changeLocale, initializeI18n, tr } from "@/core/i18n";
 import type { CatalogAsset } from "@/core/types";
 import { SEARCH_ASSET_LIMIT, useSearchAssets } from "./useSearchAssets";
 
@@ -38,6 +39,21 @@ async function tick(ms = 250) {
 }
 
 describe("useSearchAssets", () => {
+  it("translates a stored error without restarting the catalog query", async () => {
+    await initializeI18n("en-US");
+    vi.mocked(api.catalogAssets).mockRejectedValue({ key: "errors.generic" });
+    const { result } = renderHook(() => useSearchAssets("skill", true));
+    await tick();
+    try {
+      for (const locale of ["zh-CN", "zh-TW", "ja-JP", "en-US"] as const) {
+        await act(() => changeLocale(locale));
+        expect(result.current.error).toBe(tr("errors.generic"));
+      }
+      expect(api.catalogAssets).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(() => changeLocale("en-US"));
+    }
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();

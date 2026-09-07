@@ -9,7 +9,7 @@ import { SettingsPage, type SettingsPageVariant } from "./components/SettingsLay
 
 export function SettingsSkeleton() {
   return (
-    <SkeletonPage className="grid-cols-[180px_minmax(0,1fr)] gap-5 p-5" label="Loading settings">
+    <SkeletonPage className="grid-cols-[180px_minmax(0,1fr)] gap-5 p-5" labelKey="loading.settings">
       <SkeletonPanel className="h-fit p-3">
         <div className="grid gap-2">
           {Array.from({ length: 6 }, (_, index) => (
@@ -30,7 +30,7 @@ export function SettingsSkeleton() {
 export function SettingsContentSkeleton({ variant = "form" }: { variant?: SettingsPageVariant }) {
   return (
     <SettingsPage variant={variant}>
-      <SkeletonPage label="Loading settings">
+      <SkeletonPage labelKey="loading.settings">
         <SkeletonPanel className="rounded-xl shadow-none">
           <SkeletonPanelHeader />
           <div className="p-5">

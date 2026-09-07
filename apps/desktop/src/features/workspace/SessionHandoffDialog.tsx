@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -14,7 +15,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, Copy, FileOutput, PlugZap, ShieldCheck, X } from "lucide-react";
 import { api } from "@/core/api";
-import { localizeMessage, tr } from "@/core/i18n";
+
 import type {
   AgentKind,
   ContinuationCapabilityStatus,
@@ -49,6 +50,7 @@ export function SessionHandoffDialog({
     autoPrepare: boolean;
   };
 }) {
+  const { localizeMessage, tr } = useI18n();
   const availableTargets = useMemo(
     () =>
       sessionHandoffTargets.filter(
@@ -72,7 +74,8 @@ export function SessionHandoffDialog({
   const [acceptLosses, setAcceptLosses] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState("");
+  const [rawError, setError] = useState<unknown>("");
+  const error = rawError === "" ? "" : localizeMessage(rawError);
   const activeRef = useRef(true);
   const requestGenerationRef = useRef(0);
   const identityRef = useRef({ workspaceId: workspace.id, sessionId: session.id });
@@ -133,7 +136,7 @@ export function SessionHandoffDialog({
       if (!isCurrent(identity)) return;
       showDraft(preparation.draft);
     } catch (reason) {
-      if (isCurrent(identity)) setError(localizeMessage(reason));
+      if (isCurrent(identity)) setError(reason);
     } finally {
       if (isLatest(identity)) setBusy(false);
     }
@@ -166,7 +169,7 @@ export function SessionHandoffDialog({
       );
       if (isCurrent(identity)) onPlanned(planned);
     } catch (reason) {
-      if (isCurrent(identity)) setError(localizeMessage(reason));
+      if (isCurrent(identity)) setError(reason);
     } finally {
       if (isLatest(identity)) setBusy(false);
     }
@@ -192,7 +195,7 @@ export function SessionHandoffDialog({
         format,
       });
     } catch (reason) {
-      if (isCurrent(identity)) setError(localizeMessage(reason));
+      if (isCurrent(identity)) setError(reason);
     } finally {
       if (isLatest(identity)) setBusy(false);
     }
@@ -212,7 +215,7 @@ export function SessionHandoffDialog({
         if (activeRef.current) setCopied(false);
       }, 1200);
     } catch (reason) {
-      if (isCurrent(identity)) setError(localizeMessage(reason));
+      if (isCurrent(identity)) setError(reason);
     } finally {
       if (isLatest(identity)) setBusy(false);
     }
@@ -245,7 +248,7 @@ export function SessionHandoffDialog({
         <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-[18px]">
           <div>
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground">
-              Session Continuation
+              {tr("handoff.label")}
             </span>
             <DialogTitle className="mt-0 text-xl">{tr("handoff.title")}</DialogTitle>
           </div>
@@ -583,6 +586,7 @@ const capabilityLabels = {
 } as const;
 
 function CapabilityStatus({ status }: { status: ContinuationCapabilityStatus }) {
+  const { tr } = useI18n();
   return (
     <span
       className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${

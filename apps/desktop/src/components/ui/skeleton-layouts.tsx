@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 import { Skeleton } from "./skeleton";
@@ -130,14 +131,22 @@ function SkeletonToolbar({ className }: { className?: string }) {
 function SkeletonPage({
   children,
   className,
-  label = "Loading",
+  label,
+  labelKey = "common.loading",
 }: {
   children: ReactNode;
   className?: string;
   label?: string;
+  labelKey?: string;
 }) {
+  const { t: tr } = useTranslation();
   return (
-    <div className={cn("grid gap-4", className)} role="status" aria-busy="true" aria-label={label}>
+    <div
+      className={cn("grid gap-4", className)}
+      role="status"
+      aria-busy="true"
+      aria-label={label ?? tr(labelKey)}
+    >
       {children}
     </div>
   );

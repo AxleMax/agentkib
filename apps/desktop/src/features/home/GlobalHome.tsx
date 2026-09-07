@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import {
   Brain,
   Check,
@@ -13,7 +14,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { formatDateTime, formatRelativeTime, tr } from "@/core/i18n";
 import type {
   ActivityRecord,
   AgentInstallation,
@@ -106,6 +106,7 @@ export function GlobalHome({
   runtime?: RuntimeInfo;
   onRuntimeChanged: (runtime: RuntimeInfo) => void;
 }) {
+  const { tr, formatRelativeTime } = useI18n();
   const attention = workspaces.filter(
     (item) =>
       item.status === "attention" ||
@@ -170,7 +171,7 @@ export function GlobalHome({
           ))}
           <span className="ml-auto text-xs text-muted-foreground">
             {discovery
-              ? tr("home.updated", { time: relativeTime(discovery.finished_at) })
+              ? tr("home.updated", { time: formatRelativeTime(discovery.finished_at) })
               : tr("home.discovering")}
           </span>
         </div>
@@ -210,7 +211,7 @@ export function GlobalHome({
                     >
                       <span className="min-w-0">
                         <strong className="block truncate text-sm">
-                          {displaySessionTitle(item.session.title)}
+                          {displaySessionTitle(item.session.title, tr)}
                         </strong>
                         <span className="mt-1 block text-xs text-muted-foreground">
                           {tr("home.continueSessionMeta", {
@@ -399,6 +400,7 @@ function ContinuationEmptyState({
   onRetry?: () => Promise<void>;
   onOpenWorkspace?: () => Promise<void>;
 }) {
+  const { tr } = useI18n();
   if (state === "loading") {
     return (
       <div className="flex items-start gap-3 px-5 py-5 text-sm text-muted-foreground">
@@ -453,6 +455,7 @@ function WorkspaceRow({
   assetCount?: number;
   onOpen: (workspace: WorkspaceSummary) => Promise<void>;
 }) {
+  const { tr } = useI18n();
   const sourceAgents = workspace.sources
     .map((source) => source.agent)
     .filter((value): value is AgentKind => Boolean(value))
@@ -483,12 +486,12 @@ function WorkspaceRow({
       {workspace.status === "attention" ? (
         <Badge variant="secondary" className="gap-1 bg-primary/10 text-primary">
           <CircleAlert size={13} />
-          {workspaceStatusLabel("attention")}
+          {tr("status.workspace.attention")}
         </Badge>
       ) : (
         <Badge variant="secondary" className="gap-1 bg-emerald-500/10 text-emerald-700">
           <Check size={13} />
-          {workspaceStatusLabel("healthy")}
+          {tr("status.workspace.healthy")}
         </Badge>
       )}
     </Button>
@@ -496,7 +499,8 @@ function WorkspaceRow({
 }
 
 function ActivityRow({ record }: { record: ActivityRecord }) {
-  const presentation = activityPresentation(record);
+  const { tr, formatDateTime } = useI18n();
+  const presentation = activityPresentation(record, tr);
   return (
     <div className="grid min-h-12 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-2 text-sm">
       <FileText size={16} className="text-muted-foreground" />
@@ -514,12 +518,4 @@ function ActivityRow({ record }: { record: ActivityRecord }) {
       </time>
     </div>
   );
-}
-
-function workspaceStatusLabel(status: WorkspaceSummary["status"]) {
-  return tr(`status.workspace.${status}`);
-}
-
-function relativeTime(value: string) {
-  return formatRelativeTime(value);
 }

@@ -24,7 +24,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
-import { tr } from "../core/i18n";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { SidebarBrand } from "./SidebarBrand";
 import { SidebarSearchButton } from "./SidebarSearchButton";
@@ -103,6 +103,7 @@ export function AppSidebar(props: {
   context?: AppSidebarContext;
   onCollapsedChange?: (collapsed: boolean) => void;
 }) {
+  const { t: tr } = useTranslation();
   const { active, entries, onNavigate, onSettings, collapsed, context } = props;
   const [mobileOpen, setMobileOpen] = useState(false);
   useEffect(() => {

@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -30,7 +31,6 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { tr } from "@/core/i18n";
 import type { AgentKind, WorkspaceSummary } from "@/core/types";
 import type { CatalogAssetGroup } from "@/features/catalog/catalog";
 import { AssetDetails } from "./AssetDetails";
@@ -60,22 +60,6 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function formatCatalogDateTime(value: string) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    })
-      .formatToParts(new Date(value))
-      .map(({ type, value: part }) => [type, part]),
-  );
-  return `${parts.year}.${parts.month}.${parts.day} ${parts.hour}:${parts.minute}`;
-}
-
 function AssetIcon() {
   return (
     <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-muted/40 text-foreground">
@@ -91,6 +75,7 @@ interface AssetCatalogPageProps {
 }
 
 export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPageProps) {
+  const { tr, formatDateTime } = useI18n();
   const [query, setQuery] = useState("");
   const [agent, setAgent] = useState<"all" | AgentKind>("all");
   const [kind, setKind] = useState("all");
@@ -402,7 +387,7 @@ export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPag
                             {formatBytes(asset.size)}
                           </TableCell>
                           <TableCell className="hidden max-w-0 truncate whitespace-nowrap text-sm text-muted-foreground xl:table-cell">
-                            {asset.modified_at ? formatCatalogDateTime(asset.modified_at) : "—"}
+                            {asset.modified_at ? formatDateTime(asset.modified_at) : "—"}
                           </TableCell>
                         </TableRow>
                       );

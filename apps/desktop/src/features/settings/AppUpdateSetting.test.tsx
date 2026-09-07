@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { AppDialogProvider } from "@/components/AppDialogProvider";
 import { api } from "@/core/api";
-import { initializeI18n } from "@/core/i18n";
+import { changeLocale, initializeI18n, tr } from "@/core/i18n";
 import { AppUpdateSetting } from "./AgentToolsSettings";
 
 vi.mock("@/core/api", () => ({
@@ -40,6 +40,22 @@ describe("AppUpdateSetting", () => {
     vi.mocked(api.checkAppUpdate).mockReset();
     vi.mocked(api.openExternal).mockReset();
     vi.mocked(api.installAppUpdate).mockReset();
+  });
+
+  it("updates the memoized description and buttons when the locale changes", async () => {
+    renderSetting();
+    expect(screen.getByText("Current version 0.2.0")).toBeTruthy();
+
+    try {
+      await act(() => changeLocale("zh-CN"));
+      expect(
+        screen.getByText(tr("settings.updateCurrentVersion", { version: "0.2.0" })),
+      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: tr("settings.checkForUpdates") })).toBeTruthy();
+      expect(screen.queryByText("Current version 0.2.0")).toBeNull();
+    } finally {
+      await act(() => changeLocale("en-US"));
+    }
   });
 
   it("locks repeated checks and reports an up-to-date version", async () => {

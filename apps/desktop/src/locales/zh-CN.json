@@ -1419,5 +1419,12 @@
   "settings.tools.appState.available": "发现更新",
   "settings.tools.appState.downloading": "下载中",
   "settings.tools.appState.installing": "正在重启",
-  "settings.tools.appState.failed": "检查失败"
+  "settings.tools.appState.failed": "检查失败",
+  "doctor.label": "上下文诊断",
+  "handoff.label": "会话续接",
+  "common.beta": "测试版",
+  "loading.agents": "正在加载智能体…",
+  "loading.assets": "正在加载资产…",
+  "loading.home": "正在加载首页…",
+  "loading.settings": "正在加载设置…"
 }

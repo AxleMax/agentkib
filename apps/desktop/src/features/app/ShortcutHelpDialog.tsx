@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   currentAppPlatform,
@@ -5,7 +6,6 @@ import {
   shortcutsForGroup,
   type ShortcutGroup,
 } from "@/core/keyboard-shortcuts";
-import { tr } from "@/core/i18n";
 
 export function ShortcutHelpDialog({
   open,
@@ -14,6 +14,7 @@ export function ShortcutHelpDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { tr } = useI18n();
   const platform = currentAppPlatform();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -37,6 +38,7 @@ function ShortcutGroupSection({
   group: ShortcutGroup;
   platform: ReturnType<typeof currentAppPlatform>;
 }) {
+  const { tr } = useI18n();
   return (
     <section aria-labelledby={`shortcut-group-${group}`}>
       <h3

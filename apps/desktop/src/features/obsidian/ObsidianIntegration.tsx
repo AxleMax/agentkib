@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,11 +15,12 @@ import { Card } from "@/components/ui/card";
 import { useEffect, useState } from "react";
 import { ExternalLink, FolderOpen, Link2, Unlink } from "lucide-react";
 import { api } from "@/core/api";
-import { localizeMessage, tr } from "@/core/i18n";
+
 import type { ObsidianIntegration } from "@/core/types";
 import { SettingsNotice, SettingsPanel } from "@/features/settings/components/SettingsLayout";
 
 function InstallationStatus({ integration }: { integration: ObsidianIntegration }) {
+  const { tr } = useI18n();
   const { installation } = integration;
   return (
     <div className="flex items-center gap-2.5 px-5 pb-2 pt-4">
@@ -38,15 +40,17 @@ function InstallationStatus({ integration }: { integration: ObsidianIntegration 
 }
 
 export function ObsidianSettingsCard() {
+  const { localizeMessage, tr } = useI18n();
   const [integration, setIntegration] = useState<ObsidianIntegration>();
-  const [error, setError] = useState("");
+  const [rawError, setError] = useState<unknown>("");
+  const error = rawError === "" ? "" : localizeMessage(rawError);
 
   const load = async () => {
     try {
       setError("");
       setIntegration(await api.obsidianIntegration());
     } catch (cause) {
-      setError(localizeMessage(cause));
+      setError(cause);
     }
   };
 
@@ -59,7 +63,7 @@ export function ObsidianSettingsCard() {
       setError("");
       await api.openObsidian();
     } catch (cause) {
-      setError(localizeMessage(cause));
+      setError(cause);
     }
   };
 
@@ -70,7 +74,7 @@ export function ObsidianSettingsCard() {
       setError("");
       setIntegration(await api.addObsidianVault(selected));
     } catch (cause) {
-      setError(localizeMessage(cause));
+      setError(cause);
     }
   };
 
@@ -99,7 +103,7 @@ export function ObsidianSettingsCard() {
           className="grid gap-2 px-5 py-4"
           role="status"
           aria-busy="true"
-          aria-label="Loading Obsidian integration"
+          aria-label={tr("common.loading")}
         >
           <Skeleton className="h-3.5 w-40" />
           <Skeleton className="h-3 w-64" />
@@ -143,10 +147,12 @@ export function ObsidianSettingsCard() {
 }
 
 export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) {
+  const { localizeMessage, tr } = useI18n();
   const [integration, setIntegration] = useState<ObsidianIntegration>();
   const [vaultPath, setVaultPath] = useState("");
   const [relativeTarget, setRelativeTarget] = useState("");
-  const [error, setError] = useState("");
+  const [rawError, setError] = useState<unknown>("");
+  const error = rawError === "" ? "" : localizeMessage(rawError);
 
   const load = async () => {
     try {
@@ -155,7 +161,7 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
       setIntegration(next);
       setVaultPath((current) => current || next.vaults[0]?.path || "");
     } catch (cause) {
-      setError(localizeMessage(cause));
+      setError(cause);
     }
   };
 
@@ -171,7 +177,7 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
       await api.linkWorkspaceToObsidian(workspaceId, vaultPath, relativeTarget);
       await load();
     } catch (cause) {
-      setError(localizeMessage(cause));
+      setError(cause);
     }
   };
 
@@ -181,7 +187,7 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
       await api.unlinkWorkspaceFromObsidian(workspaceId);
       await load();
     } catch (cause) {
-      setError(localizeMessage(cause));
+      setError(cause);
     }
   };
 
@@ -190,7 +196,7 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
       setError("");
       await api.openWorkspaceInObsidian(workspaceId);
     } catch (cause) {
-      setError(localizeMessage(cause));
+      setError(cause);
     }
   };
 
@@ -217,7 +223,7 @@ export function WorkspaceObsidianCard({ workspaceId }: { workspaceId: string }) 
           className="grid gap-2 px-5 py-4"
           role="status"
           aria-busy="true"
-          aria-label="Loading Obsidian integration"
+          aria-label={tr("common.loading")}
         >
           <Skeleton className="h-3.5 w-40" />
           <Skeleton className="h-3 w-64" />

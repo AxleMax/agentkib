@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import type { CSSProperties, ReactNode } from "react";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useSidebarWidthStore } from "./sidebar-width-store";
@@ -6,7 +7,6 @@ import { useLocation } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { WindowToolbar } from "@/components/WindowToolbar";
 import { ariaShortcut, currentAppPlatform, getShortcutDefinition } from "@/core/keyboard-shortcuts";
-import { tr } from "@/core/i18n";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import {
@@ -30,6 +30,7 @@ export function WindowNavigationControls({
   onBack?: () => void;
   onForward?: () => void;
 }) {
+  const { tr } = useI18n();
   const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
   const setSidebarCollapsed = useAppStore((state) => state.setSidebarCollapsed);
   const setSidebarPeek = useAppStore((state) => state.setSidebarPeek);
@@ -122,6 +123,7 @@ export function AppShell({
   onBack?: () => void;
   onForward?: () => void;
 }) {
+  const { tr } = useI18n();
   const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
   const sidebarPeek = useAppStore((state) => state.sidebarPeek);
   const setSidebarPeek = useAppStore((state) => state.setSidebarPeek);

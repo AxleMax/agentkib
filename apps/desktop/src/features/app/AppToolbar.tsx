@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,7 +8,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatShortcut, getShortcutDefinition } from "@/core/keyboard-shortcuts";
-import { tr } from "@/core/i18n";
 import { CircleHelp, MoreHorizontal, RefreshCw } from "lucide-react";
 
 export function AppToolbar({
@@ -19,6 +19,7 @@ export function AppToolbar({
   onRefresh: () => void;
   onOpenHelp: () => void;
 }) {
+  const { tr } = useI18n();
   return (
     <div className="app-toolbar-content">
       <div className="app-toolbar-breadcrumb" aria-label={tr("common.breadcrumb")}>

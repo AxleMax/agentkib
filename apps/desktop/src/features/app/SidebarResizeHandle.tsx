@@ -1,6 +1,6 @@
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useRef } from "react";
 import type { PointerEvent } from "react";
-import { tr } from "@/core/i18n";
 import {
   DEFAULT_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
@@ -8,6 +8,7 @@ import {
 } from "./sidebar-width-store";
 
 export function SidebarResizeHandle({ width, maxWidth }: { width: number; maxWidth: number }) {
+  const { tr } = useI18n();
   const state = useSidebarWidthStore();
   const gesture = useRef<{ id: number; startX: number; startWidth: number } | null>(null);
   const cancel = () => {

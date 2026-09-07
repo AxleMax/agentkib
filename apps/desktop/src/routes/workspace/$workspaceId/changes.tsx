@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { createFileRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { WorkspaceChangesSkeleton } from "@/features/workspace/WorkspaceSkeleton";
@@ -10,7 +11,6 @@ import {
 } from "@/features/workspace/workspace-flow";
 import { homeKeys } from "@/features/home/home-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { localizeMessage, tr } from "../../../core/i18n";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -104,6 +104,7 @@ export function Changes({
   onRejected: () => void;
   onApplyingChange: (applying: boolean) => void;
 }) {
+  const { localizeMessage, tr } = useI18n();
   const [selected, setSelected] = useState(0);
   const [busy, setBusy] = useState(false);
   const [planningHome, setPlanningHome] = useState(false);
@@ -356,6 +357,7 @@ export function Changes({
 }
 
 function WorkspaceChangesRoute() {
+  const { localizeMessage } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { workspaceId } = useParams({ from: "/workspace/$workspaceId/changes" });

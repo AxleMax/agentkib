@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,7 +14,6 @@ import { useAppDialogs } from "@/components/AppDialogProvider";
 import { useState } from "react";
 import { Pencil, Plus, RefreshCw, Server, Trash2, X } from "lucide-react";
 import { api } from "@/core/api";
-import { formatDateTime, localizeMessage, tr } from "@/core/i18n";
 import type {
   RemoteGatewayAuthKind,
   RemoteGatewayInput,
@@ -41,6 +41,7 @@ export function RemoteGatewaysSettings({
   gateways: RemoteGatewaySummary[];
   onChanged: () => Promise<void>;
 }) {
+  const { tr, formatDateTime, localizeMessage } = useI18n();
   const dialogs = useAppDialogs();
   const [draft, setDraft] = useState<RemoteGatewayInput>();
   const [busyId, setBusyId] = useState<string>();

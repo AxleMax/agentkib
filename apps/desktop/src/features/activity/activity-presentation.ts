@@ -1,4 +1,4 @@
-import { tr } from "@/core/i18n";
+import { tr as defaultTranslate } from "@/core/i18n";
 import type { ActivityRecord } from "@/core/types";
 
 export interface ActivityPresentation {
@@ -9,7 +9,7 @@ export interface ActivityPresentation {
 const discoveryDetailPattern = /^(\d+) workspaces, (\d+) errors$/;
 const insightsDetailPattern = /^(\d+) providers, (\d+) repositories$/;
 
-export function activityPresentation(record: ActivityRecord): ActivityPresentation {
+export function activityPresentation(record: ActivityRecord, tr = defaultTranslate): ActivityPresentation {
   switch (record.action) {
     case "discovery.complete": {
       const match = discoveryDetailPattern.exec(record.detail);

@@ -1419,5 +1419,12 @@
   "settings.tools.appState.available": "發現更新",
   "settings.tools.appState.downloading": "下載中",
   "settings.tools.appState.installing": "正在重新啟動",
-  "settings.tools.appState.failed": "檢查失敗"
+  "settings.tools.appState.failed": "檢查失敗",
+  "doctor.label": "上下文診斷",
+  "handoff.label": "工作階段接續",
+  "common.beta": "測試版",
+  "loading.agents": "正在載入智慧體…",
+  "loading.assets": "正在載入資產…",
+  "loading.home": "正在載入首頁…",
+  "loading.settings": "正在載入設定…"
 }

@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { initializeI18n, tr } from "@/core/i18n";
+import { changeLocale, initializeI18n, tr } from "@/core/i18n";
 import { AppSidebar } from "./AppSidebar";
 import { ShortcutHelpProvider } from "@/features/app/ShortcutHelpContext";
 import { createGlobalNavigation } from "@/features/app/global-navigation";
@@ -23,6 +23,37 @@ vi.mock("@/features/sessions/SessionDirectory", () => ({
 describe("AppSidebar v8 navigation", () => {
   beforeAll(() => initializeI18n("en-US"));
   afterEach(cleanup);
+
+  it.each([
+    ["zh-CN", "更多", "设置", "远程连接"],
+    ["zh-TW", "更多", "設定", "遠端連線"],
+    ["ja-JP", "その他", "設定", "リモート接続"],
+    ["en-US", "More", "Settings", "Remote connections"],
+  ] as const)(
+    "updates the mounted sidebar and menu in %s without parent rerender",
+    async (locale, more, settings, remote) => {
+      render(
+        <AppSidebar
+          active="home"
+          entries={createGlobalNavigation(0)}
+          onNavigate={vi.fn()}
+          onSettings={vi.fn()}
+          collapsed={false}
+        />,
+      );
+      const original = screen.getByRole("button", { name: "More" });
+      try {
+        await act(() => changeLocale(locale));
+        const trigger = screen.getByRole("button", { name: more });
+        expect(trigger).toBe(original);
+        await userEvent.setup().click(trigger);
+        expect(await screen.findByRole("menuitem", { name: settings })).toBeTruthy();
+        expect(await screen.findByRole("menuitem", { name: remote })).toBeTruthy();
+      } finally {
+        await act(() => changeLocale("en-US"));
+      }
+    },
+  );
 
   it("closes the navigation drawer when global search opens, including shortcut activation", () => {
     const onOpenSearch = vi.fn();

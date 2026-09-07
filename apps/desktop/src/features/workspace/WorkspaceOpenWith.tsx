@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,7 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, Code2, FolderOpen, SquareTerminal } from "lucide-react";
 import { api } from "@/core/api";
-import { localizeMessage, tr } from "@/core/i18n";
+import { localizeMessage } from "@/core/i18n";
 import type { WorkspaceOpener, WorkspaceSummary } from "@/core/types";
 
 export function WorkspaceOpenWith({
@@ -20,6 +21,7 @@ export function WorkspaceOpenWith({
   workspace: WorkspaceSummary;
   onError: (message: string) => void;
 }) {
+  const { tr } = useI18n();
   const [openers, setOpeners] = useState<WorkspaceOpener[]>([]);
   const [opening, setOpening] = useState(false);
   const requestSequence = useRef(0);

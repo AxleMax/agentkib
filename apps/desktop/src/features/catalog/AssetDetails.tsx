@@ -1,4 +1,4 @@
-import { tr } from "@/core/i18n";
+import { useI18n } from "@/core/useI18n";
 import type { CatalogAssetGroup } from "./catalog";
 import { sessionAgentNames } from "@/features/sessions/session-labels";
 
@@ -10,6 +10,7 @@ export function AssetDetails({
   asset: CatalogAssetGroup;
   workspaceName: string;
 }) {
+  const { tr } = useI18n();
   const rows = [
     [tr("catalog.type"), tr(`status.asset.${asset.kind}`)],
     [

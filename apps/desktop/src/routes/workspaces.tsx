@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -19,7 +20,7 @@ import { WorkspacesSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { api } from "../core/api";
 import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/catalog";
-import { formatRelativeTime, localizeMessage, tr } from "../core/i18n";
+import { formatRelativeTime, tr } from "../core/i18n";
 import {
   homeKeys,
   useHomeCatalog,
@@ -46,6 +47,7 @@ const agentLabels: Record<AgentKind, string> = {
 };
 
 function WorkspacesRoute() {
+  const { tr, localizeMessage } = useI18n();
   const navigate = useNavigate();
   const dialogs = useAppDialogs();
   const queryClient = useQueryClient();
@@ -203,6 +205,7 @@ function WorkspacesPage({
   onRefreshWorkspace: (id: string) => Promise<void>;
   onExclude: (id: string) => Promise<void>;
 }) {
+  const { tr } = useI18n();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | WorkspaceSummary["status"]>("all");
   const [agent, setAgent] = useState<"all" | AgentKind>("all");

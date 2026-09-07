@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   createContext,
   useCallback,
@@ -30,7 +31,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { tr } from "../core/i18n";
 
 type DialogTone = "default" | "destructive" | "warning";
 
@@ -61,6 +61,7 @@ interface SecretRequest {
 const AppDialogContext = createContext<AppDialogs | undefined>(undefined);
 
 export function AppDialogProvider({ children }: { children: ReactNode }) {
+  const { t: tr } = useTranslation();
   const [queue, setQueue] = useState<DialogRequest[]>([]);
   const [secretRequest, setSecretRequest] = useState<SecretRequest>();
   const [secretValues, setSecretValues] = useState<Record<string, string>>({});

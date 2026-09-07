@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SidebarSearchButton } from "@/components/SidebarSearchButton";
@@ -204,6 +205,7 @@ export function SettingsSidebar(props: {
   collapsed: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
 }) {
+  const { t: tr } = useTranslation();
   const { active, activeTarget, onSelect, onBack, collapsed } = props;
   const [mobileOpen, setMobileOpen] = useState(false);
   useEffect(() => {

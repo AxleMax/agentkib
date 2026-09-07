@@ -1,6 +1,6 @@
+import { useTranslation } from "react-i18next";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { tr } from "@/core/i18n";
 import {
   ariaShortcut,
   currentAppPlatform,
@@ -16,6 +16,7 @@ export function SidebarSearchButton({
   onOpenSearch: () => void;
   className?: string;
 }) {
+  const { t: tr } = useTranslation();
   const shortcut = getShortcutDefinition("open-search");
   return (
     <Button

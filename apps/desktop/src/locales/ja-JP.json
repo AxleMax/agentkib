@@ -1419,5 +1419,12 @@
   "settings.tools.appState.available": "更新あり",
   "settings.tools.appState.downloading": "ダウンロード中",
   "settings.tools.appState.installing": "再起動中",
-  "settings.tools.appState.failed": "確認失敗"
+  "settings.tools.appState.failed": "確認失敗",
+  "doctor.label": "コンテキスト診断",
+  "handoff.label": "セッションの引き継ぎ",
+  "common.beta": "ベータ版",
+  "loading.agents": "エージェントを読み込み中…",
+  "loading.assets": "アセットを読み込み中…",
+  "loading.home": "ホームを読み込み中…",
+  "loading.settings": "設定を読み込み中…"
 }

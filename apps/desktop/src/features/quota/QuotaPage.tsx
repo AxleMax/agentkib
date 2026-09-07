@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,7 +21,7 @@ import {
 } from "lucide-react";
 import { api } from "@/core/api";
 import { desktopApi } from "@/core/desktop";
-import { formatRelativeTime, localizeMessage, tr } from "@/core/i18n";
+
 import { normalizePlatform } from "@/core/platform";
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
@@ -65,6 +66,7 @@ export function QuotaPage({
   configurePopoverRequest?: number;
   popoverSupported?: boolean;
 }) {
+  const { locale, localizeMessage, tr } = useI18n();
   const snapshotQuery = useQuotaSnapshot();
   const statusQuery = useQuotaStatus();
   const preferencesQuery = useQuotaPreferences();
@@ -81,7 +83,8 @@ export function QuotaPage({
     popoverSupported && configurePopoverRequest > 0,
   );
   const [requestPending, setRequestPending] = useState(false);
-  const [manualError, setManualError] = useState("");
+  const [rawManualError, setManualError] = useState<unknown>("");
+  const manualError = rawManualError === "" ? "" : localizeMessage(rawManualError);
   const autoRefreshEnabled = useAppStore(
     (state) => state.runtime?.quota_auto_refresh_enabled === true,
   );
@@ -106,7 +109,7 @@ export function QuotaPage({
     )
       return;
     requestedInitialRefresh.current = true;
-    void refreshMutation.mutateAsync().catch((reason) => setManualError(localizeMessage(reason)));
+    void refreshMutation.mutateAsync().catch((reason) => setManualError(reason));
   }, [
     autoRefreshEnabled,
     refreshJob,
@@ -166,7 +169,7 @@ export function QuotaPage({
     try {
       await refreshMutation.mutateAsync();
     } catch (reason) {
-      setManualError(localizeMessage(reason));
+      setManualError(reason);
     } finally {
       setRequestPending(false);
     }
@@ -189,7 +192,7 @@ export function QuotaPage({
       : refreshJob?.state === "running"
         ? tr("quota.refreshRunning")
         : refreshJob?.state === "backoff" && refreshJob.next_allowed_at
-          ? tr("quota.refreshBackoff", { time: formatDateTime(refreshJob.next_allowed_at) })
+          ? tr("quota.refreshBackoff", { time: formatDateTime(refreshJob.next_allowed_at, locale) })
           : refreshJob?.state === "failed"
             ? tr("quota.refreshFailed")
             : status?.error_key
@@ -338,6 +341,7 @@ function ProviderTabs({
   selectedId: string;
   onSelect: (id: string) => void;
 }) {
+  const { tr } = useI18n();
   return (
     <Tabs value={selectedId} onValueChange={onSelect}>
       <TabsList
@@ -423,6 +427,7 @@ function QuotaProviderDetail({
   snapshot: QuotaSnapshot;
   targetWindow?: QuotaWindowSelector;
 }) {
+  const { formatRelativeTime, locale, tr } = useI18n();
   const windows = flattenQuotaWindows(provider);
   const direct = windows.filter((item) => !item.account);
   const accountGroups = provider.accounts.map((account) => ({
@@ -456,7 +461,7 @@ function QuotaProviderDetail({
         </div>
         {provider.credits && provider.credits.remaining > 0 && (
           <span className="inline-flex h-[30px] items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground max-[900px]:hidden">
-            {formatNumber(provider.credits.remaining)} {provider.credits.unit}
+            {formatNumber(provider.credits.remaining, locale)} {provider.credits.unit}
           </span>
         )}
       </header>
@@ -552,7 +557,9 @@ function QuotaDisplaySettings({
   onChange?: (preferences: QuotaPopoverPreferences) => void;
   onClose: () => void;
 }) {
-  const [saveError, setSaveError] = useState("");
+  const { localizeMessage, tr } = useI18n();
+  const [rawSaveError, setSaveError] = useState<unknown>("");
+  const saveError = rawSaveError === "" ? "" : localizeMessage(rawSaveError);
   const preferencesMutation = useSetQuotaPreferencesMutation();
   const currentPreferences = useRef(preferences);
   const saveSequence = useRef(0);
@@ -575,7 +582,7 @@ function QuotaDisplaySettings({
       if (sequence === saveSequence.current) {
         currentPreferences.current = previous;
         onChange?.(previous);
-        setSaveError(localizeMessage(reason));
+        setSaveError(reason);
       }
     }
   };
@@ -663,6 +670,7 @@ function QuotaDisplayProviderOption({
   onToggleProvider: (providerId: string) => void;
   onToggleWindow: (selector: QuotaWindowSelector) => void;
 }) {
+  const { tr } = useI18n();
   const windows = flattenQuotaWindows(provider);
   const providerVisible = !preferences.hidden_providers.includes(provider.id);
   const [expanded, setExpanded] = useState(providerVisible && windows.length > 0);
@@ -734,18 +742,18 @@ function matchesFilter(provider: QuotaProvider, filter: QuotaFilter) {
   return filter === "warning" ? remaining <= 20 : remaining > 20;
 }
 
-function formatDateTime(value: string) {
+function formatDateTime(value: string, locale: ReturnType<typeof useI18n>["locale"]) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : new Intl.DateTimeFormat(document.documentElement.lang || "en-US", {
+    : new Intl.DateTimeFormat(locale, {
         dateStyle: "medium",
         timeStyle: "short",
       }).format(date);
 }
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat(document.documentElement.lang || "en-US", {
+function formatNumber(value: number, locale: ReturnType<typeof useI18n>["locale"]) {
+  return new Intl.NumberFormat(locale, {
     maximumFractionDigits: 2,
   }).format(value);
 }
