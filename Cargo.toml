@@ -19,6 +19,7 @@ members = [
   "crates/agentkib-gateways",
   "crates/agentkib-tools",
   "crates/agentkib-remote",
+  "crates/agentkib-codex-bridge",
 ]
 
 [workspace.package]

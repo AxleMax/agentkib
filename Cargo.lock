@@ -33,6 +33,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentkib-codex-bridge"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "agentkib-conversations"
 version = "0.8.0"
 dependencies = [

@@ -1,0 +1,360 @@
+#![cfg(target_os = "macos")]
+use crate::{Bridge, Compatibility, Connection, Decision, Status};
+use serde_json::{Value, json};
+use std::{
+    fs,
+    io::{Read, Write},
+    os::unix::{
+        fs::PermissionsExt,
+        net::{UnixListener, UnixStream},
+    },
+    path::PathBuf,
+    thread,
+    time::{Duration, Instant},
+};
+
+const SESSION: &str = "00000000-0000-4000-8000-000000000001";
+
+fn endpoint() -> (tempfile::TempDir, PathBuf, UnixListener) {
+    let directory = tempfile::tempdir().unwrap();
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let path = directory.path().canonicalize().unwrap().join("ipc.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    (directory, path, listener)
+}
+fn read(socket: &mut UnixStream) -> Option<Value> {
+    let mut size = [0; 4];
+    socket.read_exact(&mut size).ok()?;
+    let n = u32::from_le_bytes(size) as usize;
+    assert!(n < 64 * 1024);
+    let mut bytes = vec![0; n];
+    socket.read_exact(&mut bytes).unwrap();
+    Some(serde_json::from_slice(&bytes).unwrap())
+}
+fn write(socket: &mut UnixStream, value: Value) {
+    let bytes = serde_json::to_vec(&value).unwrap();
+    socket
+        .write_all(&(bytes.len() as u32).to_le_bytes())
+        .unwrap();
+    socket.write_all(&bytes).unwrap();
+}
+fn initialize(socket: &mut UnixStream) {
+    socket
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .unwrap();
+    let request = read(socket).unwrap();
+    assert_eq!(request["params"]["clientType"], "agentkib-codex-bridge");
+    assert_eq!(request["version"], 0);
+    write(
+        socket,
+        json!({"type":"response","requestId":request["requestId"],"resultType":"success","method":"initialize","handledByClientId":"follower","result":{"clientId":"follower"}}),
+    );
+}
+fn known() -> Compatibility {
+    Compatibility::fixture()
+}
+fn snapshot(revision: u64, status: &str) -> Value {
+    json!({"type":"broadcast","sourceClientId":"owner","version":11,"method":"thread-stream-state-changed","params":{
+    "hostId":"local","conversationId":SESSION,"change":{"type":"snapshot","revision":revision,"conversationState":{
+        "id":SESSION,"hostId":"local","threadRuntimeStatus":{"type":status},"turns":[{"turnId":"turn-1","status":if status=="active" {"inProgress"} else {"completed"},"items":[]}],
+        "requests":if status=="active" {json!([{"id":42,"method":"item/commandExecution/requestApproval","params":{"threadId":SESSION,"turnId":"turn-1","command":"echo synthetic"}}])} else {json!([])}
+    }}}})
+}
+fn owner(
+    listener: UnixListener,
+    status: &'static str,
+    expected_method: Option<&'static str>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        initialize(&mut socket);
+        let mut revision = 0;
+        let mut mutations = 0;
+        while let Some(message) = read(&mut socket) {
+            match message["method"].as_str().unwrap_or_default() {
+                "thread-owner-discovery" => {
+                    assert_eq!(message["version"], 1);
+                    write(
+                        &mut socket,
+                        json!({"type":"response","requestId":message["requestId"],"resultType":"success","handledByClientId":"owner","result":{"supportsUntrustedAppInput":true}}),
+                    );
+                }
+                "thread-stream-following-changed" => {
+                    assert_eq!(message["targetClientIds"], json!(["owner"]));
+                    if message["params"]["following"] == true {
+                        revision += 1;
+                        write(&mut socket, snapshot(revision, status));
+                    }
+                }
+                method if method.starts_with("thread-follower-") => {
+                    assert_eq!(Some(method), expected_method);
+                    assert_eq!(message["targetClientId"], "owner");
+                    assert!(message.get("hostId").is_none());
+                    mutations += 1;
+                    assert_eq!(mutations, 1, "duplicate mutation");
+                    if method == "thread-follower-start-turn" {
+                        assert_eq!(
+                            message["params"]["turnStart"]["request"],
+                            json!({"threadId":SESSION,"input":[{"type":"text","text":"synthetic hello","text_elements":[]}]})
+                        );
+                    }
+                    if method == "thread-follower-interrupt-turn" {
+                        assert_eq!(message["params"]["expectedTurnId"], "turn-1");
+                    }
+                    if method == "thread-follower-command-approval-decision" {
+                        assert_eq!(message["params"]["decision"], "accept");
+                    }
+                    write(
+                        &mut socket,
+                        json!({"type":"response","requestId":message["requestId"],"resultType":"success","method":method,"handledByClientId":"owner","result":{"ok":true}}),
+                    );
+                }
+                _ => panic!("unexpected operation"),
+            }
+        }
+        assert_eq!(mutations, usize::from(expected_method.is_some()));
+    })
+}
+
+#[test]
+fn initializes_with_own_identity_without_scanning_sessions() {
+    let (_dir, path, listener) = endpoint();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        initialize(&mut s);
+        assert!(read(&mut s).is_none());
+    });
+    drop(Connection::connect(&path).unwrap());
+    server.join().unwrap();
+}
+#[test]
+fn unsafe_or_symlink_endpoints_are_rejected() {
+    let (_dir, path, _listener) = endpoint();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
+    assert!(Connection::connect(&path).is_err());
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let link = path.with_file_name("link.sock");
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    assert!(Connection::connect(&link).is_err());
+    fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(Connection::connect(&path).is_err());
+}
+#[test]
+fn oversized_frame_closes_connection() {
+    let (_dir, path, listener) = endpoint();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        initialize(&mut s);
+        s.write_all(&u32::MAX.to_le_bytes()).unwrap();
+    });
+    let mut client = Connection::connect(&path).unwrap();
+    assert!(
+        client
+            .receive(Instant::now() + Duration::from_secs(1))
+            .is_err()
+    );
+    assert!(!client.is_connected());
+    server.join().unwrap();
+}
+#[test]
+fn partial_frame_survives_poll_timeout() {
+    let (_dir, path, listener) = endpoint();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        initialize(&mut s);
+        let bytes = serde_json::to_vec(&json!({"type":"broadcast"})).unwrap();
+        s.write_all(&(bytes.len() as u32).to_le_bytes()).unwrap();
+        s.write_all(&bytes[..3]).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        s.write_all(&bytes[3..]).unwrap();
+    });
+    let mut c = Connection::connect(&path).unwrap();
+    assert!(
+        c.receive(Instant::now() + Duration::from_millis(20))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        c.receive(Instant::now() + Duration::from_secs(1))
+            .unwrap()
+            .unwrap()["type"],
+        "broadcast"
+    );
+    server.join().unwrap();
+}
+#[test]
+fn unknown_versions_never_enable_controls() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner(listener, "idle", None);
+    let mut b = Bridge::connect(&path, Compatibility::default()).unwrap();
+    assert!(b.enable_controls().is_err());
+    b.select(SESSION).unwrap();
+    assert!(b.send_text("hello").is_err());
+    drop(b);
+    server.join().unwrap();
+}
+#[test]
+fn send_is_targeted_and_cannot_be_repeated_without_sync() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner(listener, "idle", Some("thread-follower-start-turn"));
+    let mut b = Bridge::connect(&path, known()).unwrap();
+    b.enable_controls().unwrap();
+    b.select(SESSION).unwrap();
+    b.send_text("synthetic hello").unwrap();
+    assert_eq!(b.state().unwrap().status(), Status::OutcomeUnknown);
+    assert!(b.send_text("duplicate").is_err());
+    drop(b);
+    server.join().unwrap();
+}
+#[test]
+fn running_session_rejects_send_and_old_turn_stop() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner(listener, "active", None);
+    let mut b = Bridge::connect(&path, known()).unwrap();
+    b.enable_controls().unwrap();
+    b.select(SESSION).unwrap();
+    assert!(b.send_text("hello").is_err());
+    assert!(b.stop("old-turn").is_err());
+    drop(b);
+    server.join().unwrap();
+}
+#[test]
+fn stop_binds_the_current_turn() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner(listener, "active", Some("thread-follower-interrupt-turn"));
+    let mut b = Bridge::connect(&path, known()).unwrap();
+    b.enable_controls().unwrap();
+    b.select(SESSION).unwrap();
+    b.stop("turn-1").unwrap();
+    drop(b);
+    server.join().unwrap();
+}
+#[test]
+fn approvals_bind_pending_request_and_turn() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner(
+        listener,
+        "active",
+        Some("thread-follower-command-approval-decision"),
+    );
+    let mut b = Bridge::connect(&path, known()).unwrap();
+    b.enable_controls().unwrap();
+    b.select(SESSION).unwrap();
+    assert!(b.approve(&json!(41), "turn-1", Decision::Accept).is_err());
+    assert!(b.approve(&json!(42), "old-turn", Decision::Accept).is_err());
+    b.approve(&json!(42), "turn-1", Decision::Accept).unwrap();
+    assert!(b.approve(&json!(42), "turn-1", Decision::Accept).is_err());
+    drop(b);
+    server.join().unwrap();
+}
+
+#[test]
+fn mismatched_owner_response_is_rejected() {
+    let (_dir, path, listener) = endpoint();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        initialize(&mut s);
+        let r = read(&mut s).unwrap();
+        write(
+            &mut s,
+            json!({"type":"response","requestId":r["requestId"],"resultType":"success","handledByClientId":"other-owner","result":{}}),
+        );
+    });
+    let mut c = Connection::connect(&path).unwrap();
+    assert!(
+        c.request(
+            "thread-owner-discovery",
+            json!({"conversationId":SESSION,"hostId":"local"}),
+            Some("owner"),
+            |_| Ok(())
+        )
+        .is_err()
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn timeout_discards_connection_and_never_retries() {
+    let (_dir, path, listener) = endpoint();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        initialize(&mut s);
+        assert!(read(&mut s).is_some());
+        assert!(read(&mut s).is_none(), "no duplicate request after timeout");
+    });
+    let mut c = Connection::connect(&path).unwrap();
+    assert!(
+        c.request(
+            "thread-follower-start-turn",
+            json!({"conversationId":SESSION}),
+            Some("owner"),
+            |_| Ok(())
+        )
+        .is_err()
+    );
+    assert!(!c.is_connected());
+    server.join().unwrap();
+}
+
+#[test]
+fn never_claims_ownership_during_discovery() {
+    let (_dir, path, listener) = endpoint();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        initialize(&mut s);
+        write(
+            &mut s,
+            json!({"type":"client-discovery-request","requestId":"discovery","request":{"method":"thread-owner-discovery"}}),
+        );
+        let response = read(&mut s).unwrap();
+        assert_eq!(response["response"]["canHandle"], false);
+        assert_eq!(response["requestId"], "discovery");
+        write(&mut s, json!({"type":"broadcast","method":"fixture"}));
+    });
+    let mut c = Connection::connect(&path).unwrap();
+    assert_eq!(
+        c.receive(Instant::now() + Duration::from_secs(1))
+            .unwrap()
+            .unwrap()["method"],
+        "fixture"
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn following_status_request_is_answered_only_for_selected_owner() {
+    let (_dir, path, listener) = endpoint();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        initialize(&mut s);
+        let r = read(&mut s).unwrap();
+        write(
+            &mut s,
+            json!({"type":"response","requestId":r["requestId"],"resultType":"success","handledByClientId":"owner","result":{}}),
+        );
+        assert_eq!(read(&mut s).unwrap()["params"]["following"], true);
+        write(&mut s, snapshot(1, "idle"));
+        for source in ["stranger", "owner"] {
+            write(
+                &mut s,
+                json!({"type":"broadcast","method":"thread-stream-following-status-requested","version":1,"sourceClientId":source,
+                "params":{"conversationId":SESSION,"hostId":"local"}}),
+            );
+        }
+        let response = read(&mut s).unwrap();
+        assert_eq!(response["params"]["following"], true);
+        assert_eq!(response["targetClientIds"], json!(["owner"]));
+        assert_eq!(
+            read(&mut s).unwrap()["params"]["following"],
+            false,
+            "no extra reply to stranger"
+        );
+    });
+    let mut b = Bridge::connect(&path, known()).unwrap();
+    b.select(SESSION).unwrap();
+    b.poll(Duration::from_secs(1)).unwrap();
+    b.poll(Duration::from_secs(1)).unwrap();
+    drop(b);
+    server.join().unwrap();
+}
