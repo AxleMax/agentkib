@@ -328,7 +328,16 @@ export interface WorkspaceSource {
   session_count: number;
   last_active_at?: string;
 }
+// Controller-only provenance. Never written back into the local workspace/session index.
+export interface RemoteRecordSource {
+  host_id: string;
+  host_name: string;
+  original_id: string;
+  online: boolean;
+  last_synced_at: string;
+}
 export interface WorkspaceSummary {
+  remote?: RemoteRecordSource;
   id: string;
   path: string;
   name: string;
@@ -976,6 +985,7 @@ export type SessionOrigin = "interactive" | "auxiliary" | "unknown";
 export type SessionIndexFreshness = "fresh" | "stale" | "unavailable";
 export type ConversationEventKind = "user-message" | "agent-message" | "tool-summary";
 export interface ConversationSessionSummary {
+  remote?: RemoteRecordSource;
   id: string;
   workspace_id: string;
   agent: "codex" | "claude-code" | "opencode";

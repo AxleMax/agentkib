@@ -18,6 +18,7 @@ members = [
   "crates/agentkib-skills",
   "crates/agentkib-gateways",
   "crates/agentkib-tools",
+  "crates/agentkib-remote",
 ]
 
 [workspace.package]
@@ -40,6 +41,7 @@ agentkib-mcp = { path = "crates/agentkib-mcp" }
 agentkib-skills = { path = "crates/agentkib-skills" }
 agentkib-gateways = { path = "crates/agentkib-gateways" }
 agentkib-tools = { path = "crates/agentkib-tools" }
+agentkib-remote = { path = "crates/agentkib-remote" }
 agentkib-store = { path = "crates/agentkib-store" }
 anyhow = "1.0"
 async-trait = "0.1"

@@ -63,6 +63,7 @@ export const RUNTIME_METHODS = {
   setThemePreference: "settings.setThemePreference",
   setAccentThemePreference: "settings.setAccentThemePreference",
   setSidebarWidthPreference: "settings.setSidebarWidthPreference",
+  remoteRequest: "remote.request",
   setAppIconPreference: "settings.setAppIconPreference",
   planChanges: "changes.plan",
   applyChanges: "changes.apply",

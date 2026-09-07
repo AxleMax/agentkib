@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { requireRemoteRequest } from "./ipc/remote-validation";
 import {
   app,
   autoUpdater as nativeAutoUpdater,
@@ -493,6 +494,10 @@ function registerShellIpc(): void {
 }
 
 function registerHomeIpc(): void {
+  ipcMain.handle("agentkib:remote:request", (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    return requireRuntime().request(RUNTIME_METHODS.remoteRequest, requireRemoteRequest(input));
+  });
   ipcMain.handle("agentkib:home:runtime", async (event) => {
     assertTrustedRenderer(event);
     const runtime = await requireRuntime().request(RUNTIME_METHODS.runtimeInfo, {});

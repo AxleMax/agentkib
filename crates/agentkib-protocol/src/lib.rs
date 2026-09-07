@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const PROTOCOL_VERSION: u32 = 12;
+pub const REMOTE_REQUEST_METHOD: &str = "remote.request";
 pub const HANDSHAKE_METHOD: &str = "agentkib.handshake";
 pub const SHUTDOWN_METHOD: &str = "agentkib.shutdown";
 pub const SCAN_WORKSPACE_METHOD: &str = "workspace.scan";
@@ -265,6 +266,7 @@ export const RUNTIME_METHODS = {{
   setThemePreference: "{SET_THEME_PREFERENCE_METHOD}",
   setAccentThemePreference: "{SET_ACCENT_THEME_PREFERENCE_METHOD}",
   setSidebarWidthPreference: "{SET_SIDEBAR_WIDTH_PREFERENCE_METHOD}",
+  remoteRequest: "{REMOTE_REQUEST_METHOD}",
   setAppIconPreference: "{SET_APP_ICON_PREFERENCE_METHOD}",
   planChanges: "{PLAN_CHANGES_METHOD}",
   applyChanges: "{APPLY_CHANGES_METHOD}",

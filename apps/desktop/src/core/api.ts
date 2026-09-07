@@ -1,5 +1,6 @@
 import { desktopApi } from "./desktop";
 import { DEFAULT_SESSION_PAGE_SIZE } from "./session-history";
+import type { RemoteRequest } from "./remote-types";
 import type {
   AgentKind,
   AgentToolExecutionResult,
@@ -34,6 +35,7 @@ import type {
 const DOCTOR_SUMMARY_BATCH_LIMIT = 100;
 
 export const api = {
+  remoteRequest: <T extends RemoteRequest>(request: T) => desktopApi().remote.request(request),
   scan: (project: string) => desktopApi().workspace.scan(project),
   manifest: async (project: string) => {
     const manifest = await desktopApi().workspace.prepareManifest(project);

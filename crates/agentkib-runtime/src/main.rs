@@ -121,6 +121,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     spawn_stdin_reader(events_tx.clone());
     let mut storage_scan: Option<StorageScan> = None;
     let mut agent_tool_workers = AgentToolWorkers::default();
+    let remote_worker = RemoteWorker::new(events_tx.clone());
 
     while let Ok(event) = events_rx.recv() {
         match event {
@@ -196,6 +197,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
 
+                if request.method == agentkib_protocol::REMOTE_REQUEST_METHOD {
+                    if let Some(response) = remote_worker.submit(request) {
+                        write_response(&mut stdout, response)?;
+                    }
+                    continue;
+                }
                 let starts_hub = request.method == HANDSHAKE_METHOD;
                 let (response, should_shutdown) = handle_request(request);
                 let handshake_succeeded = starts_hub && response.error.is_none();
@@ -205,6 +212,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if handshake_succeeded {
                     initialize_mcp_hub()?;
                     initialize_skill_hub()?;
+                    remote_worker.initialize();
                 }
                 if should_shutdown {
                     if let Some(scan) = storage_scan.take() {
@@ -257,6 +265,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 write_response(&mut stdout, result_response(request_id, *result))?;
             }
+            RuntimeEvent::RemoteFinished { request_id, result } => {
+                write_response(&mut stdout, result_response(request_id, *result))?;
+            }
         }
     }
 
@@ -288,6 +299,10 @@ fn initialize_skill_hub() -> anyhow::Result<()> {
 }
 
 enum RuntimeEvent {
+    RemoteFinished {
+        request_id: Value,
+        result: Box<anyhow::Result<Value>>,
+    },
     Input(io::Result<String>),
     EndOfInput,
     StorageFinished {
@@ -304,6 +319,205 @@ enum RuntimeEvent {
         request_id: Value,
         result: Box<anyhow::Result<agentkib_core::AgentToolSnapshot>>,
     },
+}
+
+enum RemoteWork {
+    Initialize,
+    Request(RpcRequest),
+}
+
+struct RemoteWorker {
+    sender: Option<mpsc::SyncSender<RemoteWork>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    stopped: Arc<AtomicBool>,
+    service: Arc<std::sync::Mutex<Option<Arc<agentkib_remote::RemoteService>>>>,
+}
+
+impl RemoteWorker {
+    fn new(events: Sender<RuntimeEvent>) -> Self {
+        let (sender, receiver) = mpsc::sync_channel::<RemoteWork>(16);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let worker_stopped = stopped.clone();
+        let service = Arc::new(std::sync::Mutex::new(None));
+        let worker_service = service.clone();
+        let handle = std::thread::spawn(move || {
+            let mut initialized = None;
+            while let Ok(work) = receiver.recv() {
+                if worker_stopped.load(Ordering::SeqCst) {
+                    break;
+                }
+                if initialized.is_none() {
+                    initialized = Some((|| {
+                        let data_dir = agentkib_store::default_data_dir()?;
+                        let service = Arc::new(agentkib_remote::RemoteService::new(
+                            data_dir.clone(),
+                            Arc::new(RemoteSessionSource { data_dir }),
+                        )?);
+                        *worker_service
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("remote-unavailable"))? =
+                            Some(service.clone());
+                        Ok::<_, anyhow::Error>(service)
+                    })());
+                }
+                if let RemoteWork::Request(request) = work {
+                    let result = match initialized.as_ref().expect("initialized above") {
+                        Ok(service) => service.request(request.params),
+                        Err(_) => Err(anyhow::anyhow!("remote-unavailable")),
+                    };
+                    let _ = events.send(RuntimeEvent::RemoteFinished {
+                        request_id: request.id,
+                        result: Box::new(result),
+                    });
+                }
+            }
+            if let Some(Ok(service)) = initialized {
+                service.shutdown();
+            }
+        });
+        Self {
+            sender: Some(sender),
+            handle: Some(handle),
+            stopped,
+            service,
+        }
+    }
+
+    fn initialize(&self) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.try_send(RemoteWork::Initialize);
+        }
+    }
+
+    fn submit(&self, request: RpcRequest) -> Option<RpcResponse> {
+        let id = request.id.clone();
+        match self
+            .sender
+            .as_ref()
+            .map(|sender| sender.try_send(RemoteWork::Request(request)))
+        {
+            Some(Ok(())) => None,
+            _ => Some(RpcResponse::error(id, -32000, "remote-busy", None)),
+        }
+    }
+}
+
+impl Drop for RemoteWorker {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::SeqCst);
+        if let Ok(service) = self.service.lock()
+            && let Some(service) = service.as_ref()
+        {
+            service.shutdown();
+        }
+        self.sender.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+struct RemoteSessionSource {
+    data_dir: PathBuf,
+}
+
+impl RemoteSessionSource {
+    fn ensure_enabled(&self, epoch: u64) -> anyhow::Result<()> {
+        // Remote reads must fail closed while a preferences file is unreadable or being
+        // rewritten; the ordinary UI loader intentionally tolerates malformed preferences.
+        let preferences = match fs::read(self.data_dir.join("preferences.json")) {
+            Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .filter(Value::is_object)
+                .ok_or_else(|| anyhow::anyhow!("index-disabled"))?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => json!({}),
+            Err(_) => anyhow::bail!("index-disabled"),
+        };
+        let enabled = match preferences.get("session_index_enabled") {
+            None => true,
+            Some(Value::Bool(enabled)) => *enabled,
+            Some(_) => false,
+        };
+        anyhow::ensure!(enabled && session_index_epoch() == epoch, "index-disabled");
+        Ok(())
+    }
+}
+
+impl agentkib_remote::Source for RemoteSessionSource {
+    fn ensure_available(&self) -> anyhow::Result<()> {
+        self.ensure_enabled(session_index_epoch())
+    }
+
+    fn availability_epoch(&self) -> anyhow::Result<u64> {
+        let epoch = session_index_epoch();
+        self.ensure_enabled(epoch)?;
+        Ok(epoch)
+    }
+
+    fn catalog(&self) -> anyhow::Result<Value> {
+        let epoch = session_index_epoch();
+        self.ensure_enabled(epoch)?;
+        let store = Store::open(&self.data_dir.join("agentkib.db"))?;
+        let mut workspaces = store.list_workspaces()?;
+        let mut sessions = Vec::new();
+        for workspace in &workspaces {
+            sessions.extend(store.list_conversation_sessions(&workspace.id)?);
+            anyhow::ensure!(sessions.len() <= 20_000, "response-too-large");
+        }
+        // Discovery/exclusion can remove a registration while the snapshot is being read.
+        let registered = store
+            .list_workspaces()?
+            .into_iter()
+            .map(|workspace| workspace.id)
+            .collect::<BTreeSet<_>>();
+        workspaces.retain(|workspace| registered.contains(&workspace.id));
+        sessions.retain(|session| registered.contains(&session.workspace_id));
+        self.ensure_enabled(epoch)?;
+        Ok(json!({"workspaces": workspaces, "sessions": sessions}))
+    }
+
+    fn events(
+        &self,
+        session_id: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Value> {
+        let epoch = session_index_epoch();
+        self.ensure_enabled(epoch)?;
+        anyhow::ensure!(
+            !session_id.is_empty() && session_id.len() <= 256 && limit > 0 && limit <= 100,
+            "invalid-request"
+        );
+        anyhow::ensure!(
+            cursor.is_none_or(|cursor| cursor.len() <= 1024),
+            "invalid-request"
+        );
+        let store = Store::open(&self.data_dir.join("agentkib.db"))?;
+        let session = store
+            .get_conversation_session(session_id)?
+            .ok_or_else(|| anyhow::anyhow!("session-unavailable"))?;
+        // Lookup through the registry, never accept a remote-supplied path or native transcript reference.
+        let workspace = store.workspace_path(&session.workspace_id)?;
+        let source =
+            provider(session.agent).ok_or_else(|| anyhow::anyhow!("provider-unavailable"))?;
+        let native = source
+            .list_sessions(&workspace)?
+            .into_iter()
+            .find(|candidate| {
+                store
+                    .conversation_id(session.agent, &candidate.native_ref)
+                    .is_ok_and(|id| id == session_id)
+            })
+            .ok_or_else(|| anyhow::anyhow!("session-unavailable"))?;
+        let page = source.read_events(&native.native_ref, cursor, limit)?;
+        self.ensure_enabled(epoch)?;
+        anyhow::ensure!(
+            store.workspace_path(&session.workspace_id).is_ok()
+                && store.get_conversation_session(session_id)?.is_some(),
+            "session-unavailable"
+        );
+        Ok(serde_json::to_value(page)?)
+    }
 }
 
 struct StorageScan {
@@ -4855,6 +5069,127 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn remote_source_enforces_index_preference_before_opening_database() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join("preferences.json"),
+            r#"{"session_index_enabled":false}"#,
+        )
+        .unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        assert_eq!(source.catalog().unwrap_err().to_string(), "index-disabled");
+        assert_eq!(
+            source.events("opaque", None, 100).unwrap_err().to_string(),
+            "index-disabled"
+        );
+        assert!(!directory.path().join("agentkib.db").exists());
+    }
+
+    #[test]
+    fn remote_source_rechecks_disabled_and_stale_index_state() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        let epoch = session_index_epoch();
+        assert!(source.ensure_enabled(epoch).is_ok());
+        assert!(source.ensure_enabled(epoch.wrapping_add(1)).is_err());
+        fs::write(
+            directory.path().join("preferences.json"),
+            r#"{"session_index_enabled":false}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            source.ensure_available().unwrap_err().to_string(),
+            "index-disabled"
+        );
+        assert_eq!(
+            source.ensure_enabled(epoch).unwrap_err().to_string(),
+            "index-disabled"
+        );
+    }
+
+    #[test]
+    fn remote_source_fails_closed_on_truncated_or_invalid_preferences() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        for invalid in ["", "{", "null", "[]", r#"{"session_index_enabled":"true"}"#] {
+            fs::write(directory.path().join("preferences.json"), invalid).unwrap();
+            assert_eq!(
+                source.ensure_available().unwrap_err().to_string(),
+                "index-disabled"
+            );
+            assert!(source.catalog().is_err());
+        }
+        assert!(!directory.path().join("agentkib.db").exists());
+    }
+
+    #[test]
+    fn remote_catalog_reads_only_registered_cached_sessions() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        let store = Store::open(&directory.path().join("agentkib.db")).unwrap();
+        let workspace = directory.path().join("synthetic-project");
+        fs::create_dir_all(&workspace).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        let native = agentkib_conversations::NativeSessionSummary {
+            native_ref: "synthetic-native-id".into(),
+            agent: AgentKind::Codex,
+            title: Some("Cached only".into()),
+            origin: agentkib_conversations::SessionOrigin::Unknown,
+            spawned_by_session_id: None,
+            forked_from_session_id: None,
+            created_at: None,
+            updated_at: None,
+            message_count: None,
+            git_branch: None,
+            archived: false,
+            sidechain: false,
+            availability: agentkib_conversations::SessionAvailability::MetadataOnly,
+        };
+        let indexed = store
+            .sync_conversation_sessions(&registered.id, AgentKind::Codex, &[native])
+            .unwrap();
+        let catalog = source.catalog().unwrap();
+        assert_eq!(catalog["workspaces"].as_array().unwrap().len(), 1);
+        assert_eq!(catalog["sessions"][0]["id"], indexed[0].id);
+        assert!(!catalog.to_string().contains("synthetic-native-id"));
+        store.exclude_workspace(&registered.id).unwrap();
+        assert_eq!(source.catalog().unwrap()["sessions"], json!([]));
+        assert!(source.events(&indexed[0].id, None, 100).is_err());
+    }
+
+    #[test]
+    fn remote_events_reject_invalid_limits_and_unindexed_ids() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        assert!(
+            source
+                .events("unindexed", None, 100)
+                .unwrap_err()
+                .to_string()
+                .contains("session-unavailable")
+        );
+        for limit in [0, 101, usize::MAX] {
+            assert!(source.events("id", None, limit).is_err());
+        }
+        assert!(source.events("id", Some(&"x".repeat(1025)), 100).is_err());
+    }
 
     #[test]
     fn sidebar_width_reads_only_valid_persisted_integers() {

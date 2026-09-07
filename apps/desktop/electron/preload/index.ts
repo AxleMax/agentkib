@@ -228,6 +228,9 @@ const desktopApi = Object.freeze({
     hideWindow: () => ipcRenderer.invoke("agentkib:shell:hide-window"),
     quit: () => ipcRenderer.invoke("agentkib:shell:quit"),
   }),
+  remote: Object.freeze({
+    request: (request: unknown) => ipcRenderer.invoke("agentkib:remote:request", request),
+  }),
   settings: Object.freeze({
     setCloseBehavior: (value: unknown) =>
       ipcRenderer.invoke("agentkib:settings:set-close-behavior", value),

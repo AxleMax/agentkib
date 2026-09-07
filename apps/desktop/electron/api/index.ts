@@ -1,4 +1,5 @@
 import type { RuntimeHandshakeResult } from "../generated/runtime-protocol";
+import type { RemoteRequest, RemoteResponse } from "../../src/core/remote-types";
 import type {
   AgentKind,
   AccentThemeId,
@@ -236,6 +237,9 @@ export interface DesktopApi {
     openQuotaDashboard(request: AppNavigationRequest): Promise<void>;
     hideWindow(): Promise<void>;
     quit(): Promise<void>;
+  };
+  remote: {
+    request<T extends RemoteRequest>(request: T): Promise<RemoteResponse<T>>;
   };
   settings: {
     setCloseBehavior(value?: CloseBehavior): Promise<void>;
