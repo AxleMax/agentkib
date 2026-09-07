@@ -1,6 +1,6 @@
+import { useI18n } from "@/core/useI18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/core/api";
-import { localizeMessage } from "@/core/i18n";
 import type {
   ConversationIndexStatus,
   ConversationSessionSummary,
@@ -40,13 +40,14 @@ interface CatalogState {
   enabled: boolean;
   sessions: Record<string, ConversationSessionSummary[]>;
   statuses: Record<string, ConversationIndexStatus[]>;
-  errors: Record<string, string>;
+  errors: Record<string, unknown>;
   loading: boolean;
   refreshing: boolean;
   ready: boolean;
 }
 
 export function useSessionCatalog(workspaces: WorkspaceSummary[], enabled: boolean) {
+  const { localizeMessage } = useI18n();
   const queryClient = useOptionalQueryClient();
   const key = JSON.stringify([...new Set(workspaces.map((workspace) => workspace.id))].sort());
   const ids = useMemo(() => JSON.parse(key) as string[], [key]);
@@ -96,7 +97,7 @@ export function useSessionCatalog(workspaces: WorkspaceSummary[], enabled: boole
       if (!current()) return;
       setState((previous) => ({
         ...previous,
-        errors: { ...previous.errors, [id]: localizeMessage(error) },
+        errors: { ...previous.errors, [id]: error },
       }));
     };
     const loadWorkspace = async (id: string, refresh: boolean, force: boolean) => {
@@ -181,7 +182,11 @@ export function useSessionCatalog(workspaces: WorkspaceSummary[], enabled: boole
   return {
     sessions,
     statuses,
-    errors: visible ? state.errors : {},
+    errors: visible
+      ? Object.fromEntries(
+          Object.entries(state.errors).map(([id, error]) => [id, localizeMessage(error)]),
+        )
+      : {},
     loading: enabled && (!visible || state.loading),
     refreshing: visible && state.refreshing,
     ready: !enabled || (visible && state.ready),

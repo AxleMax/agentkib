@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
@@ -7,6 +8,7 @@ import { api } from "../core/api";
 import { groupCatalogAssets, workspaceAssetCounts } from "@/features/catalog/catalog";
 import { useAppStore } from "../stores/app-store";
 import { desktopApi } from "../core/desktop";
+import { useSessionViewStore } from "@/features/sessions/session-view-store";
 import { homeBenchmarkOutcome } from "../features/home/home-benchmark";
 import {
   continuationIndexingEnabled,
@@ -15,7 +17,6 @@ import {
   recentContinuationWorkspaces,
   selectRecentContinuations,
 } from "../features/home/home-continuations";
-import { localizeMessage } from "../core/i18n";
 import type { ConversationSessionSummary, WorkspaceSummary } from "../core/types";
 import {
   homeKeys,
@@ -30,9 +31,11 @@ import {
 } from "@/features/home/home-query";
 
 function HomeRoute() {
+  const { localizeMessage } = useI18n();
   const navigate = useNavigate();
   const runtime = useAppStore((state) => state.runtime);
   const setRuntime = useAppStore((state) => state.setRuntime);
+  const showAuxiliary = useSessionViewStore((state) => state.showAuxiliary);
   const queryClient = useQueryClient();
   const workspacesQuery = useHomeWorkspaces();
   const workspaces = useMemo(() => workspacesQuery.data ?? [], [workspacesQuery.data]);
@@ -111,15 +114,15 @@ function HomeRoute() {
     ? selectRecentContinuations(
         continuationWorkspaces,
         continuationQueries.map((query) => query.data),
+        3,
+        showAuxiliary,
       )
-    : [];
-  const cachedContinuationSessions = continuationEnabled
-    ? continuationQueries.flatMap((query) => query.data ?? [])
     : [];
   const metadataOnlyWorkspace = continuationEnabled
     ? metadataOnlyContinuationWorkspace(
         continuationWorkspaces,
         continuationQueries.map((query) => query.data),
+        showAuxiliary,
       )
     : undefined;
   const continuationState: ContinuationHomeState = !continuationRuntimeReady
@@ -132,7 +135,7 @@ function HomeRoute() {
           ? "loading"
           : continuationsError
             ? "error"
-            : cachedContinuationSessions.some((session) => session.availability === "metadata-only")
+            : metadataOnlyWorkspace
               ? "metadata-only"
               : "empty";
   const doctorSummariesQuery = useHomeDoctorSummaries(workspaces.map((workspace) => workspace.id));

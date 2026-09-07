@@ -36,6 +36,7 @@ import { ObsidianSettingsCard } from "@/features/obsidian/ObsidianIntegration";
 import { QuotaDiagnostics } from "@/features/quota/QuotaDiagnostics";
 import { RemoteGatewaysSettings } from "./RemoteGateways";
 import { AgentToolsSettings } from "./AgentToolsSettings";
+import { RemoteConnectionSettings } from "@/features/remote/RemoteConnectionPanel";
 import {
   SettingsCopy,
   SettingsAnchor,
@@ -155,6 +156,7 @@ export function GlobalSettings({
   onRefreshDiagnostics,
 }: GlobalSettingsProps) {
   const { tr, formatDateTime } = useI18n();
+  if (section === "remote") return <RemoteConnectionSettings />;
 
   if (section === "general")
     return (

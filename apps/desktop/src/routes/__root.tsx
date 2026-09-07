@@ -1,7 +1,9 @@
+import { useI18n } from "@/core/useI18n";
 import { createRootRoute, Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import { z } from "zod";
 import { AppSidebar, type AgentFilter, type SidebarEntry } from "@/components/AppSidebar";
+import { RemoteCatalogBridge } from "@/features/remote/remote-catalog-store";
 import type { SettingsSection } from "@/features/settings/SettingsSidebar";
 import {
   SettingsSidebar,
@@ -29,13 +31,13 @@ import { useState } from "react";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { AppToolbar } from "@/features/app/AppToolbar";
 import { GlobalSearchDialog } from "@/features/app/GlobalSearchDialog";
-import { tr } from "@/core/i18n";
 import type { WorkspaceSummary } from "@/core/types";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { SessionHubProvider } from "@/features/sessions/SessionHubContext";
 import { useSessionViewStore } from "@/features/sessions/session-view-store";
 
 function SessionWindowToolbar() {
+  const { tr } = useI18n();
   return (
     <div className="app-toolbar-content">
       <div className="app-toolbar-breadcrumb" aria-label={tr("common.breadcrumb")}>
@@ -83,6 +85,7 @@ function RootLayout() {
   return (
     <ShortcutHelpProvider openShortcutHelp={() => setShortcutHelpOpen(true)}>
       <AppRuntimeBridge />
+      <RemoteCatalogBridge />
       <AppShellRouter
         searchOpen={searchOpen}
         route={route}
@@ -157,6 +160,7 @@ function AppShellRouter({
   onBack: () => void;
   onForward: () => void;
 }) {
+  const { tr } = useI18n();
   const navigate = useNavigate();
   const dialogs = useAppDialogs();
   const search = useSearch({ strict: false }) as AppSearch;
@@ -220,6 +224,9 @@ function AppShellRouter({
       entries={entries}
       onNavigate={onNavigate}
       onSettings={onSettings}
+      onRemoteSettings={() =>
+        void navigate({ to: "/settings", search: { settingsSection: "remote" } })
+      }
       context={
         isWorkspace
           ? {
@@ -311,7 +318,9 @@ function AppShellRouter({
       </section>
     </AppShell>
   );
-  return isSessions ? <SessionHubProvider>{shell}</SessionHubProvider> : shell;
+  // Router location and the retained Outlet can update in different commits.
+  // Keep context mounted while old session content exits; pause indexing elsewhere.
+  return <SessionHubProvider active={isSessions}>{shell}</SessionHubProvider>;
 }
 
 const quotaWindowSchema = z.object({
@@ -345,6 +354,7 @@ const searchSchema = z.object({
       "general",
       "discovery",
       "tools",
+      "remote",
       "integrations",
       "privacy",
       "diagnostics",
@@ -377,5 +387,10 @@ const searchSchema = z.object({
 export const Route = createRootRoute({
   validateSearch: searchSchema,
   component: RootLayout,
-  notFoundComponent: () => <div>Not found</div>,
+  notFoundComponent: NotFound,
 });
+
+function NotFound() {
+  const { tr } = useI18n();
+  return <div>{tr("common.notFound")}</div>;
+}

@@ -38,11 +38,28 @@
 .session-workspace {
   margin-bottom: 10px;
 }
+.session-host-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 7px 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.session-host-heading strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .session-workspace-items {
   height: var(--collapsible-panel-height);
   overflow: hidden;
   opacity: 1;
-  transition: height 180ms ease-out, opacity 180ms ease-out;
+  transition:
+    height 180ms ease-out,
+    opacity 180ms ease-out;
 }
 .session-workspace-items[data-starting-style],
 .session-workspace-items[data-ending-style] {

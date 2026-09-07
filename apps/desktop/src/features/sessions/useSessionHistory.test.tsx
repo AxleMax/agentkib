@@ -3,7 +3,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/core/api";
-import { initializeI18n } from "@/core/i18n";
+import { changeLocale, initializeI18n, tr } from "@/core/i18n";
 import type {
   ConversationEvent,
   ConversationEventPage,
@@ -42,6 +42,20 @@ function deferred<T>() {
 }
 
 describe("useSessionHistory", () => {
+  it("translates a stored failure without requesting history again", async () => {
+    vi.mocked(api.sessionEvents).mockRejectedValue({ key: "errors.generic" });
+    const { result } = renderHook(() => useSessionHistory(first, true));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    try {
+      for (const locale of ["zh-CN", "zh-TW", "ja-JP", "en-US"] as const) {
+        await act(() => changeLocale(locale));
+        expect(result.current.error).toBe(tr("errors.generic"));
+      }
+      expect(api.sessionEvents).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(() => changeLocale("en-US"));
+    }
+  });
   beforeAll(() => initializeI18n("en-US"));
   beforeEach(() => {
     vi.mocked(api.sessionEvents).mockReset().mockResolvedValue(page("initial"));
@@ -139,6 +153,30 @@ describe("useSessionHistory", () => {
     expect(result.current.warnings).toEqual(["partial"]);
     expect(result.current.loadingEarlier).toBe(false);
     expect(result.current.nextCursor).toBeUndefined();
+  });
+
+  it("continues across empty bounded windows without dropping the next cursor", async () => {
+    vi.mocked(api.sessionEvents)
+      .mockResolvedValueOnce({
+        events: [],
+        warnings: ["TRANSCRIPT_SCAN_BUDGET"],
+        next_cursor: "earlier-1",
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        warnings: ["TRANSCRIPT_SCAN_BUDGET"],
+        next_cursor: "earlier-2",
+      })
+      .mockResolvedValueOnce(page("older message"));
+    const { result } = renderHook(() => useSessionHistory(first, true));
+    await waitFor(() => expect(result.current.nextCursor).toBe("earlier-1"));
+    await act(() => result.current.loadEarlier());
+    expect(result.current.nextCursor).toBe("earlier-2");
+    await act(() => result.current.loadEarlier());
+    expect(result.current.events.map((item) => item.id)).toEqual(["older message"]);
+    expect(result.current.warnings).not.toContain("TRANSCRIPT_SCAN_BUDGET");
+    expect(result.current.nextCursor).toBeUndefined();
+    expect(api.sessionEvents).toHaveBeenLastCalledWith(first.id, "earlier-2");
   });
 
   it("does not read disabled or metadata-only sessions", async () => {

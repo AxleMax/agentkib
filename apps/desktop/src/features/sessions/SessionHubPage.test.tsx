@@ -10,11 +10,13 @@ import { useAppStore } from "@/stores/app-store";
 import { useSessionHub } from "./SessionHubContext";
 import { SessionHubPage } from "./SessionHubPage";
 import { useSessionViewStore } from "./session-view-store";
+import { readRemoteHistory } from "@/features/remote/remote-catalog-store";
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 vi.mock("@/core/api", () => ({ api: { sessionEvents: vi.fn(), setSessionIndexEnabled: vi.fn() } }));
 vi.mock("./SessionHubContext", () => ({ useSessionHub: vi.fn() }));
+vi.mock("@/features/remote/remote-catalog-store", () => ({ readRemoteHistory: vi.fn() }));
 vi.mock("@/features/agents/AgentIcon", () => ({
   AgentIcon: ({ agent }: { agent: string }) => <span aria-hidden="true">{agent} icon</span>,
 }));
@@ -44,6 +46,9 @@ const metadata = {
 
 function defaultHub(): ReturnType<typeof useSessionHub> {
   return {
+    remoteHosts: [],
+    remoteErrors: {},
+    localEnabled: true,
     workspaces: [workspace],
     sessions: [readable, archived, metadata],
     filtered: [readable, archived, metadata],
@@ -154,11 +159,63 @@ describe("SessionHubPage", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
+  it("reads remote history without local indexing or local continuation", async () => {
+    const remote = {
+      host_id: "host",
+      host_name: "Studio Mac",
+      original_id: readable.id,
+      online: false,
+      last_synced_at: "2026-09-07T00:00:00Z",
+    };
+    const selected = { ...readable, id: "remote-session", remote };
+    hub = { ...hub, localEnabled: false, selected, selectedWorkspace: { ...workspace, remote } };
+    vi.mocked(readRemoteHistory).mockResolvedValue({
+      events: [
+        {
+          id: "remote-message",
+          kind: "agent-message",
+          content: "Cached remote history",
+          attachment_count: 0,
+          truncated: false,
+        },
+      ],
+      warnings: [],
+    });
+    render(<SessionHubPage />);
+    expect(await screen.findByText("Cached remote history")).toBeTruthy();
+    expect(readRemoteHistory).toHaveBeenCalledWith(selected);
+    expect(api.sessionEvents).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Continue in workspace" })).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByText(/Studio Mac/)).toBeTruthy();
+  });
+
+  it("explains an empty bounded window and keeps earlier paging available", async () => {
+    hub = { ...hub, selected: readable, selectedWorkspace: workspace };
+    vi.mocked(api.sessionEvents).mockResolvedValueOnce({
+      events: [],
+      warnings: ["TRANSCRIPT_SCAN_BUDGET"],
+      next_cursor: "older",
+    });
+    render(<SessionHubPage />);
+    expect(
+      await screen.findByText(
+        "No displayable records in this window. Continue loading earlier records.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText(/Initially loads up to 50 latest records/)).toBeVisible();
+    expect(screen.queryByText("No readable messages")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Load earlier records" }));
+    expect(await screen.findByText("Saved theme review")).toBeVisible();
+    expect(api.sessionEvents).toHaveBeenLastCalledWith(readable.id, "older");
+  });
+
   it("retries failed history reads and displays recovered content", async () => {
     hub = { ...hub, selected: readable, selectedWorkspace: workspace };
     vi.mocked(api.sessionEvents).mockRejectedValueOnce(new Error("History could not be read"));
     render(<SessionHubPage />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("History could not be read");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to read this session's history");
+    expect(screen.queryByText("History could not be read")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Saved theme review")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();

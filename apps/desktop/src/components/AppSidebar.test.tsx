@@ -134,7 +134,7 @@ describe("AppSidebar v8 navigation", () => {
     expect(onOpenSearch).toHaveBeenCalledOnce();
   });
 
-  it("keeps a fixed More trigger with settings and unavailable remote connection entries", async () => {
+  it("keeps a fixed More trigger with settings and enabled remote connection entries", async () => {
     const user = userEvent.setup();
     const onSettings = vi.fn();
     const { container } = render(
@@ -162,10 +162,7 @@ describe("AppSidebar v8 navigation", () => {
       within(menu).getByRole("menuitem", { name: "Settings" }).getAttribute("aria-keyshortcuts"),
     ).toBe("Control+,");
     const remote = within(menu).getByRole("menuitem", { name: tr("sessions.remote") });
-    expect(remote.getAttribute("aria-disabled")).toBe("true");
-    expect(document.getElementById(remote.getAttribute("aria-describedby")!)?.textContent).toBe(
-      tr("sessions.remoteUnavailable"),
-    );
+    expect(remote.getAttribute("aria-disabled")).not.toBe("true");
     expect(more.querySelector(".lucide-ellipsis")).toBeTruthy();
     expect(container.querySelector(".app-sidebar-more-entry.app-sidebar-item-active")).toBeNull();
     await user.click(within(menu).getByRole("menuitem", { name: "Settings" }));

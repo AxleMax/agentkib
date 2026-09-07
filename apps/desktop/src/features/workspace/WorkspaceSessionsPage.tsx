@@ -1,10 +1,13 @@
+import { useI18n } from "@/core/useI18n";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { ConversationEventRow } from "@/features/sessions/ConversationEventRow";
+import { HistoryError, HistoryWarning } from "@/features/sessions/HistoryFeedback";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -28,8 +31,9 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/core/api";
+import { DEFAULT_SESSION_PAGE_SIZE } from "@/core/session-history";
 import { AgentIcon } from "@/features/agents/AgentIcon";
-import { formatDateTime, formatRelativeTime, localizeMessage, tr } from "@/core/i18n";
+
 import type {
   AgentKind,
   ChangeSet,
@@ -41,6 +45,13 @@ import type {
 } from "@/core/types";
 import { SessionHandoffDialog } from "./SessionHandoffDialog";
 import { displaySessionTitle } from "./session-title";
+import {
+  isInteractiveFork,
+  sessionSourceLabel,
+  sessionSourceDetails,
+} from "@/features/sessions/session-labels";
+import { isSessionVisible } from "@/features/sessions/session-catalog";
+import { useSessionViewStore } from "@/features/sessions/session-view-store";
 
 type SessionFilter = "current" | "archived" | "metadata" | "all";
 type AgentFilter = "all" | ConversationSessionSummary["agent"];
@@ -75,6 +86,7 @@ export function WorkspaceSessionsPage({
   onResumeConsumed?: () => void;
   targetAgents: AgentKind[];
 }) {
+  const { formatDateTime, formatRelativeTime, localizeMessage, tr } = useI18n();
   const [sessions, setSessions] = useState<ConversationSessionSummary[]>([]);
   const [statuses, setStatuses] = useState<ConversationIndexStatus[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
@@ -89,15 +101,22 @@ export function WorkspaceSessionsPage({
   const [slowLoading, setSlowLoading] = useState(false);
   const [reading, setReading] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const [error, setError] = useState("");
+  const [rawError, setError] = useState<unknown>("");
+  const [historyError, setHistoryError] = useState(false);
+  const [readRevision, setReadRevision] = useState(0);
+  const error = rawError === "" ? "" : localizeMessage(rawError);
   const [showDetail, setShowDetail] = useState(false);
   const [showHandoff, setShowHandoff] = useState(false);
   const [resumedRequest, setResumedRequest] = useState<
     (SessionContinuationResume & { autoPrepare: boolean }) | undefined
   >();
   const readSequence = useRef(0);
+  const earlierRequest = useRef<number | null>(null);
   const cacheSequence = useRef(0);
   const consumedInitialSession = useRef<string | undefined>(undefined);
+  const showAuxiliary = useSessionViewStore((state) => state.showAuxiliary);
+  const setShowAuxiliary = useSessionViewStore((state) => state.setShowAuxiliary);
+  const revealSession = useSessionViewStore((state) => state.revealSession);
 
   const refresh = async (force: boolean) => {
     const sequence = ++cacheSequence.current;
@@ -111,7 +130,10 @@ export function WorkspaceSessionsPage({
       if (sequence !== cacheSequence.current) return;
       setStatuses(nextStatuses);
     } catch (reason) {
-      if (sequence === cacheSequence.current) setError(localizeMessage(reason));
+      if (sequence === cacheSequence.current) {
+        setHistoryError(false);
+        setError(reason);
+      }
     } finally {
       if (sequence === cacheSequence.current) setRefreshing(false);
     }
@@ -147,7 +169,10 @@ export function WorkspaceSessionsPage({
         if (disposed || sequence !== cacheSequence.current) return;
         setStatuses(nextStatuses);
       } catch (reason) {
-        if (!disposed && sequence === cacheSequence.current) setError(localizeMessage(reason));
+        if (!disposed && sequence === cacheSequence.current) {
+          setHistoryError(false);
+          setError(reason);
+        }
       } finally {
         if (!disposed && sequence === cacheSequence.current) setRefreshing(false);
       }
@@ -168,14 +193,18 @@ export function WorkspaceSessionsPage({
     return () => window.clearTimeout(timer);
   }, [refreshing, sessions.length]);
 
+  const visibleSessions = useMemo(
+    () => sessions.filter((session) => isSessionVisible(session, showAuxiliary)),
+    [sessions, showAuxiliary],
+  );
   const scopedSessions = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    return sessions.filter((session) => {
+    return visibleSessions.filter((session) => {
       if (agent !== "all" && session.agent !== agent) return false;
       if (needle && !(session.title ?? "").toLocaleLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [agent, query, sessions]);
+  }, [agent, query, visibleSessions]);
   const filterCounts = useMemo(
     () =>
       Object.fromEntries(
@@ -192,6 +221,9 @@ export function WorkspaceSessionsPage({
   );
 
   const selected = sessions.find((session) => session.id === selectedId);
+  const selectedSources = selected
+    ? sessionSourceDetails(selected, sessions, tr, formatDateTime)
+    : [];
   useEffect(() => {
     if (selectedId && filtered.some((session) => session.id === selectedId)) return;
     setSelectedId(filtered[0]?.id);
@@ -202,26 +234,30 @@ export function WorkspaceSessionsPage({
     if (!initialSessionId || consumedInitialSession.current === initialSessionId) return;
     if (!sessions.some(({ id }) => id === initialSessionId)) return;
     consumedInitialSession.current = initialSessionId;
+    revealSession(sessions.find(({ id }) => id === initialSessionId)!);
     setFilter("all");
     setSelectedId(initialSessionId);
     setShowDetail(true);
     onInitialSessionConsumed?.();
-  }, [initialSessionId, onInitialSessionConsumed, sessions]);
+  }, [initialSessionId, onInitialSessionConsumed, revealSession, sessions]);
 
   useEffect(() => {
     if (!resumeContinuation || !sessions.some(({ id }) => id === resumeContinuation.sessionId)) {
       return;
     }
+    const target = sessions.find(({ id }) => id === resumeContinuation.sessionId);
+    if (target) revealSession(target);
     setFilter("all");
     setSelectedId(resumeContinuation.sessionId);
     setResumedRequest(resumeContinuation);
     setShowDetail(true);
     setShowHandoff(true);
     onResumeConsumed?.();
-  }, [onResumeConsumed, resumeContinuation, sessions]);
+  }, [onResumeConsumed, resumeContinuation, revealSession, sessions]);
 
   useEffect(() => {
     const sequence = ++readSequence.current;
+    earlierRequest.current = null;
     setEvents([]);
     setLoadingEarlier(false);
     setNextCursor(undefined);
@@ -241,29 +277,52 @@ export function WorkspaceSessionsPage({
         setWarnings(page.warnings);
       })
       .catch((reason) => {
-        if (sequence === readSequence.current) setError(localizeMessage(reason));
+        if (sequence === readSequence.current) {
+          setHistoryError(true);
+          setError(reason);
+        }
       })
       .finally(() => {
         if (sequence === readSequence.current) setReading(false);
       });
-  }, [selected?.id, selected?.availability]);
+  }, [selected?.id, selected?.availability, readRevision]);
 
   const loadEarlier = async () => {
-    if (!selected || !nextCursor) return;
+    if (!selected || !nextCursor || reading || earlierRequest.current !== null) return;
     const sequence = readSequence.current;
+    earlierRequest.current = sequence;
     const selectedSessionId = selected.id;
     const cursor = nextCursor;
     setLoadingEarlier(true);
+    setError("");
     try {
       const page = await api.sessionEvents(selectedSessionId, cursor);
       if (sequence !== readSequence.current) return;
-      setEvents((current) => [...page.events, ...current]);
+      setEvents((current) => {
+        const seen = new Set<string>();
+        return [...page.events, ...current].filter((event) => {
+          if (seen.has(event.id)) return false;
+          seen.add(event.id);
+          return true;
+        });
+      });
       setNextCursor(page.next_cursor);
-      setWarnings((current) => [...new Set([...page.warnings, ...current])]);
+      setWarnings((current) => [
+        ...new Set([
+          ...page.warnings,
+          ...current.filter((warning) => warning !== "TRANSCRIPT_SCAN_BUDGET"),
+        ]),
+      ]);
     } catch (reason) {
-      if (sequence === readSequence.current) setError(localizeMessage(reason));
+      if (sequence === readSequence.current) {
+        setHistoryError(true);
+        setError(reason);
+      }
     } finally {
-      if (sequence === readSequence.current) setLoadingEarlier(false);
+      if (sequence === readSequence.current) {
+        earlierRequest.current = null;
+        setLoadingEarlier(false);
+      }
     }
   };
 
@@ -318,7 +377,7 @@ export function WorkspaceSessionsPage({
                   variant="outline"
                   className="shrink-0 border-transparent bg-muted text-muted-foreground !rounded-full !px-2 !py-0.5 !text-xs tabular-nums"
                 >
-                  {sessions.length}
+                  {filtered.length}
                 </Badge>
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -354,7 +413,7 @@ export function WorkspaceSessionsPage({
                 </DropdownMenu>
                 <DropdownMenu>
                   <DropdownMenuTrigger
-                    className={`inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ${filter !== "current" ? "bg-accent text-accent-foreground" : ""}`}
+                    className={`inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ${filter !== "current" || showAuxiliary ? "bg-accent text-accent-foreground" : ""}`}
                     aria-label={tr("conversations.filterLabel")}
                     title={tr(`conversations.filter.${filter}`)}
                   >
@@ -383,6 +442,12 @@ export function WorkspaceSessionsPage({
                           </DropdownMenuItem>
                         ),
                       )}
+                      <DropdownMenuCheckboxItem
+                        checked={showAuxiliary}
+                        onCheckedChange={(checked) => setShowAuxiliary(checked === true)}
+                      >
+                        {tr("conversations.showAuxiliary")}
+                      </DropdownMenuCheckboxItem>
                     </DropdownMenuGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -442,63 +507,73 @@ export function WorkspaceSessionsPage({
             </div>
           )}
           <div role="list" className="min-h-0 flex-1 overflow-auto p-2">
-            {filtered.map((session) => (
-              <Button
-                variant="bare"
-                size="content"
-                key={session.id}
-                role="listitem"
-                className={`group mb-1 grid min-h-[82px] w-full grid-cols-[36px_minmax(0,1fr)_16px] items-start gap-3 rounded-xl border px-3 py-3 text-left transition-colors duration-200 ${selected?.id === session.id ? "border-primary/20 bg-accent-soft ring-1 ring-primary/5" : "border-transparent hover:border-border/70 hover:bg-muted/60"}`}
-                onClick={() => {
-                  setSelectedId(session.id);
-                  setShowDetail(true);
-                }}
-              >
-                <AgentIcon agent={session.agent} />
-                <span className="min-w-0">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <strong className="truncate text-sm">
-                      {displaySessionTitle(session.title)}
-                    </strong>
-                    {session.availability === "metadata-only" && (
-                      <Badge
-                        variant="secondary"
-                        className="shrink-0 !rounded-full !px-1.5 !py-0 !text-[10px]"
-                      >
-                        {tr("conversations.metadataOnly")}
-                      </Badge>
-                    )}
+            {filtered.map((session) => {
+              const sourceLabel = sessionSourceLabel(session, sessions, tr, formatDateTime);
+              return (
+                <Button
+                  variant="bare"
+                  size="content"
+                  key={session.id}
+                  role="listitem"
+                  title={sourceLabel || undefined}
+                  className={`group mb-1 grid min-h-[82px] w-full grid-cols-[36px_minmax(0,1fr)_16px] items-start gap-3 rounded-xl border px-3 py-3 text-left transition-colors duration-200 ${selected?.id === session.id ? "border-primary/20 bg-accent-soft ring-1 ring-primary/5" : "border-transparent hover:border-border/70 hover:bg-muted/60"}`}
+                  onClick={() => {
+                    setSelectedId(session.id);
+                    setShowDetail(true);
+                  }}
+                >
+                  <AgentIcon agent={session.agent} />
+                  <span className="min-w-0">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <strong className="truncate text-sm">
+                        {displaySessionTitle(session.title, tr)}
+                      </strong>
+                      {isInteractiveFork(session) && (
+                        <GitBranch
+                          size={12}
+                          aria-label={`${tr("conversations.forked")}: ${sourceLabel}`}
+                        />
+                      )}
+                      {session.availability === "metadata-only" && (
+                        <Badge
+                          variant="secondary"
+                          className="shrink-0 !rounded-full !px-1.5 !py-0 !text-[10px]"
+                        >
+                          {tr("conversations.metadataOnly")}
+                        </Badge>
+                      )}
+                    </span>
+                    <small className="mt-1 block truncate text-xs text-muted-foreground">
+                      {session.updated_at
+                        ? formatRelativeTime(session.updated_at)
+                        : tr("conversations.unknownTime")}
+                      {session.message_count != null
+                        ? ` · ${tr("conversations.messageCount", { count: session.message_count })}`
+                        : ""}
+                    </small>
+                    <em className="mt-1.5 flex min-h-4 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground not-italic">
+                      {session.git_branch && (
+                        <span className="inline-flex min-w-0 max-w-full items-center gap-1 truncate">
+                          <GitBranch size={11} className="shrink-0" />
+                          {session.git_branch}
+                        </span>
+                      )}
+                      {session.archived && (
+                        <span className="inline-flex items-center gap-1">
+                          <Archive size={11} />
+                          {tr("conversations.archived")}
+                        </span>
+                      )}
+                      {session.sidechain && <span>{tr("conversations.sidechain")}</span>}
+                    </em>
                   </span>
-                  <small className="mt-1 block truncate text-xs text-muted-foreground">
-                    {session.updated_at
-                      ? formatRelativeTime(session.updated_at)
-                      : tr("conversations.unknownTime")}
-                    {session.message_count != null
-                      ? ` · ${tr("conversations.messageCount", { count: session.message_count })}`
-                      : ""}
-                  </small>
-                  <em className="mt-1.5 flex min-h-4 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground not-italic">
-                    {session.git_branch && (
-                      <span className="inline-flex min-w-0 max-w-full items-center gap-1 truncate">
-                        <GitBranch size={11} className="shrink-0" />
-                        {session.git_branch}
-                      </span>
-                    )}
-                    {session.archived && (
-                      <span className="inline-flex items-center gap-1">
-                        <Archive size={11} />
-                        {tr("conversations.archived")}
-                      </span>
-                    )}
-                    {session.sidechain && <span>{tr("conversations.sidechain")}</span>}
-                  </em>
-                </span>
-                <ChevronRight
-                  size={15}
-                  className={`mt-1 transition-transform duration-200 ${selected?.id === session.id ? "text-foreground" : "text-muted-foreground/60 group-hover:translate-x-0.5 group-hover:text-foreground"}`}
-                />
-              </Button>
-            ))}
+                  <ChevronRight
+                    size={15}
+                    className={`mt-1 transition-transform duration-200 ${selected?.id === session.id ? "text-foreground" : "text-muted-foreground/60 group-hover:translate-x-0.5 group-hover:text-foreground"}`}
+                  />
+                </Button>
+              );
+            })}
             {!filtered.length && (
               <div className="grid min-h-[220px] place-content-center justify-items-center gap-3 p-6 text-center text-muted-foreground">
                 <span className="grid size-10 place-items-center rounded-xl bg-muted">
@@ -541,7 +616,7 @@ export function WorkspaceSessionsPage({
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                       <h2 className="truncate text-base font-semibold tracking-tight text-foreground">
-                        {displaySessionTitle(selected.title)}
+                        {displaySessionTitle(selected.title, tr)}
                       </h2>
                       {selected.availability === "metadata-only" && (
                         <Badge
@@ -558,6 +633,40 @@ export function WorkspaceSessionsPage({
                         : tr("conversations.unknownTime")}
                       {selected.git_branch ? ` · ${selected.git_branch}` : ""}
                     </p>
+                    {selected?.origin === "auxiliary" && !selectedSources.length && (
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        {tr("conversations.auxiliary")}
+                      </span>
+                    )}
+                    {selectedSources.map((source) =>
+                      source.session ? (
+                        <Button
+                          key={`${source.kind}:${source.id}`}
+                          variant="link"
+                          size="sm"
+                          className="mt-1 h-auto max-w-full justify-start truncate p-0 text-xs"
+                          title={source.label}
+                          aria-label={source.label}
+                          onClick={() => {
+                            revealSession(source.session!);
+                            setFilter("all");
+                            setSelectedId(source.session!.id);
+                            setShowDetail(true);
+                          }}
+                        >
+                          {source.kind === "forked" && <GitBranch size={12} />}
+                          {source.label}
+                        </Button>
+                      ) : (
+                        <span
+                          key={`${source.kind}:${source.id}`}
+                          className="mt-1 block truncate text-xs text-muted-foreground"
+                          title={source.label}
+                        >
+                          {source.label}
+                        </span>
+                      ),
+                    )}
                   </div>
                 </div>
                 {selected.availability === "readable" && events.length > 0 && (
@@ -584,19 +693,27 @@ export function WorkspaceSessionsPage({
           </header>
           <div className="min-h-0 overflow-auto bg-muted/15">
             {error && (
-              <div
-                role="alert"
-                aria-live="assertive"
-                className="mx-5 mt-5 flex items-start gap-2 rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-              >
-                <CircleAlert size={16} className="mt-0.5 shrink-0" />
-                {error}
+              <div className="mx-5 mt-5">
+                {historyError ? (
+                  <HistoryError
+                    error={rawError}
+                    onRetry={() => setReadRevision((value) => value + 1)}
+                  />
+                ) : (
+                  <div
+                    role="alert"
+                    className="rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+                  >
+                    {error}
+                  </div>
+                )}
               </div>
             )}
             {warnings.length > 0 && (
-              <div className="mx-5 mt-4 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/70 px-4 py-3 text-xs text-amber-800">
-                <CircleAlert size={15} className="mt-0.5 shrink-0" />
-                <span>{tr("conversations.damagedLines")}</span>
+              <div className="mx-5 mt-4 grid gap-2">
+                {warnings.map((warning) => (
+                  <HistoryWarning key={warning} warning={warning} />
+                ))}
               </div>
             )}
             {!selected && (
@@ -624,6 +741,9 @@ export function WorkspaceSessionsPage({
             )}
             {selected?.availability === "readable" && (
               <div className="flex min-h-full flex-col gap-3 p-5">
+                <p className="text-sm text-muted-foreground">
+                  {tr("history.latestWindow", { count: DEFAULT_SESSION_PAGE_SIZE })}
+                </p>
                 {nextCursor && (
                   <Button
                     variant="outline"
@@ -646,7 +766,7 @@ export function WorkspaceSessionsPage({
                       <MessageSquareText size={19} />
                     </span>
                     <strong className="text-sm text-foreground">
-                      {tr("conversations.noReadableEvents")}
+                      {tr(nextCursor ? "history.emptyWindow" : "conversations.noReadableEvents")}
                     </strong>
                   </div>
                 )}

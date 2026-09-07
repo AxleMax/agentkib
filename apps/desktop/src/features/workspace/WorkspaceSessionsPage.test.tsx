@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/core/api";
 import { initializeI18n } from "@/core/i18n";
 import type { ConversationSessionSummary, WorkspaceSummary } from "@/core/types";
+import { useSessionViewStore } from "@/features/sessions/session-view-store";
 import { WorkspaceSessionsPage } from "./WorkspaceSessionsPage";
 
 vi.mock("@/core/api", () => ({
@@ -43,6 +45,7 @@ describe("WorkspaceSessionsPage", () => {
   beforeAll(() => initializeI18n("en-US"));
   beforeEach(() => {
     vi.clearAllMocks();
+    useSessionViewStore.getState().resetFilters();
     vi.mocked(api.workspaceSessions).mockResolvedValue([cachedSession]);
     vi.mocked(api.workspaceSessionStatus).mockResolvedValue([]);
     vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([cachedSession]);
@@ -74,6 +77,36 @@ describe("WorkspaceSessionsPage", () => {
     );
   });
 
+  it("uses the shared auxiliary toggle consistently with the visible workspace count", async () => {
+    const auxiliary = {
+      ...cachedSession,
+      id: "auxiliary-session",
+      title: "Auxiliary continuation",
+      origin: "auxiliary" as const,
+      spawned_by_session_id: cachedSession.id,
+    };
+    vi.mocked(api.workspaceSessions).mockResolvedValue([cachedSession, auxiliary]);
+    vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([cachedSession, auxiliary]);
+    render(
+      <WorkspaceSessionsPage
+        workspace={workspace}
+        enabled
+        targetAgents={["claude-code"]}
+        onRuntimeChanged={vi.fn()}
+        onHandoffPlanned={vi.fn()}
+        onMcpConnectionPlanned={vi.fn()}
+      />,
+    );
+    expect(await screen.findAllByText("Cached continuation")).not.toHaveLength(0);
+    expect(screen.queryByText("Auxiliary continuation")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Session history" }));
+    fireEvent.click(
+      await screen.findByRole("menuitemcheckbox", { name: "Show auxiliary sessions" }),
+    );
+    expect(useSessionViewStore.getState().showAuxiliary).toBe(true);
+    expect(await screen.findByText("Auxiliary continuation")).toBeTruthy();
+  });
+
   it("only uses a forced scan for manual refresh", async () => {
     vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([cachedSession]);
     render(
@@ -94,6 +127,44 @@ describe("WorkspaceSessionsPage", () => {
     await waitFor(() =>
       expect(api.refreshWorkspaceSessions).toHaveBeenLastCalledWith(workspace.id, true),
     );
+  });
+
+  it("preserves interactive fork identity and exposes its source in hover/detail", async () => {
+    const creator = {
+      ...cachedSession,
+      id: "creator-session",
+      title: "Creator session",
+    };
+    const fork = {
+      ...cachedSession,
+      id: "forked-session",
+      title: "Forked continuation",
+      origin: "interactive" as const,
+      spawned_by_session_id: creator.id,
+      forked_from_session_id: cachedSession.id,
+      created_at: "2026-09-07T00:00:00Z",
+    };
+    vi.mocked(api.workspaceSessions).mockResolvedValue([cachedSession, creator, fork]);
+    vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([cachedSession, creator, fork]);
+    render(
+      <WorkspaceSessionsPage
+        workspace={workspace}
+        enabled
+        targetAgents={["claude-code"]}
+        onRuntimeChanged={vi.fn()}
+        onHandoffPlanned={vi.fn()}
+        onMcpConnectionPlanned={vi.fn()}
+      />,
+    );
+    const forkTitle = await screen.findByText("Forked continuation");
+    const forkButton = forkTitle.closest("button")!;
+    expect(forkButton).toHaveAttribute("title", expect.stringContaining("Created by:"));
+    expect(forkButton).toHaveAttribute("title", expect.stringContaining("Forked from:"));
+    fireEvent.click(forkButton);
+    expect(
+      await screen.findByRole("button", { name: /Created by: Creator session/ }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /Forked from: Cached continuation/ })).toBeVisible();
   });
 
   it("does not expose internal context wrappers as titles", async () => {
@@ -117,6 +188,54 @@ describe("WorkspaceSessionsPage", () => {
 
     expect((await screen.findAllByText("Untitled session")).length).toBeGreaterThan(0);
     expect(screen.queryByText(/SKILL\.md/)).toBeNull();
+  });
+
+  it("continues through an empty scan window and reloads latest records after a stale cursor", async () => {
+    vi.mocked(api.sessionEvents)
+      .mockResolvedValueOnce({
+        events: [],
+        warnings: ["TRANSCRIPT_SCAN_BUDGET"],
+        next_cursor: "older",
+      })
+      .mockRejectedValueOnce(new Error("TRANSCRIPT_CURSOR_STALE"))
+      .mockResolvedValueOnce({
+        events: [
+          {
+            id: "latest",
+            kind: "agent-message",
+            content: "Latest after retry",
+            attachment_count: 0,
+            truncated: false,
+          },
+        ],
+        warnings: [],
+      });
+    render(
+      <WorkspaceSessionsPage
+        workspace={workspace}
+        enabled
+        initialSessionId={cachedSession.id}
+        targetAgents={["claude-code"]}
+        onRuntimeChanged={vi.fn()}
+        onHandoffPlanned={vi.fn()}
+        onMcpConnectionPlanned={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        "No displayable records in this window. Continue loading earlier records.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("No readable messages")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Load earlier messages" }));
+    expect(
+      await screen.findByText(
+        "This history page has expired or the file has changed. Retry to reload the latest records.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Latest after retry")).toBeTruthy();
+    expect(api.sessionEvents).toHaveBeenLastCalledWith(cachedSession.id);
   });
 
   it("opens the session selected from the home page and consumes the route target", async () => {

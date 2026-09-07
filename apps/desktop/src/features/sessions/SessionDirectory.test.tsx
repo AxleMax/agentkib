@@ -57,11 +57,16 @@ describe("SessionDirectory", () => {
     vi.clearAllMocks();
     useSessionViewStore.setState({
       agent: "all",
+      host: "all",
       filter: "current",
+      showAuxiliary: false,
       collapsed: {},
       scrollTop: 0,
     });
     hub = {
+      remoteHosts: [],
+      remoteErrors: {},
+      localEnabled: true,
       workspaces,
       sessions: [first, second, archived, metadata],
       filtered: [],

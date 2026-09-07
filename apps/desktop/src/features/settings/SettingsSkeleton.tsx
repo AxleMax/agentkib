@@ -12,7 +12,7 @@ export function SettingsSkeleton() {
     <SkeletonPage className="grid-cols-[180px_minmax(0,1fr)] gap-5 p-5" labelKey="loading.settings">
       <SkeletonPanel className="h-fit p-3">
         <div className="grid gap-2">
-          {Array.from({ length: 6 }, (_, index) => (
+          {Array.from({ length: 7 }, (_, index) => (
             <SkeletonText className="h-9 w-full rounded-lg" key={index} />
           ))}
         </div>

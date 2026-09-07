@@ -1,6 +1,6 @@
+import { useI18n } from "@/core/useI18n";
 import { Bot, UserRound, Wrench } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { formatDateTime, tr } from "@/core/i18n";
 import type { ConversationEvent } from "@/core/types";
 
 export function ConversationEventRow({
@@ -10,6 +10,7 @@ export function ConversationEventRow({
   event: ConversationEvent;
   variant?: "workspace" | "hub";
 }) {
+  const { tr, formatDateTime } = useI18n();
   const hub = variant === "hub";
   if (event.kind === "tool-summary") {
     return (

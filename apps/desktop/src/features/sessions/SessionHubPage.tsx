@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -7,6 +8,7 @@ import {
   Clock,
   Database,
   FileText,
+  GitBranch,
   Info,
   RefreshCw,
 } from "lucide-react";
@@ -14,13 +16,20 @@ import { Button } from "@/components/ui/button";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { displaySessionTitle } from "@/features/workspace/session-title";
 import { api } from "@/core/api";
-import { formatDateTime, localizeMessage, tr } from "@/core/i18n";
+import { DEFAULT_SESSION_PAGE_SIZE } from "@/core/session-history";
 import { useAppStore } from "@/stores/app-store";
 import { useSessionHub } from "./SessionHubContext";
 import { useSessionViewStore } from "./session-view-store";
-import { sessionAgentNames, sessionRecordLabel } from "./session-labels";
+import {
+  isInteractiveFork,
+  sessionAgentNames,
+  sessionRecordLabel,
+  sessionSourceLabel,
+  sessionSourceDetails,
+} from "./session-labels";
 import { useSessionHistory } from "./useSessionHistory";
 import { ConversationEventRow } from "./ConversationEventRow";
+import { HistoryError, HistoryWarning } from "./HistoryFeedback";
 
 function Notice({ children, error = false }: { children: React.ReactNode; error?: boolean }) {
   return (
@@ -35,6 +44,7 @@ function Notice({ children, error = false }: { children: React.ReactNode; error?
 }
 
 export function SessionHubPage() {
+  const { localizeMessage, tr, formatDateTime } = useI18n();
   const hub = useSessionHub();
   const navigate = useNavigate();
   const history = useSessionHistory(hub.selected, hub.enabled, hub.historyRevision);
@@ -91,6 +101,9 @@ export function SessionHubPage() {
 
   const selected = hub.selected;
   const workspace = hub.selectedWorkspace;
+  const selectedSources = selected
+    ? sessionSourceDetails(selected, hub.sessions, tr, formatDateTime)
+    : [];
   const stats = [
     ["all", hub.filtered.length],
     ["readable", hub.filtered.filter((session) => session.availability === "readable").length],
@@ -98,12 +111,14 @@ export function SessionHubPage() {
     ["metadata", hub.filtered.filter((session) => session.availability === "metadata-only").length],
   ] as const;
   const visibleWorkspaceIds = new Set(hub.filtered.map((session) => session.workspace_id));
-  const statusWorkspaces = hub.workspaces.filter(
-    (item) =>
-      visibleWorkspaceIds.has(item.id) ||
-      Boolean(hub.errors[item.id]) ||
-      !hub.sessions.some((session) => session.workspace_id === item.id),
-  );
+  const statusWorkspaces = hub.workspaces
+    .filter((item) => !item.remote)
+    .filter(
+      (item) =>
+        visibleWorkspaceIds.has(item.id) ||
+        Boolean(hub.errors[item.id]) ||
+        !hub.sessions.some((session) => session.workspace_id === item.id),
+    );
 
   return (
     <div className="session-hub-page">
@@ -120,14 +135,14 @@ export function SessionHubPage() {
             </Button>
             <AgentIcon agent={selected.agent} />
             <div>
-              <h1>{displaySessionTitle(selected.title)}</h1>
+              <h1>{displaySessionTitle(selected.title, tr)}</h1>
               <p>
-                {`${tr("sessions.local")} · ${workspace?.name ?? ""} · ${sessionAgentNames[selected.agent]}`}
+                {`${selected.remote?.host_name ?? tr("sessions.local")} · ${workspace?.name ?? ""} · ${sessionAgentNames[selected.agent]}`}
               </p>
             </div>
           </div>
           <div className="session-header-actions">
-            {workspace && selected.availability === "readable" && (
+            {workspace && !selected.remote && selected.availability === "readable" && (
               <Button
                 variant="outline"
                 onClick={() =>
@@ -150,6 +165,15 @@ export function SessionHubPage() {
         </header>
       )}
       <div className="session-hub-body" ref={historyRef}>
+        {hub.remoteHosts?.map(
+          (host) =>
+            (host.status !== "online" || hub.remoteErrors?.[host.id]) && (
+              <Notice key={host.id} error={!!hub.remoteErrors?.[host.id]}>
+                {host.name} · {tr(`remote.state.${host.status}`)}
+                {hub.remoteErrors?.[host.id] && <p>{localizeMessage(hub.remoteErrors[host.id])}</p>}
+              </Notice>
+            ),
+        )}
         {hub.workspacesError && (
           <Notice error>
             {hub.workspacesError}
@@ -168,8 +192,34 @@ export function SessionHubPage() {
             <div className="session-history-meta">
               <span>
                 <FileText size={15} />
-                {sessionRecordLabel(selected)}
+                {sessionRecordLabel(selected, tr)}
               </span>
+              {selected?.origin === "auxiliary" && !selectedSources.length && (
+                <span>{tr("conversations.auxiliary")}</span>
+              )}
+              {selectedSources.map((source) =>
+                source.session ? (
+                  <Button
+                    key={`${source.kind}:${source.id}`}
+                    variant="link"
+                    size="sm"
+                    className="h-auto gap-1 p-0 text-xs"
+                    title={source.label}
+                    aria-label={source.label}
+                    onClick={() => {
+                      useSessionViewStore.getState().revealSession(source.session!);
+                      hub.select(source.session!.id);
+                    }}
+                  >
+                    {source.kind === "forked" && <GitBranch size={13} />}
+                    {source.label}
+                  </Button>
+                ) : (
+                  <span key={`${source.kind}:${source.id}`} title={source.label}>
+                    {source.label}
+                  </span>
+                ),
+              )}
               <span>
                 <Clock size={15} />
                 {selected.updated_at
@@ -178,17 +228,23 @@ export function SessionHubPage() {
               </span>
               {selected.git_branch && <span>{selected.git_branch}</span>}
             </div>
-            <Notice>{tr("sessions.historyOnly")}</Notice>
+            <Notice>
+              {tr(selected.remote ? "remote.sessionsReadonly" : "sessions.historyOnly")}
+              {selected.availability === "readable" && (
+                <p>{tr("history.latestWindow", { count: DEFAULT_SESSION_PAGE_SIZE })}</p>
+              )}
+              {selected.remote && (
+                <p>
+                  {tr(selected.remote.online ? "remote.state.online" : "remote.state.offline")} ·{" "}
+                  {tr("remote.catalogSynced")} {formatDateTime(selected.remote.last_synced_at)}
+                </p>
+              )}
+            </Notice>
             {history.error && (
-              <Notice error>
-                {history.error}
-                <Button variant="ghost" onClick={() => void history.retry()}>
-                  {tr("sessions.retry")}
-                </Button>
-              </Notice>
+              <HistoryError error={history.rawError} onRetry={() => void history.retry()} />
             )}
             {history.warnings.map((warning) => (
-              <Notice key={warning}>{localizeMessage(warning)}</Notice>
+              <HistoryWarning key={warning} warning={warning} />
             ))}
             {selected.availability === "metadata-only" ? (
               <div className="session-state session-state-inline">
@@ -217,7 +273,9 @@ export function SessionHubPage() {
                 )}
                 {!history.events.length && !history.error && (
                   <p className="session-state-inline text-muted-foreground">
-                    {tr("conversations.noReadableEvents")}
+                    {tr(
+                      history.nextCursor ? "history.emptyWindow" : "conversations.noReadableEvents",
+                    )}
                   </p>
                 )}
                 {history.events.map((event) => (
@@ -228,7 +286,13 @@ export function SessionHubPage() {
           </>
         ) : (
           <>
-            <p className="session-overview-description">{tr("sessions.overviewDescription")}</p>
+            <p className="session-overview-description">
+              {tr(
+                hub.remoteHosts?.length
+                  ? "remote.aggregateDescription"
+                  : "sessions.overviewDescription",
+              )}
+            </p>
             <div className="session-stats">
               {stats.map(([key, count]) => (
                 <div key={key}>
@@ -254,14 +318,28 @@ export function SessionHubPage() {
                       className="session-recent-item"
                       key={session.id}
                       onClick={() => hub.select(session.id)}
-                      title={source?.path}
+                      title={[
+                        source?.path,
+                        sessionSourceLabel(session, hub.sessions, tr, formatDateTime),
+                      ]
+                        .filter(Boolean)
+                        .join("\n")}
                     >
                       <AgentIcon agent={session.agent} compact />
                       <span>
-                        <strong>{displaySessionTitle(session.title)}</strong>
+                        <strong className="inline-flex items-center gap-1">
+                          {displaySessionTitle(session.title, tr)}
+                          {isInteractiveFork(session) && (
+                            <GitBranch
+                              size={12}
+                              aria-label={`${tr("conversations.forked")}: ${sessionSourceLabel(session, hub.sessions, tr, formatDateTime)}`}
+                            />
+                          )}
+                        </strong>
                         <small>
+                          {session.remote && `${session.remote.host_name} · `}
                           {source?.name} · {sessionAgentNames[session.agent]} ·{" "}
-                          {sessionRecordLabel(session)}
+                          {sessionRecordLabel(session, tr)}
                         </small>
                       </span>
                       <time>

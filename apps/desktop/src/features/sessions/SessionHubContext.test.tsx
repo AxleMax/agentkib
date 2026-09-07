@@ -13,6 +13,8 @@ import { useAppStore } from "@/stores/app-store";
 import { SessionHubProvider, useSessionHub } from "./SessionHubContext";
 import { useSessionViewStore } from "./session-view-store";
 import { SESSION_REFRESH_EVENT } from "./session-refresh";
+import { useRemoteStore } from "@/features/remote/remote-store";
+import { useRemoteCatalogStore, remoteRecordId } from "@/features/remote/remote-catalog-store";
 
 const doubles = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -81,6 +83,8 @@ describe("SessionHubProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAppStore.getState().reset();
+    useRemoteStore.setState({ snapshot: null });
+    useRemoteCatalogStore.setState({ catalogs: {}, errors: {}, revision: 0 });
     useAppStore.getState().setRuntime({ session_index_enabled: true } as RuntimeInfo);
     useSessionViewStore.getState().resetFilters();
     doubles.search = { sessionId: session.id };
@@ -93,6 +97,74 @@ describe("SessionHubProvider", () => {
     doubles.catalog.mockReturnValue(catalogState());
   });
   afterEach(cleanup);
+
+  it("keeps context available but pauses reads and refresh listeners outside the session route", () => {
+    const { result } = renderHook(useSessionHub, {
+      wrapper: ({ children }) => <SessionHubProvider active={false}>{children}</SessionHubProvider>,
+    });
+    expect(result.current.enabled).toBe(false);
+    expect(doubles.catalog).toHaveBeenLastCalledWith([workspace], false);
+    act(() => window.dispatchEvent(new Event(SESSION_REFRESH_EVENT)));
+    expect(doubles.catalog.mock.results[0].value.refresh).not.toHaveBeenCalled();
+    expect(doubles.navigate).not.toHaveBeenCalled();
+  });
+
+  it("reads cached remote history even when local indexing is disabled and local workspaces are pending", () => {
+    useAppStore.getState().setRuntime({ session_index_enabled: false } as RuntimeInfo);
+    doubles.workspaceQuery.isPending = true;
+    useRemoteStore.setState({
+      snapshot: {
+        local: { id: "self", name: "Desktop", enabled: false, address: null },
+        interfaces: [],
+        discovered: [],
+        pending: [],
+        authorized: [],
+        pairing_code: null,
+        pairing_expires_at: null,
+        connections: [
+          {
+            id: "host",
+            name: "Laptop",
+            address: "192.168.1.5:42987",
+            status: "online",
+            last_seen: 1,
+            error: null,
+          },
+        ],
+      },
+    });
+    useRemoteCatalogStore.setState({
+      catalogs: {
+        host: { workspaces: [workspace], sessions: [session], syncedAt: "2026-09-07T00:00:00Z" },
+      },
+    });
+    doubles.search = { sessionId: remoteRecordId("host", session.id) };
+    const { result } = renderHook(useSessionHub, { wrapper });
+    expect(result.current.enabled).toBe(true);
+    expect(result.current.localEnabled).toBe(false);
+    expect(result.current.workspacesLoading).toBe(false);
+    expect(result.current.selected?.remote?.host_id).toBe("host");
+    expect(result.current.selectedWorkspace?.remote?.host_name).toBe("Laptop");
+    expect(doubles.catalog).toHaveBeenLastCalledWith([workspace], false);
+    act(() => useSessionViewStore.getState().setHost("local"));
+    expect(result.current.selected).toBeUndefined();
+    act(() =>
+      useSessionViewStore.getState().revealSession({
+        ...session,
+        id: remoteRecordId("host", session.id),
+        workspace_id: remoteRecordId("host", workspace.id),
+        remote: {
+          host_id: "host",
+          host_name: "Laptop",
+          original_id: session.id,
+          online: true,
+          last_synced_at: "2026-09-07T00:00:00Z",
+        },
+      }),
+    );
+    expect(useSessionViewStore.getState().host).toBe("all");
+    expect(result.current.selected?.remote?.host_id).toBe("host");
+  });
 
   it("retains a deep link on partial read failure, then selects it when retry recovers", () => {
     const catalog = { ...catalogState(), errors: { [workspace.id]: "Cannot read index" } };
@@ -126,6 +198,23 @@ describe("SessionHubProvider", () => {
     expect(result.current.filtered).toEqual([]);
     expect(doubles.navigate).toHaveBeenCalledOnce();
     expect(clearedSearch()).toEqual({ sessionId: undefined, unrelated: "retained" });
+  });
+
+  it("reveals an auxiliary deep link once, then honors a user hiding it", () => {
+    const auxiliary = {
+      ...session,
+      id: "auxiliary-session",
+      origin: "auxiliary" as const,
+      spawned_by_session_id: session.id,
+    };
+    doubles.search = { sessionId: auxiliary.id };
+    doubles.catalog.mockReturnValue({ ...catalogState(), sessions: [auxiliary] });
+    const { result } = renderHook(() => useSessionHub(), { wrapper });
+    expect(result.current.selected).toEqual(auxiliary);
+    expect(useSessionViewStore.getState().showAuxiliary).toBe(true);
+    act(() => useSessionViewStore.getState().setShowAuxiliary(false));
+    expect(result.current.selected).toBeUndefined();
+    expect(doubles.navigate).toHaveBeenCalledOnce();
   });
 
   it("clears a truly missing session only after the complete initial load", () => {

@@ -12,6 +12,8 @@ import { useSearchAssets } from "./useSearchAssets";
 import { GlobalSearchDialog } from "./GlobalSearchDialog";
 import { groupCatalogAssets } from "@/features/catalog/catalog";
 import { useSessionViewStore } from "@/features/sessions/session-view-store";
+import { useRemoteStore } from "@/features/remote/remote-store";
+import { useRemoteCatalogStore, remoteRecordId } from "@/features/remote/remote-catalog-store";
 
 vi.mock("./useSearchSessions", () => ({ useSearchSessions: vi.fn() }));
 vi.mock("./useSearchAssets", () => ({ SEARCH_ASSET_LIMIT: 500, useSearchAssets: vi.fn() }));
@@ -41,6 +43,9 @@ describe("GlobalSearchDialog", () => {
   beforeAll(() => initializeI18n("en-US"));
   beforeEach(() => {
     vi.clearAllMocks();
+    useSessionViewStore.getState().resetFilters();
+    useRemoteStore.setState({ snapshot: null });
+    useRemoteCatalogStore.setState({ catalogs: {}, errors: {}, revision: 0 });
     useAppStore.setState({ runtime: { session_index_enabled: true } as RuntimeInfo });
     vi.mocked(useSearchSessions).mockReturnValue({
       sessions: [session],
@@ -58,6 +63,54 @@ describe("GlobalSearchDialog", () => {
   });
   afterEach(cleanup);
 
+  it("searches loaded remote records with host provenance while local indexing is disabled", async () => {
+    useAppStore.setState({ runtime: { session_index_enabled: false } as RuntimeInfo });
+    vi.mocked(useSearchSessions).mockReturnValue({
+      sessions: [],
+      errors: {},
+      loading: false,
+      retry: vi.fn(),
+    });
+    useRemoteStore.setState({
+      snapshot: {
+        local: { id: "self", name: "Desktop", enabled: false, address: null },
+        interfaces: [],
+        discovered: [],
+        pending: [],
+        authorized: [],
+        pairing_code: null,
+        pairing_expires_at: null,
+        connections: [
+          {
+            id: "host",
+            name: "Laptop",
+            address: "192.168.1.5:42987",
+            status: "offline",
+            last_seen: 1,
+            error: null,
+          },
+        ],
+      },
+    });
+    useRemoteCatalogStore.setState({
+      catalogs: {
+        host: { workspaces: [workspace], sessions: [session], syncedAt: "2026-09-07T00:00:00Z" },
+      },
+    });
+    const callbacks = props();
+    render(<GlobalSearchDialog {...callbacks} />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Review search" } });
+    const result = await screen.findByRole("option", { name: /Review search.*Laptop/ });
+    fireEvent.click(result);
+    expect(callbacks.onOpenSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: remoteRecordId("host", session.id),
+        remote: expect.objectContaining({ host_id: "host" }),
+      }),
+    );
+    expect(useSearchSessions).toHaveBeenLastCalledWith(callbacks.workspaces, false);
+  });
+
   it("groups global results, retains same-name workspace paths and opens archived sessions via keyboard", async () => {
     const callbacks = props();
     render(<GlobalSearchDialog {...callbacks} />);
@@ -73,6 +126,26 @@ describe("GlobalSearchDialog", () => {
     fireEvent.keyDown(search, { key: "Enter" });
     expect(callbacks.onOpenSession).toHaveBeenCalledWith(session);
     expect(callbacks.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("shares auxiliary source visibility with the session directory", async () => {
+    const auxiliary: ConversationSessionSummary = {
+      ...session,
+      id: "auxiliary-session",
+      title: "Auxiliary result",
+      origin: "auxiliary",
+      spawned_by_session_id: session.id,
+    };
+    vi.mocked(useSearchSessions).mockReturnValue({
+      sessions: [session, auxiliary],
+      loading: false,
+      errors: {},
+      retry: vi.fn().mockResolvedValue(undefined),
+    });
+    render(<GlobalSearchDialog {...props()} />);
+    expect(screen.queryByRole("option", { name: /Auxiliary result/ })).toBeNull();
+    act(() => useSessionViewStore.getState().setShowAuxiliary(true));
+    expect(await screen.findByRole("option", { name: /Auxiliary result/ })).toBeVisible();
   });
 
   it("does not read sessions with indexing disabled and offers settings while other results work", async () => {

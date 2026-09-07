@@ -8,6 +8,7 @@ import {
   Database,
   FolderSearch,
   Menu,
+  MonitorSmartphone,
   PackageSearch,
   PlugZap,
   Search,
@@ -25,6 +26,7 @@ export type SettingsSection =
   | "general"
   | "discovery"
   | "tools"
+  | "remote"
   | "integrations"
   | "privacy"
   | "diagnostics";
@@ -39,6 +41,8 @@ export const settingsTargets = [
   "tools-app",
   "tools-environment",
   "tools-actions",
+  "remote-access",
+  "remote-devices",
   "integrations-mcp",
   "integrations-gateways",
   "integrations-obsidian",
@@ -61,6 +65,7 @@ const sections: Array<{
   { id: "general", label: "settings.section.general", icon: Settings2 },
   { id: "discovery", label: "settings.section.discovery", icon: FolderSearch },
   { id: "tools", label: "settings.section.tools", icon: PackageSearch },
+  { id: "remote", label: "settings.section.remote", icon: MonitorSmartphone },
   { id: "integrations", label: "settings.section.integrations", icon: PlugZap },
   { id: "privacy", label: "settings.section.privacy", icon: Database },
   { id: "diagnostics", label: "settings.section.diagnostics", icon: Stethoscope },
@@ -72,6 +77,18 @@ const searchEntries: Array<{
   label: string;
   keywords: string[];
 }> = [
+  {
+    section: "remote",
+    target: "remote-access",
+    label: "remote.access",
+    keywords: ["remote.pair", "remote.address"],
+  },
+  {
+    section: "remote",
+    target: "remote-devices",
+    label: "remote.authorized",
+    keywords: ["remote.revoke", "remote.connections"],
+  },
   {
     section: "general",
     target: "general-interface",

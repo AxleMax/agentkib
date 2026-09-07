@@ -39,6 +39,7 @@ import {
 import type { WorkspaceSummary } from "@/core/types";
 import type { GlobalPage, Page } from "@/features/app/app-route";
 import { SessionDirectory } from "@/features/sessions/SessionDirectory";
+import { RemoteConnectionPanel } from "@/features/remote/RemoteConnectionPanel";
 
 export interface SidebarEntry<T extends string> {
   id: T;
@@ -97,6 +98,7 @@ export function AppSidebar(props: {
   entries: SidebarEntry<GlobalPage>[];
   onNavigate: (page: GlobalPage) => void;
   onSettings: () => void;
+  onRemoteSettings?: () => void;
   onOpenSearch?: () => void;
   searchOpen?: boolean;
   collapsed: boolean;
@@ -110,6 +112,7 @@ export function AppSidebar(props: {
     if (props.searchOpen) setMobileOpen(false);
   }, [props.searchOpen]);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
   const [directoryMenuOpen, setDirectoryMenuOpen] = useState(false);
   const sidebarPeek = useAppStore((state) => state.sidebarPeek);
   const setSidebarPeek = useAppStore((state) => state.setSidebarPeek);
@@ -452,21 +455,30 @@ export function AppSidebar(props: {
                   {tr("nav.settings")}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled
-                  aria-describedby={`${sidebarId}-remote-unavailable`}
-                  title={tr("sessions.remoteUnavailable")}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setMobileOpen(false);
+                    setRemoteOpen(true);
+                  }}
                 >
                   <MonitorSmartphone size={17} />
                   {tr("sessions.remote")}
                 </DropdownMenuItem>
-                <span id={`${sidebarId}-remote-unavailable`} className="sr-only">
-                  {tr("sessions.remoteUnavailable")}
-                </span>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
       </aside>
+      {remoteOpen && (
+        <RemoteConnectionPanel
+          open={remoteOpen}
+          onOpenChange={setRemoteOpen}
+          onSettings={() => {
+            setRemoteOpen(false);
+            (props.onRemoteSettings ?? onSettings)();
+          }}
+        />
+      )}
     </>
   );
 }

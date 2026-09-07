@@ -1,9 +1,11 @@
-import { useLayoutEffect, useRef } from "react";
-import { Ellipsis, Folder, FolderOpen, X } from "lucide-react";
+import { useI18n } from "@/core/useI18n";
+import { Fragment, useLayoutEffect, useRef } from "react";
+import { Ellipsis, Folder, FolderOpen, GitBranch, Monitor, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuRadioGroup,
@@ -16,15 +18,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { displaySessionTitle } from "@/features/workspace/session-title";
-import { tr } from "@/core/i18n";
 import { useSessionHub } from "./SessionHubContext";
 import { useSessionViewStore, type SessionRecordFilter } from "./session-view-store";
-import { sessionAgentNames, sessionRecordLabel } from "./session-labels";
+import {
+  isInteractiveFork,
+  sessionAgentNames,
+  sessionRecordLabel,
+  sessionSourceLabel,
+} from "./session-labels";
 import type { AgentKind } from "@/core/types";
 
 export function SessionDirectory({
   onMenuOpenChange,
 }: { onMenuOpenChange?: (open: boolean) => void } = {}) {
+  const { formatDateTime, tr } = useI18n();
   const hub = useSessionHub();
   const view = useSessionViewStore();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -42,6 +49,7 @@ export function SessionDirectory({
     .filter((group) => group.sessions.length > 0)
     .sort(
       (a, b) =>
+        (a.workspace.remote?.host_id ?? "").localeCompare(b.workspace.remote?.host_id ?? "") ||
         (b.sessions[0]?.updated_at ?? "").localeCompare(a.sessions[0]?.updated_at ?? "") ||
         a.workspace.id.localeCompare(b.workspace.id),
     );
@@ -61,6 +69,26 @@ export function SessionDirectory({
               <Ellipsis size={18} aria-hidden="true" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-48" positionerClassName="z-80">
+              {!!hub.remoteHosts?.length && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>{tr("remote.hostFilter")}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-44" positionerClassName="z-80">
+                    <DropdownMenuRadioGroup value={view.host} onValueChange={view.setHost}>
+                      <DropdownMenuRadioItem value="all">
+                        {tr("remote.allHosts")}
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="local">
+                        {tr("sessions.local")}
+                      </DropdownMenuRadioItem>
+                      {hub.remoteHosts.map((host) => (
+                        <DropdownMenuRadioItem key={host.id} value={host.id}>
+                          {host.name}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>{tr("conversations.agentFilter")}</DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="min-w-44" positionerClassName="z-80">
@@ -96,9 +124,20 @@ export function SessionDirectory({
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <DropdownMenuCheckboxItem
+                checked={view.showAuxiliary}
+                onCheckedChange={(checked) => view.setShowAuxiliary(checked === true)}
+              >
+                {tr("conversations.showAuxiliary")}
+              </DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                disabled={view.agent === "all" && view.filter === "current"}
+                disabled={
+                  view.agent === "all" &&
+                  view.filter === "current" &&
+                  view.host === "all" &&
+                  !view.showAuxiliary
+                }
                 onClick={view.resetFilters}
               >
                 {tr("sessions.clearFilters")}
@@ -106,8 +145,23 @@ export function SessionDirectory({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {(view.agent !== "all" || view.filter !== "current") && (
+        {(view.agent !== "all" || view.filter !== "current" || view.host !== "all") && (
           <div className="flex flex-wrap gap-1.5">
+            {view.host !== "all" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 rounded-full px-2 text-xs"
+                onClick={() => view.setHost("all")}
+                aria-label={tr("remote.allHosts")}
+              >
+                {view.host === "local"
+                  ? tr("sessions.local")
+                  : (hub.remoteHosts?.find((host) => host.id === view.host)?.name ??
+                    tr("remote.hostFilter"))}
+                <X size={12} aria-hidden="true" />
+              </Button>
+            )}
             {view.agent !== "all" && (
               <Button
                 variant="outline"
@@ -142,49 +196,80 @@ export function SessionDirectory({
         ref={scrollRef}
         onScroll={(event) => view.setScrollTop(event.currentTarget.scrollTop)}
       >
-        {groups.map(({ workspace, sessions }) => (
-          <Collapsible
-            className="session-workspace"
-            key={workspace.id}
-            open={!view.collapsed[workspace.id]}
-            onOpenChange={() => view.toggleWorkspace(workspace.id)}
-          >
-            <CollapsibleTrigger
-              render={<Button variant="bare" size="content" className="session-workspace-heading" />}
-              title={`${workspace.name}\n${workspace.path}`}
-            >
-              {view.collapsed[workspace.id] ? (
-                <Folder size={16} aria-hidden="true" />
-              ) : (
-                <FolderOpen size={16} aria-hidden="true" />
+        {groups.map(({ workspace, sessions }, index) => (
+          <Fragment key={workspace.id}>
+            {!!hub.remoteHosts?.length &&
+              view.host === "all" &&
+              (index === 0 ||
+                groups[index - 1].workspace.remote?.host_id !== workspace.remote?.host_id) && (
+                <div className="session-host-heading">
+                  <Monitor size={14} aria-hidden="true" />
+                  <strong>{workspace.remote?.host_name ?? tr("sessions.local")}</strong>
+                  {workspace.remote && (
+                    <small>
+                      {tr(workspace.remote.online ? "remote.state.online" : "remote.state.offline")}
+                    </small>
+                  )}
+                </div>
               )}
-              <strong>{workspace.name}</strong>
-              <span>{sessions.length}</span>
-            </CollapsibleTrigger>
-            <CollapsibleContent
-              className="session-workspace-items"
-              inert={Boolean(view.collapsed[workspace.id])}
-              aria-hidden={view.collapsed[workspace.id] || undefined}
+            <Collapsible
+              className="session-workspace"
+              key={workspace.id}
+              open={!view.collapsed[workspace.id]}
+              onOpenChange={() => view.toggleWorkspace(workspace.id)}
             >
-              {sessions.map((session) => (
-                <Button
-                  variant="bare"
-                  size="content"
-                  key={session.id}
-                  data-session-entry
-                  className="session-directory-item"
-                  aria-current={hub.selected?.id === session.id ? "page" : undefined}
-                  onClick={() => hub.select(session.id)}
-                  title={`${displaySessionTitle(session.title)}\n${sessionAgentNames[session.agent]} · ${sessionRecordLabel(session)}\n${workspace.path}`}
-                >
-                  <AgentIcon agent={session.agent} compact />
-                  <span>
-                    <strong>{displaySessionTitle(session.title)}</strong>
-                  </span>
-                </Button>
-              ))}
-            </CollapsibleContent>
-          </Collapsible>
+              <CollapsibleTrigger
+                render={
+                  <Button variant="bare" size="content" className="session-workspace-heading" />
+                }
+                title={`${workspace.name}\n${workspace.path}`}
+              >
+                {view.collapsed[workspace.id] ? (
+                  <Folder size={16} aria-hidden="true" />
+                ) : (
+                  <FolderOpen size={16} aria-hidden="true" />
+                )}
+                <strong>{workspace.name}</strong>
+                <span>{sessions.length}</span>
+              </CollapsibleTrigger>
+              <CollapsibleContent
+                className="session-workspace-items"
+                inert={Boolean(view.collapsed[workspace.id])}
+                aria-hidden={view.collapsed[workspace.id] || undefined}
+              >
+                {sessions.map((session) => (
+                  <Button
+                    variant="bare"
+                    size="content"
+                    key={session.id}
+                    data-session-entry
+                    className="session-directory-item"
+                    aria-current={hub.selected?.id === session.id ? "page" : undefined}
+                    onClick={() => hub.select(session.id)}
+                    title={[
+                      displaySessionTitle(session.title, tr),
+                      `${sessionAgentNames[session.agent]} · ${sessionRecordLabel(session, tr)}`,
+                      workspace.path,
+                      sessionSourceLabel(session, hub.sessions, tr, formatDateTime),
+                    ]
+                      .filter(Boolean)
+                      .join("\n")}
+                  >
+                    <AgentIcon agent={session.agent} compact />
+                    <span>
+                      <strong>{displaySessionTitle(session.title, tr)}</strong>
+                    </span>
+                    {isInteractiveFork(session) && (
+                      <GitBranch
+                        size={12}
+                        aria-label={`${tr("conversations.forked")}: ${sessionSourceLabel(session, hub.sessions, tr, formatDateTime)}`}
+                      />
+                    )}
+                  </Button>
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+          </Fragment>
         ))}
         {hub.enabled && !hub.loading && !groups.length && (
           <div className="session-directory-empty">

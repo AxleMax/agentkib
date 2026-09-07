@@ -58,7 +58,7 @@ describe("SettingsSidebar v9 navigation", () => {
     expect(screen.getByRole("button", { name: "Obsidian" })).toBeTruthy();
   });
 
-  it("shows only the back entry and six settings sections", () => {
+  it("shows only the back entry and seven settings sections", () => {
     const { container } = render(
       <ShortcutHelpProvider openShortcutHelp={() => undefined}>
         <SettingsSidebar
@@ -78,7 +78,8 @@ describe("SettingsSidebar v9 navigation", () => {
     expect(screen.getByRole("button", { name: "Back" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Tools & updates" })).toBeTruthy();
     expect(screen.getByRole("searchbox", { name: "Search settings…" })).toBeTruthy();
-    expect(screen.getAllByRole("button")).toHaveLength(8);
+    expect(screen.getAllByRole("button")).toHaveLength(9);
+    expect(screen.getByRole("button", { name: "Remote connections" })).toBeTruthy();
   });
 
   it("searches settings content and selects the matching target", () => {
@@ -166,7 +167,7 @@ describe("SettingsSidebar v9 navigation", () => {
   });
 
   it("recomputes search matches when the locale changes", async () => {
-    const view = render(
+    render(
       <ShortcutHelpProvider openShortcutHelp={() => undefined}>
         <SettingsSidebar
           active="general"
@@ -184,16 +185,9 @@ describe("SettingsSidebar v9 navigation", () => {
 
     try {
       await act(() => changeLocale("zh-CN"));
-      view.rerender(
-        <ShortcutHelpProvider openShortcutHelp={() => undefined}>
-          <SettingsSidebar
-            active="general"
-            onSelect={() => undefined}
-            onBack={() => undefined}
-            collapsed={false}
-          />
-        </ShortcutHelpProvider>,
-      );
+      expect(
+        screen.getByRole("searchbox", { name: tr("settings.search.placeholder") }),
+      ).toBeTruthy();
       expect(screen.getByText("没有匹配的设置")).toBeTruthy();
     } finally {
       await act(() => changeLocale("en-US"));

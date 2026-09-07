@@ -53,6 +53,31 @@ describe("session catalog", () => {
     expect(select("all")).toEqual(["archived", "readable", "metadata"]);
   });
 
+  it("keeps auxiliary records hidden independently of record filters until opted in", () => {
+    const auxiliary = {
+      ...sessions[0],
+      id: "auxiliary",
+      origin: "auxiliary" as const,
+      spawned_by_session_id: sessions[0].id,
+    };
+    const unknown = { ...sessions[0], id: "unknown", origin: undefined };
+    expect(
+      filterSessions([sessions[0], auxiliary, unknown], workspaces, {
+        query: "",
+        agent: "all",
+        filter: "all",
+      }).map(({ id }) => id),
+    ).toEqual(["readable", "unknown"]);
+    expect(
+      filterSessions([sessions[0], auxiliary, unknown], workspaces, {
+        query: "",
+        agent: "all",
+        filter: "all",
+        showAuxiliary: true,
+      }).map(({ id }) => id),
+    ).toEqual(["readable", "auxiliary", "unknown"]);
+  });
+
   it("combines title and workspace name search with Agent filters, without conflating names", () => {
     expect(
       filterSessions(sessions, workspaces, {

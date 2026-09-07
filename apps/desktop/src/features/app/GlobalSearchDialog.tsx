@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Dialog,
@@ -8,8 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, FileCode2, FolderGit2, Search, X } from "lucide-react";
-import { tr } from "@/core/i18n";
+import { ArrowLeft, FileCode2, FolderGit2, GitBranch, Search, X } from "lucide-react";
 import type { ConversationSessionSummary, WorkspaceSummary } from "@/core/types";
 import type { GlobalPage } from "./app-route";
 import type { SidebarEntry } from "@/components/AppSidebar";
@@ -17,10 +17,17 @@ import { useAppStore } from "@/stores/app-store";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { filterSessions } from "@/features/sessions/session-catalog";
 import { displaySessionTitle } from "@/features/workspace/session-title";
-import { sessionAgentNames, sessionRecordLabel } from "@/features/sessions/session-labels";
+import {
+  isInteractiveFork,
+  sessionAgentNames,
+  sessionRecordLabel,
+  sessionSourceLabel,
+} from "@/features/sessions/session-labels";
 import { AssetDetails } from "@/features/catalog/AssetDetails";
 import type { CatalogAssetGroup } from "@/features/catalog/catalog";
 import { useSearchSessions } from "./useSearchSessions";
+import { useRemoteCatalogEntries } from "@/features/remote/remote-catalog-store";
+import { useSessionViewStore } from "@/features/sessions/session-view-store";
 import { SEARCH_ASSET_LIMIT, useSearchAssets } from "./useSearchAssets";
 
 type Result = {
@@ -68,6 +75,7 @@ export function GlobalSearchDialog({
   onOpenSession: (session: ConversationSessionSummary) => void;
   onSessionSettings: () => void;
 }) {
+  const { formatDateTime, tr } = useI18n();
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string>();
   const [limits, setLimits] = useState<Record<string, number>>({});
@@ -78,14 +86,30 @@ export function GlobalSearchDialog({
   const wasOpen = useRef(false);
   const listId = useId();
   const runtime = useAppStore((state) => state.runtime);
+  const showAuxiliary = useSessionViewStore((state) => state.showAuxiliary);
   const enabled = runtime?.session_index_enabled === true;
   const sessions = useSearchSessions(workspaces, open && enabled);
+  const remote = useRemoteCatalogEntries();
+  const sessionWorkspaces = useMemo(
+    () => [...workspaces, ...remote.workspaces],
+    [workspaces, remote.workspaces],
+  );
   const assets = useSearchAssets(query, open);
   const term = query.trim().toLocaleLowerCase();
   const matchingSessions = useMemo(
     () =>
-      filterSessions(sessions.sessions, workspaces, { query: term, agent: "all", filter: "all" }),
-    [sessions.sessions, workspaces, term],
+      filterSessions(
+        [...sessions.sessions, ...remote.sessions],
+        sessionWorkspaces,
+        {
+          query: term,
+          agent: "all",
+          filter: "all",
+          showAuxiliary,
+        },
+        tr,
+      ),
+    [sessions.sessions, remote.sessions, sessionWorkspaces, term, tr, showAuxiliary],
   );
   const close = () => onOpenChange(false);
   useEffect(() => {
@@ -105,21 +129,42 @@ export function GlobalSearchDialog({
     action();
   };
   const workspaceName = (id?: string) =>
-    workspaces.find((workspace) => workspace.id === id)?.name ?? "—";
+    sessionWorkspaces.find((workspace) => workspace.id === id)?.name ?? "—";
   const groups: { id: string; title: string; results: Result[] }[] = [
     {
       id: "sessions",
       title: tr("sessions.nav"),
       results: matchingSessions.map((session) => ({
         id: "session:" + session.workspace_id + ":" + session.id,
-        label: displaySessionTitle(session.title),
-        title: workspaces.find((workspace) => workspace.id === session.workspace_id)?.path,
+        label: displaySessionTitle(session.title, tr),
+        title: [
+          sessionWorkspaces.find((workspace) => workspace.id === session.workspace_id)?.path,
+          sessionSourceLabel(
+            session,
+            [...sessions.sessions, ...remote.sessions],
+            tr,
+            formatDateTime,
+          ),
+        ]
+          .filter(Boolean)
+          .join("\n"),
         description: [
+          ...(session.remote ? [session.remote.host_name] : []),
           workspaceName(session.workspace_id),
           sessionAgentNames[session.agent],
-          sessionRecordLabel(session),
+          sessionRecordLabel(session, tr),
         ].join(" · "),
-        icon: <AgentIcon agent={session.agent} compact />,
+        icon: (
+          <span className="inline-flex items-center gap-1">
+            <AgentIcon agent={session.agent} compact />
+            {isInteractiveFork(session) && (
+              <GitBranch
+                size={12}
+                aria-label={`${tr("conversations.forked")}: ${sessionSourceLabel(session, [...sessions.sessions, ...remote.sessions], tr, formatDateTime)}`}
+              />
+            )}
+          </span>
+        ),
         select: () => openResult(() => onOpenSession(session)),
       })),
     },
