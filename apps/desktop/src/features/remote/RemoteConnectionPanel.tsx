@@ -28,6 +28,7 @@ import {
 } from "@/features/settings/components/SettingsLayout";
 import { useI18n } from "@/core/useI18n";
 import { useRemoteStore } from "./remote-store";
+import { RemoteErrorDetails } from "./RemoteErrorDetails";
 
 function useRemoteStatus() {
   const store = useRemoteStore();
@@ -44,17 +45,16 @@ function useRemoteStatus() {
 }
 
 function RemoteFeedback() {
-  const { tr, localizeMessage } = useI18n();
+  const { tr } = useI18n();
   const { loading, error: rawError, refresh, clearError } = useRemoteStore();
-  const error = rawError === "" ? "" : localizeMessage(rawError);
   return (
     <>
       {loading && !useRemoteStore.getState().snapshot && (
         <p role="status">{tr("remote.loading")}</p>
       )}
-      {error && (
+      {rawError !== "" && (
         <SettingsNotice tone="error" inset={false} role="alert">
-          <span className="min-w-0 flex-1 break-words">{error}</span>
+          <RemoteErrorDetails error={rawError} />
           <Button variant="outline" onClick={() => void refresh()}>
             {tr("remote.retry")}
           </Button>

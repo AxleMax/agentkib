@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { changeLocale, initializeI18n, localizeMessage, tr } from "@/core/i18n";
+import { changeLocale, initializeI18n, tr } from "@/core/i18n";
 import type { RemoteStatus } from "@/core/remote-types";
 import { RemoteConnectionPanel, RemoteConnectionSettings } from "./RemoteConnectionPanel";
 import { useRemoteStore } from "./remote-store";
@@ -34,19 +34,30 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("remote connections UI", () => {
+  it("shows friendly feedback for a real wrapped IPC error in the quick panel", () => {
+    const failure = new Error("Error invoking remote method 'agentkib:remote:request': REMOTE_PAIRING_INVALID");
+    useRemoteStore.setState({ error: failure, operationError: true });
+    render(<RemoteConnectionPanel open onOpenChange={vi.fn()} onSettings={vi.fn()} />);
+    expect(screen.getByRole("alert").textContent).toContain(tr("remote.error.pairing"));
+    expect(screen.getByRole("alert").textContent).not.toContain("REMOTE_PAIRING_INVALID");
+    fireEvent.click(screen.getByRole("button", { name: tr("errors.details") }));
+    expect(screen.getByRole("alert").textContent).toContain(failure.message);
+    expect(useRemoteStore.getState().error).toBe(failure);
+  });
   it("retranslates a displayed structured error in all four languages and still clears it", async () => {
     const failure = { key: "errors.generic", detail: "REMOTE_PAIRING_DENIED" };
     useRemoteStore.setState({ error: failure, operationError: true });
     render(<RemoteConnectionSettings />);
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain(localizeMessage(failure));
+    expect(alert.textContent).toContain(tr(failure.key));
+    expect(alert.textContent).not.toContain(failure.detail);
 
     try {
       for (const locale of ["zh-CN", "zh-TW", "ja-JP", "en-US"] as const) {
         await act(() => changeLocale(locale));
         expect(screen.getByRole("alert")).toBe(alert);
-        expect(alert.textContent).toContain(localizeMessage(failure));
-        expect(alert.textContent).toContain("REMOTE_PAIRING_DENIED");
+        expect(alert.textContent).toContain(tr(failure.key));
+        expect(alert.textContent).not.toContain(failure.detail);
         expect(useRemoteStore.getState().error).toBe(failure);
       }
       fireEvent.click(screen.getByRole("button", { name: tr("common.close") }));
@@ -87,7 +98,7 @@ describe("remote connections UI", () => {
     });
     render(<RemoteConnectionSettings />);
     fireEvent.click(screen.getByRole("button", { name: "Digits match — approve" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Approval failed"));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(tr("remote.error.request")));
     expect(run).toHaveBeenCalledTimes(1);
     expect(useRemoteStore.getState().snapshot?.authorized).toEqual([]);
     expect(useRemoteStore.getState().snapshot?.pending).toEqual([pending]);

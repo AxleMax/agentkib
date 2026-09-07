@@ -4,7 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/core/api";
-import { initializeI18n } from "@/core/i18n";
+import { initializeI18n, tr } from "@/core/i18n";
 import type { ConversationSessionSummary, RuntimeInfo, WorkspaceSummary } from "@/core/types";
 import { useAppStore } from "@/stores/app-store";
 import { useSessionHub } from "./SessionHubContext";
@@ -99,6 +99,23 @@ describe("SessionHubPage", () => {
     vi.mocked(api.setSessionIndexEnabled).mockReset();
   });
   afterEach(cleanup);
+
+  it("localizes remote catalog failures without exposing RPC text by default", () => {
+    hub.remoteHosts = [{
+      id: "remote-host",
+      name: "QA Host",
+      address: "192.168.1.20:42987",
+      status: "offline",
+      last_seen: null,
+      error: null,
+    }];
+    hub.remoteErrors = { "remote-host": "RuntimeRequestError: REMOTE_OFFLINE" };
+    render(<SessionHubPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent(tr("remote.error.offline"));
+    expect(screen.getByRole("alert")).not.toHaveTextContent("RuntimeRequestError");
+    fireEvent.click(screen.getByRole("button", { name: tr("errors.details") }));
+    expect(screen.getByRole("alert")).toHaveTextContent("RuntimeRequestError: REMOTE_OFFLINE");
+  });
 
   it("shows the four filtered-history metrics and no live-control affordances", () => {
     render(<SessionHubPage />);

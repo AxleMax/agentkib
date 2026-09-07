@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AgentIcon } from "@/features/agents/AgentIcon";
+import { RemoteErrorDetails } from "@/features/remote/RemoteErrorDetails";
 import { displaySessionTitle } from "@/features/workspace/session-title";
 import { api } from "@/core/api";
 import { DEFAULT_SESSION_PAGE_SIZE } from "@/core/session-history";
@@ -170,7 +171,7 @@ export function SessionHubPage() {
             (host.status !== "online" || hub.remoteErrors?.[host.id]) && (
               <Notice key={host.id} error={!!hub.remoteErrors?.[host.id]}>
                 {host.name} · {tr(`remote.state.${host.status}`)}
-                {hub.remoteErrors?.[host.id] && <p>{localizeMessage(hub.remoteErrors[host.id])}</p>}
+                {hub.remoteErrors?.[host.id] && <RemoteErrorDetails error={hub.remoteErrors[host.id]} />}
               </Notice>
             ),
         )}
