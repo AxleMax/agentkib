@@ -144,3 +144,86 @@ final result: passed
 - Responsive behavior was checked at the application's minimum-width constraint (`minWidth: 1280`); no horizontal overflow or clipped controls were observed. The settings grid and management columns collapse through their existing responsive breakpoints.
 
 final result: passed
+
+## v14 local session hub — 2026-09-07
+
+**Scope and reference**
+
+- Implemented the approved local-history stage, not the remote-control design: one 360 px directory within the existing navigation rail, filtered local overview, and in-place historical conversation reading.
+- References: `designs/agentkib-v14-previews/40-aggregate-default.png` and `41-remote-live-chat.png`.
+- Retained the production macOS window controls, breadcrumb, global navigation, tools group, typography tokens and Agent icons. These occupy more vertical space than the simplified Pen shell. Directory and conversation scrolling remain independent.
+- Replaced the reference's remote-client selector, running/approval counts, permissions and composer with verified local record states, index statuses, a history notice and the existing workspace-continuation entry. No remote devices, live controls or fabricated execution states were added.
+
+**Real Electron verification**
+
+- Used an isolated temporary AgentKib Home, Chromium profile and synthetic Codex/Claude records across three registered workspaces, including two workspaces with the same name. No real user transcripts or project paths were used.
+- Captured the actual 1360 × 860 window without OS shadows at 2×: `qa/sessions-v14/overview-light-1360.png`, `history-light-1360.png`, and `overview-dark-1360.png`.
+- Also inspected the native zoomed 2056 × 1204 dark window: `qa/sessions-v14/overview-dark-wide.png`. Four metrics and the two overview panels remain readable; the directory stays in the original rail.
+- Verified current/all filtering (4 current; 6 total, 5 readable, 1 archived, 1 metadata-only), title search, empty results and reset. Excluding the selected record returns to the overview.
+- Opened metadata-only history: descriptive empty state, no transcript and no continuation action. Opened readable history: messages, saved tool summaries and an explicit non-live notice, without a composer.
+- Opened “More”: Settings is enabled; Remote connection is disabled and exposes “Not available yet.” Settings navigation and switching back preserve the directory state. Restored the isolated app to light theme.
+- Activated “Continue in workspace” and verified that the original workspace session page opened with the intended session selected. No continuation command was executed during QA.
+
+**Visual comparison**
+
+- Examined combined reference/implementation images at the same 1360 × 860 layout scale: `qa/sessions-v14/comparison-overview.png` and `comparison-history.png`.
+- Examined the focused sidebar/header crop in `qa/sessions-v14/comparison-focus.png`: one rail, aligned directory width, existing neutral tokens and icons, readable 14 px directory/body text, consistent control radii and no overlapping controls.
+- The actual history is longer than the Pen sample and correctly scrolls vertically. The overview panels size to real content rather than reserving space for remote approvals.
+- The initial exploratory comparison used an OS-shadow capture and is not a valid pixel-alignment reference; only the final no-shadow comparisons above are used for acceptance.
+
+**Problems found and corrected**
+
+- Real refresh initially failed because upstream discovery registered OpenCode while the store accepted only Codex/Claude. Aligned the store check with registered conversation providers and verified a successful refresh in Electron. No RPC or database schema changed.
+- Independent data review found two deep-link races: a retry clearing errors before recovery, and the first render after re-enabling indexing. Both were corrected and covered by regression tests.
+- Automated tests also cover concurrency capped at four, cached results on partial failure, index-off behavior, stale history/pagination requests, duplicate workspace names, navigation and the disabled remote entry.
+
+**Validation and remaining coverage**
+
+- `pnpm test`: 56 files / 306 tests passed.
+- `pnpm typecheck`, `pnpm build`, `cargo fmt --all -- --check`, `cargo test -p agentkib-store` (34 tests), and `git diff --check` passed.
+- The checked 1360 px light/dark and native wide-window states pass visual review. Exact 1440 × 920 and sub-1024 drawer viewport captures remain unverified: the native automation did not resize to the requested dimensions, and production Electron retains its existing 1280 px minimum width. Responsive drawer structure has automated coverage, but that is not a substitute for its remaining rendered narrow-viewport acceptance.
+
+final result: implementation and verified desktop states passed; exact-size/narrow visual coverage remains pending
+
+### Session overview header correction — 2026-09-07
+
+- Source: user-annotated `codex-clipboard-19012e84-17cb-4b7e-95c8-565c0f758e49.png` (2560 × 1578), identifying the duplicate page-heading band below the shared “Sessions” toolbar.
+- P2 corrected: removed the overview-only title, matching-record subtitle and duplicate content refresh button. The existing window toolbar and directory refresh remain; a selected conversation still has its identifying title, back action and workspace continuation.
+- Real Electron capture: `qa/sessions-v14/overview-header-simplified.png`, 1280 × 789 CSS px / 2560 × 1578 at 2×. Compared the same light-theme overview and fixture counts against the supplied image, normalized to 1280 × 789 per side.
+- Full comparison: `qa/sessions-v14/comparison-header-simplified.png`; focused header comparison: `qa/sessions-v14/comparison-header-focus.png`.
+- Typography, neutral colors, Agent icons, sidebar geometry and metric content are unchanged. The removed band allows the existing content to move upward; no replacement heading or empty spacer was introduced. No new image assets were needed.
+- Verified one refresh button in the overview, selected-history title/continuation still present, and successful return to overview. No overlap or clipping was found in this scoped correction.
+- Validation: 14 related UI tests passed; `pnpm typecheck` and `git diff --check` passed. This local correction does not close the earlier exact-size/narrow-viewport coverage gap for the broader feature.
+
+final result: passed
+
+### Unified global search and compact session directory — 2026-09-07
+
+- Moved global search to the primary sidebar brand row and settings Back row. The settings-only search remains separate; the right toolbar no longer duplicates global search. Verified the visible fallback while the primary sidebar is collapsed.
+- The directory now has only its compact label and options menu above workspace groups. Agent/record filters are in submenus, with removable non-default chips. Verified reset from an archived search result returns to the current-record overview.
+- Search groups indexed sessions, registered workspaces, logical assets and pages. Verified keyboard selection from Settings into an archived session, same-name workspaces with distinct paths, asset metadata details and return to the unchanged query. No asset file is executed or read by these interactions.
+- Read-only search loaders have regression coverage for disabled indexing, max-four concurrency, cached records, partial errors, retry, stale requests and logical asset merging. The backend caps catalog results at 500; reaching that cap now produces a limitation notice instead of claiming complete results.
+- Independent review caught popup/portal layers below the floating sidebar, hidden focus restoration targets and directory peek closing while a submenu was open. Search uses overlay/popup layers 100/101; only sidebar menu positioners use 80. Regression tests cover these layers, focus fallback, combobox keyboard behavior and closing mobile drawers when global search opens.
+- Real Electron QA used the existing isolated synthetic workspace fixture and its 1280 × 789 window. Light/dark search, asset detail, directory menu and collapsed navigation were inspected; the temporary profile was restored to light mode and the current-record overview. Capture files (2784 × 1802 PNG including the native window shadow): `qa/sessions-v14/search-sidebar-light.png`, `search-dialog-light.png`, `search-dialog-dark.png`, `search-asset-detail.png`, `search-directory-menu.png`.
+- A development hot-reload context error (`SessionHubProvider is required`) occurred while editing the shared root/sidebar modules. After full renderer reload, the Settings → global search → archived-session path was retested successfully. This was not treated as a successful HMR test.
+- Validation: final `pnpm test`, `pnpm typecheck`, `pnpm build` and `git diff --check` all passed. Existing Node localstorage warnings remain non-failing. No commit, PR, production dependency, Rust RPC or database changes were introduced by this search work.
+- Remaining visual coverage: sub-1024 viewport/drawer rendering could not be verified in the native window because `MAIN_WINDOW_MIN_WIDTH` is 1280. Responsive structure, drawer closure and overlay layers have automated/static coverage; this is not a substitute for a rendered narrow-viewport check. Native minimum sizing was not changed just for QA.
+
+final result: implemented and verified at the available desktop size in both themes; narrow-viewport visual acceptance remains pending
+
+### Sidebar search placement and stable width correction — 2026-09-07
+
+- Removed the session-route 360px sidebar override. Sessions now inherits the same 224px width as the other primary pages, including the expanded floating sidebar.
+- Search remains in the original sidebar header and hides with it; removed the extra window-navigation search button and its reserved spacing. Keyboard search remains available. When the original search trigger is hidden, closing the dialog can restore focus to the existing sidebar toggle.
+- Real Electron QA at 1280 × 789 confirmed matching sidebar boundaries when switching Today → Sessions, no extra search icon when collapsed, successful ⌘K search, and Escape focus restoration to Expand sidebar. Restored the expanded session overview afterward.
+- Validation: the full frontend suite passed (59 files, 340 tests); after the focus adjustment, the AppShell/global-search regression tests and typecheck were rerun. No backend, protocol or persisted settings changes; no commit created.
+- This supersedes the earlier collapsed-search fallback behavior, not the outstanding narrow-viewport coverage limitation.
+
+final result: passed for this scoped correction
+
+### Session directory final simplification — 2026-09-07
+
+- Session rows retain only the Agent icon and title; Agent/record metadata remains in the hover description.
+- Workspace groups use closed/open folder icons without a separate chevron. Full-row activation and accessible expanded state remain intact.
+- Selected sessions use only the existing background highlight, without the inset edge. Removed the directory footer refresh action; the history detail refresh remains available.
+- Updated directory regression coverage for folder state and removal of the footer action. Directory/history tests (15 tests), typecheck and whitespace checks passed. These scoped changes have automated coverage; no new full visual acceptance is claimed.

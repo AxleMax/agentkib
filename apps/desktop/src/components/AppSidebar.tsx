@@ -1,17 +1,25 @@
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useEffect, useId, useState, type ComponentType } from "react";
 import {
   Bot,
   Boxes,
   ChevronDown,
   Code2,
+  Ellipsis,
   FolderGit2,
   GitCommitHorizontal,
   GitCompareArrows,
   LayoutDashboard,
   Menu,
   MessageSquareText,
+  MonitorSmartphone,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -19,6 +27,7 @@ import {
 import { tr } from "../core/i18n";
 import { cn } from "@/lib/utils";
 import { SidebarBrand } from "./SidebarBrand";
+import { SidebarSearchButton } from "./SidebarSearchButton";
 import { useAppStore } from "@/stores/app-store";
 import { clearSidebarPeekCloseTimer, scheduleSidebarPeekClose } from "@/features/app/sidebar-peek";
 import {
@@ -29,6 +38,7 @@ import {
 } from "@/core/keyboard-shortcuts";
 import type { WorkspaceSummary } from "@/core/types";
 import type { GlobalPage, Page } from "@/features/app/app-route";
+import { SessionDirectory } from "@/features/sessions/SessionDirectory";
 
 export interface SidebarEntry<T extends string> {
   id: T;
@@ -41,6 +51,7 @@ export interface SidebarEntry<T extends string> {
 export type AgentFilter = "all" | "enabled" | "available";
 
 export type AppSidebarContext =
+  | { kind: "sessions" }
   | {
       kind: "global";
       recentWorkspaces: WorkspaceSummary[];
@@ -86,12 +97,19 @@ export function AppSidebar(props: {
   entries: SidebarEntry<GlobalPage>[];
   onNavigate: (page: GlobalPage) => void;
   onSettings: () => void;
+  onOpenSearch?: () => void;
+  searchOpen?: boolean;
   collapsed: boolean;
   context?: AppSidebarContext;
   onCollapsedChange?: (collapsed: boolean) => void;
 }) {
   const { active, entries, onNavigate, onSettings, collapsed, context } = props;
   const [mobileOpen, setMobileOpen] = useState(false);
+  useEffect(() => {
+    if (props.searchOpen) setMobileOpen(false);
+  }, [props.searchOpen]);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [directoryMenuOpen, setDirectoryMenuOpen] = useState(false);
   const sidebarPeek = useAppStore((state) => state.sidebarPeek);
   const setSidebarPeek = useAppStore((state) => state.setSidebarPeek);
   const [toolsOpen, setToolsOpen] = useState(
@@ -103,7 +121,7 @@ export function AppSidebar(props: {
   );
   const sidebarId = useId();
   const platform = currentAppPlatform();
-  const primaryIds: GlobalPage[] = ["home", "workspaces", "agents"];
+  const primaryIds: GlobalPage[] = ["home", "workspaces", "agents", "sessions"];
   const toolIds: GlobalPage[] = ["catalog", "quota", "insights"];
   const primaryEntries = entries.filter((entry) => primaryIds.includes(entry.id));
   const toolEntries = entries.filter((entry) => toolIds.includes(entry.id));
@@ -124,9 +142,13 @@ export function AppSidebar(props: {
   };
 
   const handleSidebarMouseLeave = () => {
-    if (!collapsed) return;
+    if (!collapsed || moreOpen || directoryMenuOpen) return;
     scheduleSidebarPeekClose(setSidebarPeek);
   };
+
+  useEffect(() => {
+    if (context?.kind !== "sessions") setDirectoryMenuOpen(false);
+  }, [context?.kind]);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -203,6 +225,7 @@ export function AppSidebar(props: {
         id={sidebarId}
         className={cn(
           "app-sidebar",
+          context?.kind === "sessions" && "app-sidebar-sessions",
           collapsed && "app-sidebar-collapsed",
           collapsed && sidebarPeek && "app-sidebar-peek",
           mobileOpen && "app-sidebar-open",
@@ -212,7 +235,10 @@ export function AppSidebar(props: {
       >
         <div className="app-sidebar-content">
           <div className="app-sidebar-header">
-            <SidebarBrand />
+            <div className="app-sidebar-header-row">
+              <SidebarBrand />
+              {props.onOpenSearch && <SidebarSearchButton onOpenSearch={props.onOpenSearch} />}
+            </div>
           </div>
           <nav className="app-sidebar-nav" aria-label={tr("common.primaryNavigation")}>
             <div className="app-sidebar-group">{primaryEntries.map(renderNavigationEntry)}</div>
@@ -362,27 +388,81 @@ export function AppSidebar(props: {
               </div>
             </Collapsible>
           </nav>
-          <div className="app-sidebar-footer">
-            <Button
-              variant="bare"
-              size="content"
-              className="app-sidebar-item app-sidebar-settings-entry"
-              type="button"
-              aria-label={tr("nav.settings")}
-              title={tr("nav.settings")}
-              aria-keyshortcuts={ariaShortcut(getShortcutDefinition("open-settings"), platform)}
-              onClick={() => {
-                setMobileOpen(false);
-                onSettings();
+          {context?.kind === "sessions" && (
+            <div
+              className="app-sidebar-session-directory"
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest("[data-session-entry]")) {
+                  setMobileOpen(false);
+                }
               }}
             >
-              <span className="app-sidebar-item-icon">
-                <Settings size={18} />
-              </span>
-              <span className="app-sidebar-item-label min-w-0 flex-1 text-left">
-                <strong>{tr("nav.settings")}</strong>
-              </span>
-            </Button>
+              <SessionDirectory
+                onMenuOpenChange={(open) => {
+                  setDirectoryMenuOpen(open);
+                  if (open) clearSidebarPeekCloseTimer();
+                  else if (collapsed && !moreOpen) scheduleSidebarPeekClose(setSidebarPeek);
+                }}
+              />
+            </div>
+          )}
+          <div className="app-sidebar-footer">
+            <DropdownMenu
+              open={moreOpen}
+              onOpenChange={(open) => {
+                setMoreOpen(open);
+                if (open) clearSidebarPeekCloseTimer();
+                else if (collapsed && !directoryMenuOpen) scheduleSidebarPeekClose(setSidebarPeek);
+              }}
+            >
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="bare"
+                    size="content"
+                    className="app-sidebar-item app-sidebar-more-entry"
+                    type="button"
+                    aria-label={tr("sessions.more")}
+                    title={tr("sessions.more")}
+                  />
+                }
+              >
+                <span className="app-sidebar-item-icon">
+                  <Ellipsis size={18} />
+                </span>
+                <span className="app-sidebar-item-label min-w-0 flex-1 text-left">
+                  {tr("sessions.more")}
+                </span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                side="top"
+                align="start"
+                className="min-w-48"
+                positionerClassName="z-80"
+              >
+                <DropdownMenuItem
+                  aria-keyshortcuts={ariaShortcut(getShortcutDefinition("open-settings"), platform)}
+                  onClick={() => {
+                    setMobileOpen(false);
+                    onSettings();
+                  }}
+                >
+                  <Settings size={17} />
+                  {tr("nav.settings")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled
+                  aria-describedby={`${sidebarId}-remote-unavailable`}
+                  title={tr("sessions.remoteUnavailable")}
+                >
+                  <MonitorSmartphone size={17} />
+                  {tr("sessions.remote")}
+                </DropdownMenuItem>
+                <span id={`${sidebarId}-remote-unavailable`} className="sr-only">
+                  {tr("sessions.remoteUnavailable")}
+                </span>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </aside>

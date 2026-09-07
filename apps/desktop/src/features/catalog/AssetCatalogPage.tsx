@@ -33,6 +33,7 @@ import { useEffect, useMemo, useState } from "react";
 import { tr } from "@/core/i18n";
 import type { AgentKind, WorkspaceSummary } from "@/core/types";
 import type { CatalogAssetGroup } from "@/features/catalog/catalog";
+import { AssetDetails } from "./AssetDetails";
 
 const agentLabels: Record<AgentKind, string> = {
   codex: "Codex",
@@ -527,46 +528,7 @@ export function AssetCatalogPage({ assets, workspaces, onOpen }: AssetCatalogPag
               </Button>
             </header>
             <div className="overflow-y-auto px-5 py-4">
-              {selected.summary && (
-                <p className="mb-4 leading-6 text-muted-foreground">{selected.summary}</p>
-              )}
-              <dl className="grid gap-4">
-                <div className="grid gap-1.5">
-                  <dt className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">
-                    {tr("catalog.type")}
-                  </dt>
-                  <dd className="text-sm font-medium text-foreground">
-                    {tr(`status.asset.${selected.kind}`)}
-                  </dd>
-                </div>
-                <div className="grid gap-1.5">
-                  <dt className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">
-                    {tr("catalog.workspace")}
-                  </dt>
-                  <dd className="text-sm font-medium text-foreground">
-                    {workspaceName(selected.workspace_id)}
-                  </dd>
-                </div>
-                <div className="grid gap-1.5">
-                  <dt className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">
-                    {tr("catalog.visibleAgents")}
-                  </dt>
-                  <dd className="text-sm font-medium text-foreground">
-                    {[
-                      ...selected.agents.map((value) => agentLabels[value]),
-                      ...(selected.shared ? [tr("catalog.shared")] : []),
-                    ].join(" · ")}
-                  </dd>
-                </div>
-                <div className="grid gap-1.5">
-                  <dt className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">
-                    {tr("catalog.path")}
-                  </dt>
-                  <dd className="break-all font-mono text-xs leading-5 text-muted-foreground">
-                    {selected.path}
-                  </dd>
-                </div>
-              </dl>
+              <AssetDetails asset={selected} workspaceName={workspaceName(selected.workspace_id)} />
             </div>
             {selected.workspace_id && (
               <Button

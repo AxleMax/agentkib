@@ -724,7 +724,7 @@ impl Store {
         agent: AgentKind,
         sessions: &[NativeSessionSummary],
     ) -> Result<Vec<ConversationSessionSummary>> {
-        if !matches!(agent, AgentKind::Codex | AgentKind::ClaudeCode) {
+        if agentkib_conversations::provider(agent).is_none() {
             bail!("Conversation indexing is not supported for this Agent");
         }
         self.get_workspace(workspace_id)?
@@ -3832,6 +3832,91 @@ mod tests {
             )
             .unwrap();
         assert!(exists);
+    }
+
+    #[test]
+    fn conversation_index_accepts_every_registered_provider() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        let providers = agentkib_conversations::providers();
+
+        for provider in &providers {
+            assert!(
+                store
+                    .sync_conversation_sessions(&registered.id, provider.agent(), &[])
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        let statuses = store.conversation_index_status(&registered.id).unwrap();
+        assert_eq!(statuses.len(), providers.len());
+        for provider in providers {
+            assert!(statuses.iter().any(|status| {
+                status.agent == provider.agent() && status.freshness == SessionIndexFreshness::Fresh
+            }));
+        }
+    }
+
+    #[test]
+    fn conversation_index_round_trips_opencode_and_rejects_unsupported_agents() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        let timestamp = Utc::now();
+        let native_ref = "opencode-native-session";
+        let session = NativeSessionSummary {
+            native_ref: native_ref.into(),
+            agent: AgentKind::OpenCode,
+            title: Some("OpenCode cached session".into()),
+            created_at: Some(timestamp),
+            updated_at: Some(timestamp),
+            message_count: Some(3),
+            git_branch: Some("main".into()),
+            archived: false,
+            sidechain: false,
+            availability: agentkib_conversations::SessionAvailability::Readable,
+        };
+        let indexed = store
+            .sync_conversation_sessions(&registered.id, AgentKind::OpenCode, &[session])
+            .unwrap();
+        assert_eq!(indexed.len(), 1);
+        let stored = store
+            .get_conversation_session(&indexed[0].id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.agent, AgentKind::OpenCode);
+        assert_eq!(stored.workspace_id, registered.id);
+        assert_eq!(stored.title.as_deref(), Some("OpenCode cached session"));
+        assert_eq!(stored.message_count, Some(3));
+        assert_eq!(stored.updated_at, Some(timestamp));
+        assert_ne!(stored.id, native_ref);
+        assert_eq!(
+            stored.id,
+            store
+                .conversation_id(AgentKind::OpenCode, native_ref)
+                .unwrap()
+        );
+
+        let error = store
+            .sync_conversation_sessions(&registered.id, AgentKind::Cursor, &[])
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Conversation indexing is not supported for this Agent"
+        );
+        assert_eq!(
+            store
+                .list_conversation_sessions(&registered.id)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

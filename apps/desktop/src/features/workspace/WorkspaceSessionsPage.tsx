@@ -2,7 +2,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { MarkdownContent } from "@/components/MarkdownContent";
+import { ConversationEventRow } from "@/features/sessions/ConversationEventRow";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +15,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ArrowLeft,
-  Bot,
   Check,
   ChevronRight,
   CircleAlert,
@@ -27,8 +26,6 @@ import {
   RefreshCw,
   Search,
   X,
-  UserRound,
-  Wrench,
 } from "lucide-react";
 import { api } from "@/core/api";
 import { AgentIcon } from "@/features/agents/AgentIcon";
@@ -683,64 +680,9 @@ export function WorkspaceSessionsPage({
   );
 }
 
-function ConversationEventRow({ event }: { event: ConversationEvent }) {
-  if (event.kind === "tool-summary") {
-    return (
-      <div className="flex min-h-[38px] items-center gap-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-xs text-muted-foreground shadow-xs">
-        <span className="grid size-5 place-items-center rounded-md bg-muted">
-          <Wrench size={12} />
-        </span>
-        <strong className="text-foreground">{event.tool_name || tr("conversations.tool")}</strong>
-        <span>{tr(`conversations.toolStatus.${event.tool_status ?? "unknown"}`)}</span>
-        {(event.timestamp || event.duration_ms != null) && (
-          <time className="ml-auto text-[11px]">
-            {event.timestamp ? formatDateTime(event.timestamp) : ""}
-            {event.timestamp && event.duration_ms != null ? " · " : ""}
-            {event.duration_ms != null ? formatDuration(event.duration_ms) : ""}
-          </time>
-        )}
-      </div>
-    );
-  }
-  const isUser = event.kind === "user-message";
-  return (
-    <article
-      className={`max-w-[min(820px,92%)] self-start rounded-2xl border px-4 py-3.5 shadow-xs ${isUser ? "ml-auto border-primary bg-primary text-primary-foreground" : "border-border/70 bg-card text-foreground"}`}
-    >
-      <header
-        className={`mb-2.5 flex items-center gap-1.5 text-xs ${isUser ? "text-primary-foreground/70" : "text-muted-foreground"}`}
-      >
-        {isUser ? <UserRound size={14} /> : <Bot size={14} />}
-        <strong className={isUser ? "text-primary-foreground" : "text-foreground"}>
-          {tr(isUser ? "conversations.you" : "conversations.agent")}
-        </strong>
-        {event.timestamp && <time className="ml-auto">{formatDateTime(event.timestamp)}</time>}
-      </header>
-      <MarkdownContent
-        content={event.content ?? ""}
-        className="select-text text-sm leading-7 [overflow-wrap:anywhere]"
-      />
-      {(event.attachment_count > 0 || event.truncated) && (
-        <footer
-          className={`mt-3 flex gap-2 text-xs ${isUser ? "text-primary-foreground/70" : "text-muted-foreground"}`}
-        >
-          {event.attachment_count > 0 && (
-            <span>{tr("conversations.attachments", { count: event.attachment_count })}</span>
-          )}
-          {event.truncated && <span>{tr("conversations.contentTruncated")}</span>}
-        </footer>
-      )}
-    </article>
-  );
-}
-
 export interface SessionContinuationResume {
   sessionId: string;
   targetAgent: AgentKind;
   historyBudgetTokens: number;
   format: import("@/core/types").HandoffFormat;
-}
-
-function formatDuration(milliseconds: number) {
-  return milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
 }

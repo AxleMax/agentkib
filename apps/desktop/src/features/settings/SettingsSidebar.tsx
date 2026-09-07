@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SidebarSearchButton } from "@/components/SidebarSearchButton";
 import { useEffect, useId, useState, type ComponentType } from "react";
 import {
   ArrowLeft,
@@ -197,12 +198,17 @@ export function SettingsSidebar(props: {
   activeTarget?: SettingsTarget;
   onSelect: (section: SettingsSection, target?: SettingsTarget) => void;
   onBack: () => void;
+  onOpenSearch?: () => void;
+  searchOpen?: boolean;
   onSettings?: () => void;
   collapsed: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
 }) {
   const { active, activeTarget, onSelect, onBack, collapsed } = props;
   const [mobileOpen, setMobileOpen] = useState(false);
+  useEffect(() => {
+    if (props.searchOpen) setMobileOpen(false);
+  }, [props.searchOpen]);
   const [query, setQuery] = useState("");
   const sidebarPeek = useAppStore((state) => state.sidebarPeek);
   const setSidebarPeek = useAppStore((state) => state.setSidebarPeek);
@@ -287,24 +293,27 @@ export function SettingsSidebar(props: {
       >
         <div className="app-sidebar-content">
           <div className="app-sidebar-header">
-            <Button
-              variant="bare"
-              size="content"
-              className="app-sidebar-item app-sidebar-back-item app-settings-back"
-              type="button"
-              title={tr("settings.backToApp")}
-              onClick={() => {
-                setMobileOpen(false);
-                onBack();
-              }}
-            >
-              <span className="app-sidebar-item-icon">
-                <ArrowLeft size={18} />
-              </span>
-              <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
-                {tr("settings.backToApp")}
-              </span>
-            </Button>
+            <div className="app-sidebar-header-row">
+              <Button
+                variant="bare"
+                size="content"
+                className="app-sidebar-item app-sidebar-back-item app-settings-back"
+                type="button"
+                title={tr("settings.backToApp")}
+                onClick={() => {
+                  setMobileOpen(false);
+                  onBack();
+                }}
+              >
+                <span className="app-sidebar-item-icon">
+                  <ArrowLeft size={18} />
+                </span>
+                <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
+                  {tr("settings.backToApp")}
+                </span>
+              </Button>
+              {props.onOpenSearch && <SidebarSearchButton onOpenSearch={props.onOpenSearch} />}
+            </div>
             <label className="relative block">
               <Search
                 size={16}

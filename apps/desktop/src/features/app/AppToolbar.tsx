@@ -1,4 +1,3 @@
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,16 +8,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { formatShortcut, getShortcutDefinition } from "@/core/keyboard-shortcuts";
 import { tr } from "@/core/i18n";
-import { CircleHelp, MoreHorizontal, RefreshCw, Search } from "lucide-react";
+import { CircleHelp, MoreHorizontal, RefreshCw } from "lucide-react";
 
 export function AppToolbar({
   breadcrumb,
-  onOpenSearch,
   onRefresh,
   onOpenHelp,
 }: {
   breadcrumb: string[];
-  onOpenSearch: () => void;
   onRefresh: () => void;
   onOpenHelp: () => void;
 }) {
@@ -33,17 +30,6 @@ export function AppToolbar({
         ))}
       </div>
       <div className="app-toolbar-actions">
-        <Button
-          variant="bare"
-          size="content"
-          className="app-toolbar-search"
-          type="button"
-          onClick={onOpenSearch}
-        >
-          <Search size={14} />
-          <span>{tr("search.open")}</span>
-          <kbd>{formatShortcut(getShortcutDefinition("open-search"))}</kbd>
-        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
             className="app-toolbar-more"

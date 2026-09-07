@@ -569,6 +569,35 @@ button {
   gap: 0.875rem;
   padding: 0 0 1rem;
 }
+.app-sidebar-header-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.app-sidebar-header-row .app-settings-back {
+  min-width: 0;
+  flex: 1;
+}
+.sidebar-search-button {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 0.5rem;
+  color: var(--muted-foreground);
+  -webkit-app-region: no-drag;
+}
+.sidebar-search-button:hover {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+.sidebar-search-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
 .sidebar-brand {
   display: inline-flex;
   width: fit-content;
