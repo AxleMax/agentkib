@@ -1,4 +1,7 @@
 {
+  "sidebar.resize": "サイドバーの幅を変更",
+  "sidebar.resizeHint": "ドラッグで幅を変更（250–400px）。ダブルクリックで初期値に戻します。矢印キーでも調整できます。",
+  "sidebar.resizeSaveFailed": "サイドバーの幅を保存できませんでした。以前の幅に戻しました。",
   "search.backResults": "検索結果に戻る",
   "search.indexDisabled": "セッションの索引はオフです。他の項目は検索できます。",
   "search.openSettings": "設定を開く",

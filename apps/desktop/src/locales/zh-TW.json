@@ -1,4 +1,7 @@
 {
+  "sidebar.resize": "調整側欄寬度",
+  "sidebar.resizeHint": "拖曳調整寬度（250–400px），按兩下恢復預設；也可用方向鍵調整。",
+  "sidebar.resizeSaveFailed": "側欄寬度儲存失敗，已恢復原寬度。",
   "search.backResults": "返回搜尋結果",
   "search.indexDisabled": "會話索引已關閉，仍可搜尋其他內容。",
   "search.openSettings": "開啟設定",

@@ -1,34 +1,40 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppDialogProvider } from "@/components/AppDialogProvider";
 import { initializeI18n } from "@/core/i18n";
 import { useAppStore } from "@/stores/app-store";
 import type { DesktopRuntimeStatus } from "../../../electron/api";
 import { AppRuntimeBridge } from "./AppRuntimeBridge";
+import { useSidebarWidthStore } from "./sidebar-width-store";
 
-const { runtimeInfo, addWorkspace, setAccentThemePreference } = vi.hoisted(() => ({
-  runtimeInfo: vi.fn(),
-  addWorkspace: vi.fn(),
-  setAccentThemePreference: vi.fn(),
-}));
+const { runtimeInfo, addWorkspace, setAccentThemePreference, setSidebarWidthPreference } =
+  vi.hoisted(() => ({
+    runtimeInfo: vi.fn(),
+    addWorkspace: vi.fn(),
+    setAccentThemePreference: vi.fn(),
+    setSidebarWidthPreference: vi.fn(),
+  }));
 
 vi.mock("@/core/api", () => ({
   api: {
     runtime: runtimeInfo,
     addWorkspace,
     setAccentThemePreference,
+    setSidebarWidthPreference,
     quitApp: vi.fn(),
   },
 }));
 
 describe("AppRuntimeBridge", () => {
+  afterEach(cleanup);
   beforeEach(async () => {
     vi.clearAllMocks();
     window.localStorage.clear();
     document.documentElement.removeAttribute("data-accent-theme");
     useAppStore.getState().reset();
+    useSidebarWidthStore.setState(useSidebarWidthStore.getInitialState());
     await initializeI18n("zh-CN");
   });
 
@@ -145,5 +151,41 @@ describe("AppRuntimeBridge", () => {
     await waitFor(() => expect(document.documentElement.dataset.accentTheme).toBe("ocean-breeze"));
     expect(setAccentThemePreference).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("agentkib.accent-theme")).toBe("ocean-breeze");
+  });
+
+  it("restores sidebar width and rejects a focus response older than the completed save", async () => {
+    const initial = {
+      effective_theme: "light",
+      effective_locale: "zh-CN",
+      accent_theme_preference: "vtron",
+      sidebar_width_preference: 300,
+    };
+    runtimeInfo.mockResolvedValue(initial);
+    window.agentkibDesktop!.runtime.status = vi
+      .fn()
+      .mockResolvedValue({ state: "ready", restartCount: 0 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppDialogProvider>
+          <AppRuntimeBridge />
+        </AppDialogProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(useSidebarWidthStore.getState().width).toBe(300));
+    let resolve!: (value: typeof initial) => void;
+    runtimeInfo.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    fireEvent(window, new Event("focus"));
+    setSidebarWidthPreference.mockResolvedValue({ ...initial, sidebar_width_preference: 360 });
+    await act(async () => {
+      await useSidebarWidthStore.getState().save(360);
+    });
+    await act(async () => resolve(initial));
+    expect(useSidebarWidthStore.getState().width).toBe(360);
+    expect(useAppStore.getState().runtime?.sidebar_width_preference).toBe(360);
   });
 });

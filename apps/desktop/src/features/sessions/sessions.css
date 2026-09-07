@@ -38,6 +38,22 @@
 .session-workspace {
   margin-bottom: 10px;
 }
+.session-workspace-items {
+  height: var(--collapsible-panel-height);
+  overflow: hidden;
+  opacity: 1;
+  transition: height 180ms ease-out, opacity 180ms ease-out;
+}
+.session-workspace-items[data-starting-style],
+.session-workspace-items[data-ending-style] {
+  height: 0;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-workspace-items {
+    transition: none;
+  }
+}
 .session-workspace-heading {
   width: 100%;
   min-height: 36px;

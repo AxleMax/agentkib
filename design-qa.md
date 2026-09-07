@@ -227,3 +227,14 @@ final result: passed for this scoped correction
 - Workspace groups use closed/open folder icons without a separate chevron. Full-row activation and accessible expanded state remain intact.
 - Selected sessions use only the existing background highlight, without the inset edge. Removed the directory footer refresh action; the history detail refresh remains available.
 - Updated directory regression coverage for folder state and removal of the footer action. Directory/history tests (15 tests), typecheck and whitespace checks passed. These scoped changes have automated coverage; no new full visual acceptance is claimed.
+
+### Shared resizable sidebar — 2026-09-07
+
+- All expanded desktop sidebars now share a 250px default and a 250–400px drag range; Sessions does not apply a separate width. The effective maximum also reserves 640px for main content. Collapsed, floating-peek and mobile drawer states do not expose the resize handle.
+- The boundary supports pointer dragging, double-click reset, arrow-key adjustment and Home/End. Cancellation restores the saved width. Saving occurs on release, not on every pointer move; failed saves restore the previous value and display a notice.
+- Width is stored in the existing `preferences.json`, preserving other preferences, rather than relying on Chromium storage. Protocol version 10 adds the validated width preference and setter. Stale Runtime reads cannot overwrite an in-flight or newer width selection.
+- Real Electron QA used an isolated benchmark data directory and Chromium profile at 1360 × 860. Confirmed the initial 250px boundary, dragging beyond the maximum clamps to 400px, disk persistence without changing other preferences, and double-click restoration to 250px. Inspected `output/playwright/sidebar-resize-250.png`; no overlap or horizontal overflow was observed in this state.
+- Automated checks cover shared page widths, collapsed/narrow handle visibility, pointer cancellation, keyboard/reset behavior, save serialization/failure, hydration, stale Runtime responses and preserving unrelated preferences. Validation passed: 61 frontend/Electron test files with 368 tests, typecheck, build, 36 relevant Rust runtime/protocol tests, Rust formatting and `git diff --check`.
+- Remaining manual coverage: the follow-up Electron automation connection stalled, so a full process restart, dark theme and narrow-window rendering were not accepted by this QA run. Persistence and responsive behavior have automated coverage, not a substitute for those visual checks. Only the isolated QA instance was stopped; the existing user app and development server were left intact.
+
+final result: implemented; scoped light desktop drag/reset and persistence verified, remaining manual coverage documented

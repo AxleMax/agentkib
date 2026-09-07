@@ -286,6 +286,7 @@ export interface RuntimeInfo {
   theme_preference: ThemePreference;
   effective_theme: EffectiveTheme;
   accent_theme_preference: AccentThemeId | null;
+  sidebar_width_preference: number | null;
   app_icon_preference: AppIconPreference;
   tray_available: boolean;
   session_index_enabled: boolean;

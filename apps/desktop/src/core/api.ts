@@ -76,6 +76,8 @@ export const api = {
     desktopApi().settings.setThemePreference(preference),
   setAccentThemePreference: (preference: AccentThemeId) =>
     desktopApi().settings.setAccentThemePreference(preference),
+  setSidebarWidthPreference: (preference: number) =>
+    desktopApi().settings.setSidebarWidthPreference(preference),
   setAppIconPreference: (preference: AppIconPreference) =>
     desktopApi().settings.setAppIconPreference(preference),
   checkAppUpdate: () => desktopApi().updates.check(),

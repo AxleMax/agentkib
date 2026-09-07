@@ -14,6 +14,7 @@ import {
 } from "@/core/theme";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { useAppStore } from "@/stores/app-store";
+import { synchronizeSidebarWidth, useSidebarWidthStore } from "./sidebar-width-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { useHomeQueryEvents } from "@/features/home/home-query";
 import { useInsightsQueryEvents } from "@/features/insights/insights-query";
@@ -42,6 +43,7 @@ export function AppRuntimeBridge() {
     let initialSyncPending = true;
     const desktop = desktopApi();
     const synchronizeRuntime = async () => {
+      const widthRevision = useSidebarWidthStore.getState().revision;
       let nextRuntime = await api.runtime();
       if (disposed) return;
       if (nextRuntime.accent_theme_preference == null) {
@@ -52,6 +54,7 @@ export function AppRuntimeBridge() {
         }
       }
       if (disposed) return;
+      nextRuntime = synchronizeSidebarWidth(nextRuntime, widthRevision);
       setRuntime(nextRuntime);
       applyTheme(nextRuntime.effective_theme);
       cacheEffectiveTheme(nextRuntime.effective_theme, nextRuntime.theme_preference);
@@ -114,13 +117,15 @@ export function AppRuntimeBridge() {
 
   useEffect(() => {
     const refreshRuntime = () => {
+      const widthRevision = useSidebarWidthStore.getState().revision;
       void api
         .runtime()
         .then(async (runtime) => {
-          const nextRuntime =
+          let nextRuntime =
             runtime.accent_theme_preference == null
               ? await api.setAccentThemePreference(accentThemePreference())
               : runtime;
+          nextRuntime = synchronizeSidebarWidth(nextRuntime, widthRevision);
           setRuntime(nextRuntime);
           applyTheme(nextRuntime.effective_theme);
           cacheEffectiveTheme(nextRuntime.effective_theme, nextRuntime.theme_preference);

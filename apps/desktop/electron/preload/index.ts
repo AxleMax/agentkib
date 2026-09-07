@@ -237,6 +237,8 @@ const desktopApi = Object.freeze({
       ipcRenderer.invoke("agentkib:settings:set-theme", preference),
     setAccentThemePreference: (preference: string) =>
       ipcRenderer.invoke("agentkib:settings:set-accent-theme", preference),
+    setSidebarWidthPreference: (preference: number) =>
+      ipcRenderer.invoke("agentkib:settings:set-sidebar-width", preference),
     setAppIconPreference: (preference: string) =>
       ipcRenderer.invoke("agentkib:settings:set-app-icon", preference),
   }),

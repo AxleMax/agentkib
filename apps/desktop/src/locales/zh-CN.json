@@ -1,4 +1,7 @@
 {
+  "sidebar.resize": "调整侧栏宽度",
+  "sidebar.resizeHint": "拖动调整宽度（250–400px），双击恢复默认；也可用方向键调整。",
+  "sidebar.resizeSaveFailed": "侧栏宽度保存失败，已恢复原宽度。",
   "search.backResults": "返回搜索结果",
   "search.indexDisabled": "会话索引已关闭，仍可搜索其他内容。",
   "search.openSettings": "打开设置",

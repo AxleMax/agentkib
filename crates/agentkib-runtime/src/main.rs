@@ -69,8 +69,9 @@ use agentkib_protocol::{
     SEARCH_MEMORIES_METHOD, SESSION_EVENTS_METHOD, SET_ACCENT_THEME_PREFERENCE_METHOD,
     SET_APP_ICON_PREFERENCE_METHOD, SET_CLOSE_BEHAVIOR_METHOD, SET_GIT_IDENTITY_ENABLED_METHOD,
     SET_LOCALE_METHOD, SET_QUOTA_AUTO_REFRESH_METHOD, SET_QUOTA_PREFERENCES_METHOD,
-    SET_QUOTA_PROMPT_SEEN_METHOD, SET_SESSION_INDEX_ENABLED_METHOD, SET_THEME_PREFERENCE_METHOD,
-    SHUTDOWN_METHOD, START_MCP_OAUTH_METHOD, STOP_MCP_RUNTIME_METHOD, STORAGE_CHILDREN_METHOD,
+    SET_QUOTA_PROMPT_SEEN_METHOD, SET_SESSION_INDEX_ENABLED_METHOD,
+    SET_SIDEBAR_WIDTH_PREFERENCE_METHOD, SET_THEME_PREFERENCE_METHOD, SHUTDOWN_METHOD,
+    START_MCP_OAUTH_METHOD, STOP_MCP_RUNTIME_METHOD, STORAGE_CHILDREN_METHOD,
     STORAGE_OVERVIEW_METHOD, UNINSTALL_MCP_METHOD, UNINSTALL_SKILL_METHOD,
     UNLINK_OBSIDIAN_WORKSPACE_METHOD, UPDATE_MCP_METHOD, UPDATE_MCP_NETWORK_METHOD,
     UPDATE_ONBOARDING_METHOD, WORKSPACE_DOCTOR_REPORT_METHOD, WORKSPACE_DOCTOR_SUMMARIES_METHOD,
@@ -612,6 +613,9 @@ fn handle_request(request: RpcRequest) -> (RpcResponse, bool) {
         SET_THEME_PREFERENCE_METHOD => command_response(request, set_theme_preference),
         SET_ACCENT_THEME_PREFERENCE_METHOD => {
             command_response(request, set_accent_theme_preference)
+        }
+        SET_SIDEBAR_WIDTH_PREFERENCE_METHOD => {
+            command_response(request, set_sidebar_width_preference)
         }
         SET_APP_ICON_PREFERENCE_METHOD => command_response(request, set_app_icon_preference),
         PLAN_CHANGES_METHOD => command_response(request, plan_changes),
@@ -2740,6 +2744,25 @@ fn set_accent_theme_preference(request: PreferenceRequest<AccentThemeId>) -> any
     update_preference("accent_theme_preference", request.preference)
 }
 
+fn sidebar_width_preference(preferences: &Value) -> Option<u16> {
+    optional_stored_value::<u16>(preferences, "sidebar_width_preference")
+        .filter(|width| (250..=400).contains(width))
+}
+
+fn save_sidebar_width_preference(data_dir: &Path, width: u16) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        (250..=400).contains(&width),
+        "Sidebar width preference must be an integer between 250 and 400"
+    );
+    save_preference(data_dir, "sidebar_width_preference", width)
+}
+
+fn set_sidebar_width_preference(request: PreferenceRequest<u16>) -> anyhow::Result<Value> {
+    let data_dir = agentkib_store::default_data_dir()?;
+    save_sidebar_width_preference(&data_dir, request.preference)?;
+    runtime_info(EmptyRequest {})
+}
+
 fn set_app_icon_preference(request: PreferenceRequest<AppIconPreference>) -> anyhow::Result<Value> {
     update_preference("app_icon_preference", request.preference)
 }
@@ -2814,6 +2837,7 @@ fn runtime_info(_: EmptyRequest) -> anyhow::Result<Value> {
         "theme_preference": theme_preference,
         "effective_theme": effective_theme,
         "accent_theme_preference": accent_theme_preference,
+        "sidebar_width_preference": sidebar_width_preference(&preferences),
         "app_icon_preference": app_icon_preference,
         "tray_available": false,
         "session_index_enabled": preferences
@@ -4829,6 +4853,66 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn sidebar_width_reads_only_valid_persisted_integers() {
+        assert_eq!(sidebar_width_preference(&json!({})), None);
+        for width in [
+            json!(null),
+            json!("300"),
+            json!(249),
+            json!(401),
+            json!(300.5),
+        ] {
+            assert_eq!(
+                sidebar_width_preference(&json!({"sidebar_width_preference": width})),
+                None
+            );
+        }
+        for width in [250, 325, 400] {
+            assert_eq!(
+                sidebar_width_preference(&json!({"sidebar_width_preference": width})),
+                Some(width)
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_width_request_rejects_non_integer_and_negative_values() {
+        for width in [json!(null), json!("300"), json!(300.5), json!(-1)] {
+            assert!(
+                serde_json::from_value::<PreferenceRequest<u16>>(json!({"preference": width}))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_width_save_preserves_preferences_and_rejects_out_of_range() {
+        let directory = tempdir().unwrap();
+        let original = json!({
+            "locale_preference": "zh-CN",
+            "theme_preference": "dark",
+            "accent_theme_preference": "sakura",
+            "app_icon_preference": "black",
+            "session_index_enabled": false
+        });
+        save_preferences_root(directory.path(), &original).unwrap();
+        for width in [250, 325, 400] {
+            save_sidebar_width_preference(directory.path(), width).unwrap();
+            let mut expected = original.clone();
+            expected["sidebar_width_preference"] = json!(width);
+            assert_eq!(load_preferences_root(directory.path()), expected);
+        }
+        let saved = fs::read(directory.path().join("preferences.json")).unwrap();
+        for width in [0, 249, 401, u16::MAX] {
+            assert!(save_sidebar_width_preference(directory.path(), width).is_err());
+            assert_eq!(
+                fs::read(directory.path().join("preferences.json")).unwrap(),
+                saved
+            );
+        }
+    }
 
     #[test]
     fn accent_theme_preference_uses_stable_serialized_ids() {

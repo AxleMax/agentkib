@@ -74,6 +74,13 @@ export function requireAppIconPreference(value: unknown): "white" | "black" {
   return value;
 }
 
+export function requireSidebarWidthPreference(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 250 || value > 400) {
+    throw new TypeError("sidebar width preference must be an integer between 250 and 400");
+  }
+  return value;
+}
+
 export function optionalPositiveInteger(value: unknown, name: string): number | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {

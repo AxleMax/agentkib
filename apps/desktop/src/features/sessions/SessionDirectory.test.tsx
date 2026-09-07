@@ -191,6 +191,34 @@ describe("SessionDirectory", () => {
     expect(screen.getByRole("button", { name: /Check sidebar selection/ })).toBeTruthy();
   });
 
+  it("supports keyboard collapse and rapid reversal without losing the selected session", async () => {
+    const user = userEvent.setup();
+    render(<SessionDirectory />);
+    const heading = workspaceHeading(workspaces[0]);
+    const panelId = heading.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    heading.focus();
+    await user.keyboard("{Enter}");
+    expect(heading).toHaveAttribute("aria-expanded", "false");
+    expect(heading).toHaveFocus();
+    expect(screen.queryByRole("button", { name: /Check sidebar selection/ })).toBeNull();
+    const closingPanel = document.getElementById(panelId!);
+    if (closingPanel) {
+      expect(closingPanel).toHaveAttribute("inert");
+      expect(closingPanel).toHaveAttribute("aria-hidden", "true");
+    }
+    fireEvent.click(heading);
+    fireEvent.click(heading);
+    fireEvent.click(heading);
+    expect(heading).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById(panelId!)).not.toHaveAttribute("inert");
+    expect(screen.getByRole("button", { name: /Check sidebar selection/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(hub.select).not.toHaveBeenCalled();
+  });
+
   it("restores the directory scroll position and records subsequent scrolling", () => {
     useSessionViewStore.setState({ scrollTop: 180 });
     const { container, unmount } = render(<SessionDirectory />);

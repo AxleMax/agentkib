@@ -1,4 +1,7 @@
 {
+  "sidebar.resize": "Resize sidebar",
+  "sidebar.resizeHint": "Drag to resize (250–400 px). Double-click to reset; use arrow keys to adjust.",
+  "sidebar.resizeSaveFailed": "Could not save sidebar width. The previous width has been restored.",
   "search.backResults": "Back to results",
   "search.indexDisabled": "Session indexing is off. Other results remain available.",
   "search.openSettings": "Open settings",

@@ -31,6 +31,7 @@ import {
   requireBoolean,
   requireObject,
   requirePositiveInteger,
+  requireSidebarWidthPreference,
   requireString,
   requireText,
   requireThemePreference,
@@ -86,6 +87,7 @@ interface ElectronRuntimeInfo {
     | "sakura"
     | "ocean-breeze"
     | null;
+  sidebar_width_preference?: number | null;
   effective_theme?: "light" | "dark";
   effective_locale?: SupportedLocale;
   quota_auto_refresh_enabled?: boolean;
@@ -480,6 +482,13 @@ function registerShellIpc(): void {
         applyApplicationIcon(appIconPreference);
         return withElectronRuntimeCapabilities(runtime);
       });
+  });
+  ipcMain.handle("agentkib:settings:set-sidebar-width", (event, preference: unknown) => {
+    assertTrustedRenderer(event);
+    const next = requireSidebarWidthPreference(preference);
+    return requireRuntime()
+      .request(RUNTIME_METHODS.setSidebarWidthPreference, { preference: next })
+      .then(withElectronRuntimeCapabilities);
   });
 }
 

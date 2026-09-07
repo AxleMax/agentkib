@@ -242,6 +242,7 @@ export interface DesktopApi {
     setLocale(preference: LocalePreference): Promise<RuntimeInfo>;
     setThemePreference(preference: "system" | "light" | "dark"): Promise<RuntimeInfo>;
     setAccentThemePreference(preference: AccentThemeId): Promise<RuntimeInfo>;
+    setSidebarWidthPreference(preference: number): Promise<RuntimeInfo>;
     setAppIconPreference(preference: AppIconPreference): Promise<RuntimeInfo>;
   };
   home: {

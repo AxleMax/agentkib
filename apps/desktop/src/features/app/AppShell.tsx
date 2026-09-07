@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { SidebarResizeHandle } from "./SidebarResizeHandle";
+import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useSidebarWidthStore } from "./sidebar-width-store";
 
 import { useLocation } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
@@ -124,6 +126,18 @@ export function AppShell({
   const sidebarPeek = useAppStore((state) => state.sidebarPeek);
   const setSidebarPeek = useAppStore((state) => state.setSidebarPeek);
   const locationKey = useLocation({ select: (location) => location.href });
+  const sidebarWidth = useSidebarWidthStore();
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const resize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+  const maxSidebarWidth = Math.max(
+    MIN_SIDEBAR_WIDTH,
+    Math.min(MAX_SIDEBAR_WIDTH, windowWidth - 640),
+  );
+  const visibleSidebarWidth = Math.min(sidebarWidth.width, maxSidebarWidth);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const previousSidebarMode = useRef(sidebarMode);
   const [sidebarMotion, setSidebarMotion] = useState<"to-primary" | "to-settings" | null>(null);
@@ -160,10 +174,12 @@ export function AppShell({
 
   return (
     <div
+      style={{ "--sidebar-expanded-width": `${visibleSidebarWidth}px` } as CSSProperties}
       className={cn(
         "group app-shell !grid !h-full !w-full !min-h-0 !overflow-hidden",
         headerless && "app-shell-headerless",
         sidebarCollapsed && "app-shell-sidebar-collapsed",
+        sidebarWidth.dragging && "app-shell-sidebar-resizing",
         sidebarMotion && `app-shell-sidebar-motion-${sidebarMotion}`,
       )}
     >
@@ -182,6 +198,17 @@ export function AppShell({
       />
       {!headerless && <AppShellHeader>{toolbar}</AppShellHeader>}
       {sidebar}
+      {!sidebarCollapsed && windowWidth >= 1024 && (
+        <SidebarResizeHandle width={visibleSidebarWidth} maxWidth={maxSidebarWidth} />
+      )}
+      {sidebarWidth.error && (
+        <div className="sidebar-resize-error" role="alert">
+          <span>{tr("sidebar.resizeSaveFailed")}</span>
+          <Button variant="ghost" size="sm" onClick={sidebarWidth.clearError}>
+            {tr("common.close")}
+          </Button>
+        </div>
+      )}
       <main className={cn(mainClassName, additionalMainClassName)}>
         <div ref={scrollContainerRef} className="page-scroll-container min-h-0 flex-1">
           {children}

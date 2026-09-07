@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 pub const HANDSHAKE_METHOD: &str = "agentkib.handshake";
 pub const SHUTDOWN_METHOD: &str = "agentkib.shutdown";
 pub const SCAN_WORKSPACE_METHOD: &str = "workspace.scan";
@@ -62,6 +62,7 @@ pub const SET_CLOSE_BEHAVIOR_METHOD: &str = "settings.setCloseBehavior";
 pub const SET_LOCALE_METHOD: &str = "settings.setLocale";
 pub const SET_THEME_PREFERENCE_METHOD: &str = "settings.setThemePreference";
 pub const SET_ACCENT_THEME_PREFERENCE_METHOD: &str = "settings.setAccentThemePreference";
+pub const SET_SIDEBAR_WIDTH_PREFERENCE_METHOD: &str = "settings.setSidebarWidthPreference";
 pub const SET_APP_ICON_PREFERENCE_METHOD: &str = "settings.setAppIconPreference";
 pub const PLAN_CHANGES_METHOD: &str = "changes.plan";
 pub const APPLY_CHANGES_METHOD: &str = "changes.apply";
@@ -263,6 +264,7 @@ export const RUNTIME_METHODS = {{
   setLocale: "{SET_LOCALE_METHOD}",
   setThemePreference: "{SET_THEME_PREFERENCE_METHOD}",
   setAccentThemePreference: "{SET_ACCENT_THEME_PREFERENCE_METHOD}",
+  setSidebarWidthPreference: "{SET_SIDEBAR_WIDTH_PREFERENCE_METHOD}",
   setAppIconPreference: "{SET_APP_ICON_PREFERENCE_METHOD}",
   planChanges: "{PLAN_CHANGES_METHOD}",
   applyChanges: "{APPLY_CHANGES_METHOD}",

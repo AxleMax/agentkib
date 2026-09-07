@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import { Ellipsis, Folder, FolderOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -142,14 +143,15 @@ export function SessionDirectory({
         onScroll={(event) => view.setScrollTop(event.currentTarget.scrollTop)}
       >
         {groups.map(({ workspace, sessions }) => (
-          <div className="session-workspace" key={workspace.id}>
-            <Button
-              variant="bare"
-              size="content"
-              className="session-workspace-heading"
+          <Collapsible
+            className="session-workspace"
+            key={workspace.id}
+            open={!view.collapsed[workspace.id]}
+            onOpenChange={() => view.toggleWorkspace(workspace.id)}
+          >
+            <CollapsibleTrigger
+              render={<Button variant="bare" size="content" className="session-workspace-heading" />}
               title={`${workspace.name}\n${workspace.path}`}
-              aria-expanded={!view.collapsed[workspace.id]}
-              onClick={() => view.toggleWorkspace(workspace.id)}
             >
               {view.collapsed[workspace.id] ? (
                 <Folder size={16} aria-hidden="true" />
@@ -158,29 +160,31 @@ export function SessionDirectory({
               )}
               <strong>{workspace.name}</strong>
               <span>{sessions.length}</span>
-            </Button>
-            {!view.collapsed[workspace.id] && (
-              <div className="session-workspace-items">
-                {sessions.map((session) => (
-                  <Button
-                    variant="bare"
-                    size="content"
-                    key={session.id}
-                    data-session-entry
-                    className="session-directory-item"
-                    aria-current={hub.selected?.id === session.id ? "page" : undefined}
-                    onClick={() => hub.select(session.id)}
-                    title={`${displaySessionTitle(session.title)}\n${sessionAgentNames[session.agent]} · ${sessionRecordLabel(session)}\n${workspace.path}`}
-                  >
-                    <AgentIcon agent={session.agent} compact />
-                    <span>
-                      <strong>{displaySessionTitle(session.title)}</strong>
-                    </span>
-                  </Button>
-                ))}
-              </div>
-            )}
-          </div>
+            </CollapsibleTrigger>
+            <CollapsibleContent
+              className="session-workspace-items"
+              inert={Boolean(view.collapsed[workspace.id])}
+              aria-hidden={view.collapsed[workspace.id] || undefined}
+            >
+              {sessions.map((session) => (
+                <Button
+                  variant="bare"
+                  size="content"
+                  key={session.id}
+                  data-session-entry
+                  className="session-directory-item"
+                  aria-current={hub.selected?.id === session.id ? "page" : undefined}
+                  onClick={() => hub.select(session.id)}
+                  title={`${displaySessionTitle(session.title)}\n${sessionAgentNames[session.agent]} · ${sessionRecordLabel(session)}\n${workspace.path}`}
+                >
+                  <AgentIcon agent={session.agent} compact />
+                  <span>
+                    <strong>{displaySessionTitle(session.title)}</strong>
+                  </span>
+                </Button>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
         ))}
         {hub.enabled && !hub.loading && !groups.length && (
           <div className="session-directory-empty">
