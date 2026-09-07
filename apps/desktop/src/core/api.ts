@@ -1,4 +1,5 @@
 import { desktopApi } from "./desktop";
+import { DEFAULT_SESSION_PAGE_SIZE } from "./session-history";
 import type {
   AgentKind,
   AgentToolExecutionResult,
@@ -165,7 +166,7 @@ export const api = {
   workspaceSessions: (workspaceId: string) => desktopApi().workspace.sessions(workspaceId),
   refreshWorkspaceSessions: (workspaceId: string, force = false) =>
     desktopApi().workspace.refreshSessions(workspaceId, force),
-  sessionEvents: (sessionId: string, cursor?: string, limit = 100) =>
+  sessionEvents: (sessionId: string, cursor?: string, limit = DEFAULT_SESSION_PAGE_SIZE) =>
     desktopApi().workspace.sessionEvents(sessionId, cursor, limit),
   prepareSessionHandoff: (request: SessionHandoffRequest) =>
     desktopApi().workspace.prepareHandoff(request),

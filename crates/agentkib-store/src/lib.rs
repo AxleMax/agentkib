@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentkib_conversations::{
     ConversationIndexStatus, ConversationSessionSummary, NativeSessionSummary,
-    SessionIndexFreshness,
+    SessionIndexFreshness, SessionOrigin,
 };
 use agentkib_core::{
     ActivityRecord, AgentInstallation, AgentKind, AssetKind, AssetRecord, CatalogAsset,
@@ -61,8 +61,14 @@ impl Store {
             "PRAGMA foreign_keys = ON;
              PRAGMA journal_mode = WAL;",
         )?;
-        let current_version = self
-            .connection
+        // Hold the write lock before reading the version. Multiple Runtime requests can
+        // open the store during startup; each migration must observe the version left by
+        // the previous opener instead of replaying a stale migration plan.
+        let transaction = rusqlite::Transaction::new_unchecked(
+            &self.connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let current_version = transaction
             .query_row(
                 "SELECT value FROM schema_meta WHERE key = 'schema_version'",
                 [],
@@ -73,8 +79,8 @@ impl Store {
             .flatten()
             .and_then(|value| value.parse::<u32>().ok());
         if current_version.is_none_or(|version| version < 2) {
-            self.connection.execute_batch(
-            "BEGIN IMMEDIATE;
+            transaction.execute_batch(
+            "
              CREATE TABLE IF NOT EXISTS memories (
                id TEXT PRIMARY KEY,
                project_id TEXT NOT NULL,
@@ -174,12 +180,12 @@ impl Store {
                errors TEXT NOT NULL
              );
              INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '2');
-             COMMIT;"
+             "
             )?;
         }
         if current_version.is_none_or(|version| version < 3) {
-            self.connection.execute_batch(
-                "BEGIN IMMEDIATE;
+            transaction.execute_batch(
+                "
                  CREATE TABLE IF NOT EXISTS usage_events (
                    source_key TEXT PRIMARY KEY,
                    surface_agent TEXT NOT NULL,
@@ -257,12 +263,12 @@ impl Store {
                    rule_version INTEGER NOT NULL
                  );
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '3');
-                 COMMIT;",
+                 ",
             )?;
         }
         if current_version.is_none_or(|version| version < 4) {
-            self.connection.execute_batch(
-                "BEGIN IMMEDIATE;
+            transaction.execute_batch(
+                "
                  ALTER TABLE catalog_assets ADD COLUMN summary_key TEXT;
                  ALTER TABLE catalog_assets ADD COLUMN summary_params TEXT NOT NULL DEFAULT '{}';
                  ALTER TABLE insight_cursors ADD COLUMN error_key TEXT;
@@ -273,12 +279,12 @@ impl Store {
                    WHEN '公共 MCP Connection' THEN 'assets.summary.sharedConnection'
                    ELSE summary_key END;
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '4');
-                 COMMIT;",
+                 ",
             )?;
         }
         if current_version.is_none_or(|version| version < 5) {
-            self.connection.execute_batch(
-                "BEGIN IMMEDIATE;
+            transaction.execute_batch(
+                "
                  CREATE TABLE IF NOT EXISTS mcp_installations (
                    id TEXT PRIMARY KEY,
                    name TEXT NOT NULL,
@@ -311,12 +317,12 @@ impl Store {
                    updated_at TEXT NOT NULL
                  );
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '5');
-                 COMMIT;",
+                 ",
             )?;
         }
         if current_version.is_none_or(|version| version < 6) {
-            self.connection.execute_batch(
-                "BEGIN IMMEDIATE;
+            transaction.execute_batch(
+                "
                  CREATE TABLE IF NOT EXISTS workspaces (
                    id TEXT PRIMARY KEY,
                    canonical_path TEXT NOT NULL UNIQUE,
@@ -332,12 +338,12 @@ impl Store {
                  );
                  UPDATE workspaces SET status = 'healthy' WHERE status = 'needs-import';
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '6');
-                 COMMIT;",
+                 ",
             )?;
         }
         if current_version.is_none_or(|version| version < 7) {
-            self.connection.execute_batch(
-                "BEGIN IMMEDIATE;
+            transaction.execute_batch(
+                "
                  CREATE TABLE IF NOT EXISTS quota_snapshot (
                    id INTEGER PRIMARY KEY CHECK (id = 1),
                    snapshot_json TEXT,
@@ -352,12 +358,12 @@ impl Store {
                    error_detail TEXT
                  );
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '7');
-                 COMMIT;",
+                 ",
             )?;
         }
         if current_version.is_none_or(|version| version < 8) {
-            self.connection.execute_batch(
-                "BEGIN IMMEDIATE;
+            transaction.execute_batch(
+                "
                  CREATE TABLE IF NOT EXISTS workspace_storage (
                    workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
                    snapshot_json TEXT,
@@ -367,12 +373,12 @@ impl Store {
                    error_detail TEXT
                  );
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '8');
-                 COMMIT;",
+                 ",
             )?;
         }
         if current_version.is_none_or(|version| version < 9) {
-            self.connection.execute_batch(
-                "BEGIN IMMEDIATE;
+            transaction.execute_batch(
+                "
                  CREATE TABLE IF NOT EXISTS conversation_sessions (
                    id TEXT PRIMARY KEY,
                    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -401,19 +407,26 @@ impl Store {
                    PRIMARY KEY(workspace_id, agent)
                  );
                  INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '9');
-                 COMMIT;",
+                 ",
             )?;
         }
         if current_version.is_none_or(|version| version < 10) {
-            let transaction = self.connection.unchecked_transaction()?;
             normalize_legacy_workspace_timestamps(&transaction)?;
             transaction.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '10')",
                 [],
             )?;
-            transaction.commit()?;
         }
-        let has_usage_events: bool = self.connection.query_row(
+        if current_version.is_none_or(|version| version < 11) {
+            transaction.execute_batch(
+                "ALTER TABLE conversation_sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'unknown';
+                     ALTER TABLE conversation_sessions ADD COLUMN spawned_by_session_id TEXT;
+                     ALTER TABLE conversation_sessions ADD COLUMN forked_from_session_id TEXT;
+                     UPDATE conversation_index_status SET last_success_at = NULL;
+                     INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', '11');",
+            )?;
+        }
+        let has_usage_events: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'usage_events')",
             [],
             |row| row.get(0),
@@ -421,11 +434,12 @@ impl Store {
         if has_usage_events {
             // Detailed Token events replace session-level aggregate fallbacks by session hash.
             // Without this index a first import performs a full table scan for every event.
-            self.connection.execute_batch(
+            transaction.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_usage_events_session_precision
                  ON usage_events(session_hash, date_precision);",
             )?;
         }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -745,8 +759,9 @@ impl Store {
             transaction.execute(
                 "INSERT INTO conversation_sessions(
                    id, workspace_id, agent, title, created_at, updated_at, message_count,
-                   git_branch, archived, sidechain, availability, last_indexed_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                   git_branch, archived, sidechain, availability, last_indexed_at,
+                   origin, spawned_by_session_id, forked_from_session_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     id,
                     workspace_id,
@@ -760,6 +775,17 @@ impl Store {
                     session.sidechain,
                     enum_string(session.availability)?,
                     indexed_at.to_rfc3339(),
+                    enum_string(session.origin)?,
+                    session
+                        .spawned_by_session_id
+                        .as_deref()
+                        .filter(|parent| !parent.is_empty() && *parent != session.native_ref)
+                        .map(|parent| conversation_identifier(&salt, agent, parent)),
+                    session
+                        .forked_from_session_id
+                        .as_deref()
+                        .filter(|parent| !parent.is_empty() && *parent != session.native_ref)
+                        .map(|parent| conversation_identifier(&salt, agent, parent)),
                 ],
             )?;
         }
@@ -807,7 +833,8 @@ impl Store {
     ) -> Result<Vec<ConversationSessionSummary>> {
         let mut statement = self.connection.prepare(
             "SELECT id, workspace_id, agent, title, created_at, updated_at, message_count,
-                    git_branch, archived, sidechain, availability
+                    git_branch, archived, sidechain, availability, origin,
+                    spawned_by_session_id, forked_from_session_id
              FROM conversation_sessions WHERE workspace_id = ?1
              ORDER BY COALESCE(updated_at, created_at) DESC, id DESC",
         )?;
@@ -821,7 +848,8 @@ impl Store {
         self.connection
             .query_row(
                 "SELECT id, workspace_id, agent, title, created_at, updated_at, message_count,
-                        git_branch, archived, sidechain, availability
+                        git_branch, archived, sidechain, availability, origin,
+                        spawned_by_session_id, forked_from_session_id
                  FROM conversation_sessions WHERE id = ?1",
                 [id],
                 row_to_conversation_session,
@@ -3155,6 +3183,9 @@ fn row_to_conversation_session(row: &Row<'_>) -> rusqlite::Result<ConversationSe
         archived: row.get(8)?,
         sidechain: row.get(9)?,
         availability: parse_enum(&row.get::<_, String>(10)?).map_err(sql_error)?,
+        origin: parse_enum(&row.get::<_, String>(11)?).unwrap_or(SessionOrigin::Unknown),
+        spawned_by_session_id: row.get(12)?,
+        forked_from_session_id: row.get(13)?,
     })
 }
 
@@ -3623,6 +3654,9 @@ mod tests {
                     git_branch: None,
                     archived: false,
                     sidechain: false,
+                    origin: SessionOrigin::Unknown,
+                    spawned_by_session_id: None,
+                    forked_from_session_id: None,
                     availability: agentkib_conversations::SessionAvailability::MetadataOnly,
                 }],
             )
@@ -3880,6 +3914,9 @@ mod tests {
             git_branch: Some("main".into()),
             archived: false,
             sidechain: false,
+            origin: SessionOrigin::Unknown,
+            spawned_by_session_id: None,
+            forked_from_session_id: None,
             availability: agentkib_conversations::SessionAvailability::Readable,
         };
         let indexed = store
@@ -3937,6 +3974,9 @@ mod tests {
             git_branch: Some("main".into()),
             archived: false,
             sidechain: false,
+            origin: SessionOrigin::Unknown,
+            spawned_by_session_id: None,
+            forked_from_session_id: None,
             availability: agentkib_conversations::SessionAvailability::Readable,
         };
 
@@ -3991,6 +4031,156 @@ mod tests {
     }
 
     #[test]
+    fn conversation_provenance_is_independent_hashed_and_not_title_deduplicated() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        let base = NativeSessionSummary {
+            native_ref: "private-parent".into(),
+            agent: AgentKind::Codex,
+            title: Some("Same title".into()),
+            created_at: None,
+            updated_at: None,
+            message_count: None,
+            git_branch: Some("main".into()),
+            archived: false,
+            sidechain: false,
+            origin: SessionOrigin::Interactive,
+            spawned_by_session_id: None,
+            forked_from_session_id: None,
+            availability: agentkib_conversations::SessionAvailability::Readable,
+        };
+        let fork = NativeSessionSummary {
+            native_ref: "private-fork".into(),
+            forked_from_session_id: Some(base.native_ref.clone()),
+            ..base.clone()
+        };
+        let child = NativeSessionSummary {
+            native_ref: "private-child".into(),
+            origin: SessionOrigin::Auxiliary,
+            spawned_by_session_id: Some(base.native_ref.clone()),
+            forked_from_session_id: Some("private-absent-source".into()),
+            ..base.clone()
+        };
+        let records = store
+            .sync_conversation_sessions(
+                &registered.id,
+                AgentKind::Codex,
+                &[base.clone(), fork.clone(), child.clone()],
+            )
+            .unwrap();
+        assert_eq!(records.len(), 3);
+        let parent_id = store
+            .conversation_id(AgentKind::Codex, &base.native_ref)
+            .unwrap();
+        let child_id = store
+            .conversation_id(AgentKind::Codex, &child.native_ref)
+            .unwrap();
+        let saved = store.get_conversation_session(&child_id).unwrap().unwrap();
+        assert_eq!(saved.origin, SessionOrigin::Auxiliary);
+        assert!(!saved.sidechain);
+        assert_eq!(
+            saved.spawned_by_session_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+        assert_eq!(
+            saved.forked_from_session_id,
+            Some(
+                store
+                    .conversation_id(AgentKind::Codex, "private-absent-source")
+                    .unwrap()
+            )
+        );
+        assert!(
+            !serde_json::to_string(&records)
+                .unwrap()
+                .contains("private-")
+        );
+        let fork_id = store
+            .conversation_id(AgentKind::Codex, &fork.native_ref)
+            .unwrap();
+        let saved_fork = store.get_conversation_session(&fork_id).unwrap().unwrap();
+        assert_eq!(saved_fork.origin, SessionOrigin::Interactive);
+        assert_eq!(
+            saved_fork.forked_from_session_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+        assert!(saved_fork.spawned_by_session_id.is_none());
+        let remaining = store
+            .sync_conversation_sessions(&registered.id, AgentKind::Codex, &[child])
+            .unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            remaining[0].spawned_by_session_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+
+    #[test]
+    fn version_eleven_retains_cached_sessions_and_reclassifies_after_refresh() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let store = Store::open(&database).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        store.connection.execute(
+            "INSERT INTO conversation_sessions(id,workspace_id,agent,title,archived,sidechain,availability,last_indexed_at)
+             VALUES ('old',?1,'codex','Kept',0,0,'readable','2026-09-07T00:00:00Z')",
+            [&registered.id],
+        ).unwrap();
+        store.connection.execute(
+            "INSERT INTO conversation_index_status(workspace_id,agent,session_count,last_attempt_at,last_success_at)
+             VALUES (?1,'codex',1,'2026-09-07T00:00:00Z','2026-09-07T00:00:00Z')",
+            [&registered.id],
+        ).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE conversation_sessions DROP COLUMN origin;
+             ALTER TABLE conversation_sessions DROP COLUMN spawned_by_session_id;
+             ALTER TABLE conversation_sessions DROP COLUMN forked_from_session_id;
+             UPDATE schema_meta SET value='10' WHERE key='schema_version';",
+            )
+            .unwrap();
+        drop(store);
+        let migrated = Store::open(&database).unwrap();
+        let records = migrated.list_conversation_sessions(&registered.id).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "old");
+        assert_eq!(records[0].origin, SessionOrigin::Unknown);
+        assert!(records[0].spawned_by_session_id.is_none());
+        assert!(
+            migrated.conversation_index_status(&registered.id).unwrap()[0]
+                .last_success_at
+                .is_none()
+        );
+        migrated
+            .connection
+            .execute(
+                "UPDATE conversation_index_status SET last_success_at=?1",
+                [Utc::now().to_rfc3339()],
+            )
+            .unwrap();
+        drop(migrated);
+        let reopened = Store::open(&database).unwrap();
+        assert!(
+            reopened.conversation_index_status(&registered.id).unwrap()[0]
+                .last_success_at
+                .is_some()
+        );
+        assert_eq!(
+            reopened
+                .list_conversation_sessions(&registered.id)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     fn version_nine_adds_conversation_index_and_version_ten_preserves_existing_data() {
         let dir = tempdir().unwrap();
         let database = dir.path().join("db.sqlite");
@@ -4031,9 +4221,73 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "10");
+        assert_eq!(version, "11");
         assert_eq!(tables, 2);
         assert_eq!(kept, 1);
+    }
+
+    #[test]
+    fn version_nine_migration_is_safe_for_concurrent_open() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let seeded = Store::open(&database).unwrap();
+        seeded
+            .connection
+            .execute_batch(
+                "ALTER TABLE conversation_sessions DROP COLUMN origin;
+                 ALTER TABLE conversation_sessions DROP COLUMN spawned_by_session_id;
+                 ALTER TABLE conversation_sessions DROP COLUMN forked_from_session_id;
+                 UPDATE schema_meta SET value='9' WHERE key='schema_version';",
+            )
+            .unwrap();
+        drop(seeded);
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let database = database.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let store = Store::open(&database)?;
+                    let version = store.connection.query_row(
+                        "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?;
+                    Ok::<String, anyhow::Error>(version)
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert_eq!(handle.join().unwrap().unwrap(), "11");
+        }
+    }
+
+    #[test]
+    fn new_database_is_safe_for_concurrent_open() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let database = database.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let store = Store::open(&database)?;
+                    let version = store.connection.query_row(
+                        "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?;
+                    Ok::<String, anyhow::Error>(version)
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert_eq!(handle.join().unwrap().unwrap(), "11");
+        }
     }
 
     #[test]
@@ -4065,6 +4319,24 @@ mod tests {
             )
             .unwrap();
         let workspace_seconds = 1_700_000_000_i64;
+        // Version 9 also includes the session tables, even though this fixture only
+        // exercises workspace timestamps. Later additive migrations require them.
+        connection
+            .execute_batch(
+                "CREATE TABLE conversation_sessions(
+               id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent TEXT NOT NULL,
+               title TEXT, created_at TEXT, updated_at TEXT, message_count INTEGER,
+               git_branch TEXT, archived INTEGER NOT NULL DEFAULT 0,
+               sidechain INTEGER NOT NULL DEFAULT 0, availability TEXT NOT NULL,
+               last_indexed_at TEXT NOT NULL
+             );
+             CREATE TABLE conversation_index_status(
+               workspace_id TEXT NOT NULL, agent TEXT NOT NULL, session_count INTEGER NOT NULL,
+               last_attempt_at TEXT NOT NULL, last_success_at TEXT, error_key TEXT,
+               error_detail TEXT, PRIMARY KEY(workspace_id,agent)
+             );",
+            )
+            .unwrap();
         let source_milliseconds = 1_700_000_123_456_i64;
         let updated_at = Utc::now().to_rfc3339();
 
@@ -4135,7 +4407,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "10");
+        assert_eq!(version, "11");
 
         let workspace_type: String = store
             .connection

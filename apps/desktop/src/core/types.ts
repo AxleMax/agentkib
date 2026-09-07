@@ -972,12 +972,13 @@ export interface AppNavigationRequest {
 }
 
 export type SessionAvailability = "readable" | "metadata-only";
+export type SessionOrigin = "interactive" | "auxiliary" | "unknown";
 export type SessionIndexFreshness = "fresh" | "stale" | "unavailable";
 export type ConversationEventKind = "user-message" | "agent-message" | "tool-summary";
 export interface ConversationSessionSummary {
   id: string;
   workspace_id: string;
-  agent: "codex" | "claude-code";
+  agent: "codex" | "claude-code" | "opencode";
   title?: string;
   created_at?: string;
   updated_at?: string;
@@ -985,11 +986,14 @@ export interface ConversationSessionSummary {
   git_branch?: string;
   archived: boolean;
   sidechain: boolean;
+  origin?: SessionOrigin;
+  spawned_by_session_id?: string;
+  forked_from_session_id?: string;
   availability: SessionAvailability;
 }
 export interface ConversationIndexStatus {
   workspace_id: string;
-  agent: "codex" | "claude-code";
+  agent: "codex" | "claude-code" | "opencode";
   freshness: SessionIndexFreshness;
   session_count: number;
   last_attempt_at?: string;

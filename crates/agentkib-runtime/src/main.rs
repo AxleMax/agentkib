@@ -1094,7 +1094,9 @@ fn session_events(
     source.read_events(
         &native.native_ref,
         request.cursor.as_deref(),
-        request.limit.unwrap_or(100),
+        request
+            .limit
+            .unwrap_or(agentkib_conversations::DEFAULT_HISTORY_PAGE_SIZE),
     )
 }
 
