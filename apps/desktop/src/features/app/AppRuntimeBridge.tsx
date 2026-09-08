@@ -175,7 +175,7 @@ export function AppRuntimeBridge() {
       }
     };
     return desktopApi().events.onQuitRequested(() => void handleQuitRequest());
-  }, [dialogs]);
+  }, [dialogs, tr]);
 
   if (runtimeStatus?.state !== "failed") return null;
 

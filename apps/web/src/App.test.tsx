@@ -182,7 +182,7 @@ class FakeEvents {
     this.listeners[name]?.(new MessageEvent(name, { data: JSON.stringify(value) }));
   }
 }
-function mockServer(initial = "approved") {
+function mockServer(initial = "approved", availability = "readable") {
   let access = {
     status: initial,
     csrfToken: "x",
@@ -202,7 +202,7 @@ function mockServer(initial = "approved") {
             title: "Test session",
             workspace_id: "w",
             agent: "codex",
-            availability: "readable",
+            availability,
           },
         ],
       });
@@ -228,6 +228,19 @@ function mockServer(initial = "approved") {
   };
 }
 describe("Web access UI", () => {
+  it("does not open metadata-only entries or request history/live state", async () => {
+    const { fetcher } = mockServer("approved", "metadata-only");
+    const before = FakeEvents.instances.length;
+    render(<App />);
+    const entry = await screen.findByRole("button", { name: /Test session/ });
+    expect(entry).toBeDisabled();
+    fireEvent.click(entry);
+    expect(fetcher.mock.calls.every(([url]) => !/\/(events|live|stream)/.test(String(url)))).toBe(
+      true,
+    );
+    expect(FakeEvents.instances).toHaveLength(before);
+    expect(screen.queryByText("Secret history")).not.toBeInTheDocument();
+  });
   function controlServer() {
     const server = mockServer();
     const original = server.fetcher.getMockImplementation()!;

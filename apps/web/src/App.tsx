@@ -341,6 +341,7 @@ export function App() {
     return () => clearTimeout(timer);
   }, [selected, live?.revision, online, fail]);
   async function choose(id: string) {
+    if (sessions.find((session) => session.id === id)?.availability !== "readable") return;
     generation.current++;
     selection.current = id;
     setSelected(id);
@@ -624,6 +625,7 @@ export function App() {
                     <button
                       className={`session ${s.id === selected ? "selected" : ""}`}
                       key={s.id}
+                      disabled={s.availability !== "readable"}
                       onClick={() => void choose(s.id)}
                     >
                       <span className="agent-dot">⌘</span>
@@ -631,6 +633,7 @@ export function App() {
                         <strong>{s.title || t.untitled}</strong>
                         <small>
                           {s.agent} · {s.workspace_id}
+                          {s.availability !== "readable" && ` · ${t.metadataOnly}`}
                         </small>
                       </span>
                       <ChevronRight size={15} />
