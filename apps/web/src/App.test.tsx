@@ -926,6 +926,64 @@ describe("Web access UI", () => {
     );
   });
 
+  it.each([
+    [
+      "leading ASCII spaces",
+      " ".repeat(385) + "😀".repeat(4_000),
+      " ".repeat(384) + "😀".repeat(4_000),
+    ],
+    [
+      "trailing ASCII spaces",
+      "😀".repeat(4_000) + " ".repeat(8_000),
+      "😀".repeat(4_000) + " ".repeat(384),
+    ],
+    [
+      "leading multibyte whitespace",
+      "\u3000".repeat(129) + "😀".repeat(4_000),
+      "\u3000".repeat(128) + "😀".repeat(4_000),
+    ],
+    [
+      "trailing multibyte whitespace",
+      "😀".repeat(4_000) + "\u3000".repeat(129),
+      "😀".repeat(4_000) + "\u3000".repeat(128),
+    ],
+  ])(
+    "counts %s in the full draft limit while sending trimmed text",
+    async (_label, oversized, boundary) => {
+      const server = controlServer();
+      server.fetcher.mockImplementation(async (url) =>
+        String(url).endsWith("/send") ? Response.json({ accepted: true }) : server.normal(url),
+      );
+      await openDraft();
+      const input = screen.getByLabelText("发送消息") as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: oversized } });
+      expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+      fireEvent.submit(input.closest("form")!);
+      expect(
+        server.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/send")),
+      ).toHaveLength(0);
+      expect(input).toHaveValue(oversized);
+      fireEvent.change(input, { target: { value: boundary } });
+      expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+      fireEvent.submit(input.closest("form")!);
+      await waitFor(() => expect(input).toHaveValue(""));
+      const requests = server.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/send"));
+      expect(requests).toHaveLength(1);
+      const options = (requests[0] as unknown as [unknown, RequestInit])[1];
+      expect(JSON.parse(options.body as string).text).toBe(boundary.trim());
+    },
+  );
+  it.each([" ", "\u3000", " \u3000 \t"])("rejects whitespace-only draft %j", async (draft) => {
+    const server = controlServer();
+    await openDraft();
+    const input = screen.getByLabelText("发送消息") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: draft } });
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    fireEvent.submit(input.closest("form")!);
+    expect(server.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/send"))).toHaveLength(
+      0,
+    );
+  });
   it("explains the host control fence without suggesting reopening restores control", async () => {
     const server = mockServer();
     const original = server.fetcher.getMockImplementation()!;

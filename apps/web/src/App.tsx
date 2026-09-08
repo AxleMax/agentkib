@@ -35,7 +35,7 @@ function isValidMessage(message: string) {
   return (
     !!text &&
     message.length <= MAX_MESSAGE_LENGTH &&
-    messageEncoder.encode(text).byteLength <= MAX_MESSAGE_BYTES
+    messageEncoder.encode(message).byteLength <= MAX_MESSAGE_BYTES
   );
 }
 export function Dialog({

@@ -59,6 +59,16 @@
 
 ## 过程记录
 
+### 2026-09-08 完整草稿、工作区筛选与远程时间校验 goal
+
+- 对应最新评论 `3956600378`、`3956600387`、`3956600391`，基于 `9d44e54`。该提交远端五项 CI 已通过，但这不涵盖本轮未提交修复。
+- 核对字节评论：现有发送路径实际使用 `message.trim()`，所以“服务端收到完整草稿”的复现描述不成立；字符与字节校验对象不统一仍值得修复。本轮均按完整草稿限制，保留原有 trim 提交行为；回归直接解析请求正文，并覆盖首尾 ASCII／多字节空白、emoji 及纯空白草稿。
+- 工作区历史的 Agent 菜单使用未过滤历史中实际出现的来源，复用名称映射，同时保留当前筛选入口；不以续接目标能力决定历史筛选。补 OpenCode、OpenClaw、Hermes、Grok Build 混合历史筛选及恢复全部的回归。
+- 远程边界对会话 created_at／updated_at、工作区 last_active_at／last_scanned_at、事件 timestamp 统一进行 ISO 时间（含时区）及 JavaScript 有限日期校验；错误数据返回既有 REMOTE_INVALID_RESPONSE，不进入日期渲染。保留 null／缺失值、时区偏移和纳秒时间精度字符串。补全部字段的非法日历、时间、类型及合法时间回归。
+- review-agent 独立只读复审覆盖三条相关调用链，结论 No findings；未操作真实 Agent 或远程主机。新增筛选测试首次运行有英文按钮名称及 ByRoleOptions 参数错误，修正测试后定向 43 项通过，未削弱生产校验或断言。
+- 最终验证：`pnpm test` 通过（桌面 81 文件／587 项，Web 56 项），`pnpm typecheck`、`pnpm build`、`pnpm format:check`、`git diff --check` 通过；构建生成绑定无差异。独立只读复审 No findings，相关本地 goal 完成。
+- 本轮不修改 Rust、公共 runtime 协议或持久化结构，未重复运行 Rust 单元测试和 Clippy；开发版及 release runtime 随标准测试／构建脚本编译通过。未验证真实远程设备或异常主机，不以模拟回归代替真实验收。保留无关设计修改；尚未 commit／push，不提前标记远端 resolved。
+
 ### 2026-09-08 新增 PR 评论的第二个本地 goal
 
 - 对应 PR #63 评论 `3956105132`、`3956105139`、`3956105147`。上一轮只读 review 漏掉了 SSE 到 UI 的联动及 Grok 归档身份问题；本轮扩大到相关调用链，不把已有测试通过当成无缺陷保证。

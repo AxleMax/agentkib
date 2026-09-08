@@ -50,6 +50,7 @@ import {
   isInteractiveFork,
   sessionSourceLabel,
   sessionSourceDetails,
+  sessionAgentNames,
 } from "@/features/sessions/session-labels";
 import { isSessionVisible } from "@/features/sessions/session-catalog";
 import { useSessionViewStore } from "@/features/sessions/session-view-store";
@@ -400,8 +401,10 @@ export function WorkspaceSessionsPage({
                       <DropdownMenuLabel>{tr("conversations.agentFilter")}</DropdownMenuLabel>
                       {[
                         ["all", tr("conversations.allAgents")],
-                        ["codex", "Codex"],
-                        ["claude-code", "Claude Code"],
+                        ...Object.entries(sessionAgentNames).filter(
+                          ([value]) =>
+                            sessions.some((session) => session.agent === value) || agent === value,
+                        ),
                       ].map(([value, label]) => (
                         <DropdownMenuItem
                           key={value}

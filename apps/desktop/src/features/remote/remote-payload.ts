@@ -7,6 +7,13 @@ const optionalText = z
   .string()
   .nullish()
   .transform((value) => value ?? undefined);
+// Rust emits RFC 3339 timestamps. Reject malformed dates at the remote boundary
+// before any view passes them to Intl.DateTimeFormat.
+const optionalTimestamp = z.iso
+  .datetime({ offset: true })
+  .refine((value) => Number.isFinite(Date.parse(value)))
+  .nullish()
+  .transform((value) => value ?? undefined);
 const count = z.number().int().nonnegative();
 const relationshipId = id.nullish().transform((value) => value ?? undefined);
 const origin = z
@@ -23,8 +30,8 @@ const catalog = z.object({
         status: z.enum(["healthy", "attention"]).default("healthy"),
         asset_count: count.default(0),
         warning_count: count.default(0),
-        last_active_at: optionalText,
-        last_scanned_at: optionalText,
+        last_active_at: optionalTimestamp,
+        last_scanned_at: optionalTimestamp,
       }),
     )
     .max(20_000),
@@ -35,8 +42,8 @@ const catalog = z.object({
         workspace_id: id,
         agent: z.enum(["codex", "claude-code", "opencode", "open-claw", "hermes", "grok-build"]),
         title: optionalText,
-        created_at: optionalText,
-        updated_at: optionalText,
+        created_at: optionalTimestamp,
+        updated_at: optionalTimestamp,
         git_branch: optionalText,
         message_count: count.nullish(),
         archived: z.boolean(),
@@ -55,7 +62,7 @@ const events = z.object({
       z.object({
         id,
         kind: z.enum(["user-message", "agent-message", "tool-summary"]),
-        timestamp: optionalText,
+        timestamp: optionalTimestamp,
         content: optionalText,
         turn_id: z
           .string()

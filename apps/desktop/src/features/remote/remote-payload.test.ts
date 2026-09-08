@@ -11,6 +11,69 @@ const session = {
   availability: "readable",
 };
 describe("remote payload validation", () => {
+  it.each([
+    "not-a-date",
+    "",
+    "2026-02-30T12:00:00Z",
+    "2026-09-08T25:00:00Z",
+    "2026-09-08",
+    "2026-09-08T12:00:00",
+    "999999-01-01T00:00:00Z",
+    123,
+    {},
+  ])("rejects malformed timestamps on every remote date field: %s", (value) => {
+    for (const field of ["created_at", "updated_at"]) {
+      expect(() =>
+        parseRemoteCatalog({ workspaces: [workspace], sessions: [{ ...session, [field]: value }] }),
+      ).toThrow("REMOTE_INVALID_RESPONSE");
+    }
+    for (const field of ["last_active_at", "last_scanned_at"]) {
+      expect(() =>
+        parseRemoteCatalog({ workspaces: [{ ...workspace, [field]: value }], sessions: [] }),
+      ).toThrow("REMOTE_INVALID_RESPONSE");
+    }
+    expect(() =>
+      parseRemoteEvents({
+        events: [
+          {
+            id: "e",
+            kind: "user-message",
+            timestamp: value,
+            attachment_count: 0,
+            truncated: false,
+          },
+        ],
+        warnings: [],
+      }),
+    ).toThrow("REMOTE_INVALID_RESPONSE");
+  });
+  it.each([
+    undefined,
+    null,
+    "2026-09-08T09:52:47Z",
+    "2026-09-08T17:52:47.123456789+08:00",
+    "2024-02-29T00:00:00-05:30",
+  ])("preserves valid and nullable remote timestamps: %s", (value) => {
+    const result = parseRemoteCatalog({
+      workspaces: [{ ...workspace, last_active_at: value, last_scanned_at: value }],
+      sessions: [{ ...session, created_at: value, updated_at: value }],
+    });
+    expect(result.sessions[0].created_at).toBe(value ?? undefined);
+    expect(result.sessions[0].updated_at).toBe(value ?? undefined);
+    expect(result.workspaces[0].last_active_at).toBe(value ?? undefined);
+    expect(result.workspaces[0].last_scanned_at).toBe(value ?? undefined);
+    const event = parseRemoteEvents({
+      events: [
+        { id: "e", kind: "user-message", timestamp: value, attachment_count: 0, truncated: false },
+      ],
+      warnings: [],
+    }).events[0];
+    expect(event.timestamp).toBe(value ?? undefined);
+    if (event.timestamp)
+      expect(() =>
+        new Intl.DateTimeFormat("en-US").format(new Date(event.timestamp!)),
+      ).not.toThrow();
+  });
   it("accepts a mixed catalog of all supported history providers", () => {
     const agents = ["codex", "claude-code", "opencode", "open-claw", "hermes", "grok-build"];
     const result = parseRemoteCatalog({

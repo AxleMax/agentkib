@@ -147,6 +147,39 @@ describe("WorkspaceSessionsPage", () => {
     expect(await screen.findByText("Auxiliary continuation")).toBeTruthy();
   });
 
+  it.each([
+    ["opencode", "OpenCode"],
+    ["open-claw", "OpenClaw"],
+    ["hermes", "Hermes"],
+    ["grok-build", "Grok Build"],
+  ] as const)(
+    "filters mixed history by %s and can return to all providers",
+    async (agent, label) => {
+      const source = { ...cachedSession, id: agent, agent, title: `${label} conversation` };
+      vi.mocked(api.workspaceSessions).mockResolvedValue([cachedSession, source]);
+      vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([cachedSession, source]);
+      render(
+        <WorkspaceSessionsPage
+          workspace={workspace}
+          enabled
+          targetAgents={["claude-code"]}
+          onRuntimeChanged={vi.fn()}
+          onHandoffPlanned={vi.fn()}
+          onMcpConnectionPlanned={vi.fn()}
+        />,
+      );
+      await screen.findByText(`${label} conversation`);
+      await waitFor(() => expect(screen.getByLabelText("Refresh sessions")).not.toBeDisabled());
+      fireEvent.click(screen.getByRole("button", { name: "Agent filter" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: label }));
+      await waitFor(() => expect(screen.queryByText("Cached continuation")).toBeNull());
+      expect(screen.getAllByText(`${label} conversation`).length).toBeGreaterThan(0);
+      fireEvent.click(screen.getByRole("button", { name: "Agent filter" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "All Agents" }));
+      expect((await screen.findAllByText("Cached continuation")).length).toBeGreaterThan(0);
+    },
+  );
+
   it("only uses a forced scan for manual refresh", async () => {
     vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([cachedSession]);
     render(
