@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::fs;
-use std::io::{BufRead, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -752,7 +752,6 @@ impl OpenCodeProvider {
         let mut diagnostics = Vec::new();
         let database = data_home.join("opencode.db");
         let sqlite_started = Utc::now();
-        let mut source_errors = Vec::new();
         let mut output = if !database.is_file() {
             diagnostics.push(source_diagnostic(
                 Some(AgentKind::OpenCode),
@@ -796,7 +795,6 @@ impl OpenCodeProvider {
                         source_error_status(&error),
                         vec![diagnostic_reason(&error.to_string())],
                     ));
-                    source_errors.push(error);
                     Vec::new()
                 }
             }
@@ -854,13 +852,10 @@ impl OpenCodeProvider {
                         source_error_status(&error),
                         vec![diagnostic_reason(&error.to_string())],
                     ));
-                    source_errors.push(error)
                 }
             }
         }
-        if output.is_empty() && !source_errors.is_empty() {
-            return Err(anyhow::anyhow!("OpenCode sources could not be read"));
-        }
+        // Keep per-source failures even when no source yielded a candidate.
         Ok((output, diagnostics))
     }
 }
@@ -1091,7 +1086,6 @@ impl OpenClawProvider {
         };
         let mut output = Vec::new();
         let mut diagnostics = Vec::new();
-        let mut source_failed = false;
         let config = home.join("openclaw.json");
         let config_started = Utc::now();
         if config.is_file() {
@@ -1146,7 +1140,6 @@ impl OpenClawProvider {
                     ));
                 }
                 Err(error) => {
-                    source_failed = true;
                     diagnostics.push(source_diagnostic(
                         Some(AgentKind::OpenClaw),
                         "config",
@@ -1201,7 +1194,6 @@ impl OpenClawProvider {
                 ));
             }
             Err(error) => {
-                source_failed = true;
                 diagnostics.push(source_diagnostic(
                     Some(AgentKind::OpenClaw),
                     "sessions-jsonl",
@@ -1213,9 +1205,6 @@ impl OpenClawProvider {
                     vec![diagnostic_reason(&error.to_string())],
                 ));
             }
-        }
-        if output.is_empty() && source_failed {
-            return Err(anyhow::anyhow!("OpenClaw sources could not be read"));
         }
         Ok((output, diagnostics))
     }
@@ -1311,7 +1300,6 @@ impl HermesProvider {
         }
         let mut output = Vec::new();
         let mut diagnostics = Vec::new();
-        let mut source_failed = false;
         for home in homes {
             if !home.is_dir() {
                 let finished_at = Utc::now();
@@ -1373,7 +1361,6 @@ impl HermesProvider {
                         ));
                     }
                     Err(error) => {
-                        source_failed = true;
                         diagnostics.push(source_diagnostic(
                             Some(AgentKind::Hermes),
                             "config",
@@ -1422,7 +1409,6 @@ impl HermesProvider {
                         ));
                     }
                     Err(error) => {
-                        source_failed = true;
                         diagnostics.push(source_diagnostic(
                             Some(AgentKind::Hermes),
                             "state-db",
@@ -1477,7 +1463,6 @@ impl HermesProvider {
                     ));
                 }
                 Err(error) => {
-                    source_failed = true;
                     diagnostics.push(source_diagnostic(
                         Some(AgentKind::Hermes),
                         "sessions-jsonl",
@@ -1491,27 +1476,24 @@ impl HermesProvider {
                 }
             }
         }
-        if output.is_empty() && source_failed {
-            return Err(anyhow::anyhow!("Hermes sources could not be read"));
-        }
         Ok((output, diagnostics))
     }
 }
 
 fn discover_hermes_database(path: &Path) -> Result<Vec<DiscoveryCandidate>> {
     let connection = open_read_only(path)?;
+    let columns = table_columns(&connection, "sessions")?;
     let cwd_column = ["cwd", "directory", "project_dir"]
         .into_iter()
-        .find(|column| table_has_column(&connection, "sessions", column).unwrap_or(false));
+        .find(|column| columns.contains(*column));
     let Some(cwd_column) = cwd_column else {
         return Ok(Vec::new());
     };
-    let columns = table_columns(&connection, "sessions")?;
     let timestamp_column = ["started_at", "created_at", "updated_at"]
         .into_iter()
         .find(|column| columns.contains(*column));
     let timestamp_expression = timestamp_column
-        .map(|column| format!("MAX(CAST({column} AS TEXT))"))
+        .map(|column| format!("CAST(MAX({column}) AS TEXT)"))
         .unwrap_or_else(|| "NULL".into());
     let sql = format!(
         "SELECT {cwd_column}, COUNT(*), {timestamp_expression} FROM sessions \
@@ -1537,6 +1519,18 @@ fn discover_hermes_database(path: &Path) -> Result<Vec<DiscoveryCandidate>> {
                     .ok()
                     .and_then(|value| parse_json_timestamp(&value))
                     .or_else(|| value.parse::<i64>().ok().and_then(timestamp_from_integer))
+                    .or_else(|| {
+                        value.parse::<f64>().ok().and_then(|value| {
+                            (value.is_finite() && value > 0.0 && value < i64::MAX as f64)
+                                .then(|| timestamp_from_integer(value as i64))
+                                .flatten()
+                        })
+                    })
+                    .or_else(|| {
+                        DateTime::parse_from_rfc3339(value)
+                            .ok()
+                            .map(|value| value.with_timezone(&Utc))
+                    })
             }),
             count.max(0) as u64,
             false,
@@ -1641,7 +1635,6 @@ impl GrokBuildProvider {
         };
         let mut output = Vec::new();
         let mut diagnostics = Vec::new();
-        let mut source_failed = false;
         for (source, root) in [
             ("sessions", home.join("sessions")),
             ("archived-sessions", home.join("archived_sessions")),
@@ -1683,7 +1676,6 @@ impl GrokBuildProvider {
                     ));
                 }
                 Err(error) => {
-                    source_failed = true;
                     diagnostics.push(source_diagnostic(
                         Some(AgentKind::GrokBuild),
                         source,
@@ -1696,11 +1688,6 @@ impl GrokBuildProvider {
                     ));
                 }
             }
-        }
-        if output.is_empty() && source_failed {
-            return Err(anyhow::anyhow!(
-                "Grok Build session sources could not be read"
-            ));
         }
         Ok((output, diagnostics))
     }
@@ -1834,8 +1821,8 @@ fn discover_jsonl_cwds(
                 continue;
             }
         };
-        if metadata.len() > 256 * 1024 {
-            reasons.insert("scan-budget-exceeded".into());
+        if !metadata.file_type().is_file() {
+            reasons.insert("source-read-failed".into());
             continue;
         }
         let file = match fs::File::open(path) {
@@ -1847,15 +1834,31 @@ fn discover_jsonl_cwds(
         };
         let mut cwd = None;
         let mut updated_at = None;
-        for line in std::io::BufReader::new(file).lines().take(32) {
-            let line = match line {
-                Ok(line) => line,
-                Err(_) => {
-                    reasons.insert("source-read-failed".into());
-                    break;
-                }
-            };
-            let value = match serde_json::from_str::<JsonValue>(&line) {
+        const HEADER_BYTES: usize = 256 * 1024;
+        let mut bytes = Vec::new();
+        if file
+            .take((HEADER_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .is_err()
+        {
+            reasons.insert("source-read-failed".into());
+            continue;
+        }
+        let byte_limited = bytes.len() > HEADER_BYTES;
+        if byte_limited {
+            bytes.truncate(HEADER_BYTES);
+            // Never parse the partial record at the byte boundary as a header.
+            let end = bytes
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map_or(0, |i| i + 1);
+            bytes.truncate(end);
+        }
+        let mut lines = bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty());
+        for line in lines.by_ref().take(32) {
+            let value = match serde_json::from_slice::<JsonValue>(line) {
                 Ok(value) => value,
                 Err(_) => {
                     reasons.insert("unsupported-schema".into());
@@ -1882,6 +1885,9 @@ fn discover_jsonl_cwds(
             if cwd.is_some() && updated_at.is_some() {
                 break;
             }
+        }
+        if (cwd.is_none() || updated_at.is_none()) && (byte_limited || lines.next().is_some()) {
+            reasons.insert("scan-budget-exceeded".into());
         }
         if let Some(cwd) = cwd {
             output.push(candidate(
@@ -2514,10 +2520,6 @@ fn open_read_only(path: &Path) -> Result<Connection> {
     Ok(connection)
 }
 
-fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool> {
-    Ok(table_columns(connection, table)?.contains(column))
-}
-
 fn table_columns(connection: &Connection, table: &str) -> Result<BTreeSet<String>> {
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
     let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
@@ -2623,6 +2625,147 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
+
+    #[test]
+    fn jsonl_discovery_reads_large_transcript_headers_with_a_bounded_prefix() {
+        for agent in [AgentKind::OpenClaw, AgentKind::Hermes] {
+            let dir = tempdir().unwrap();
+            let header =
+                serde_json::json!({"cwd":"/workspace", "timestamp":"2026-09-01T12:00:00Z"});
+            fs::write(
+                dir.path().join("large.jsonl"),
+                format!("{header}\n{}", "x".repeat(300 * 1024)),
+            )
+            .unwrap();
+            let result = discover_jsonl_cwds(dir.path(), 1, agent).unwrap();
+            assert_eq!(result.candidates.len(), 1);
+            assert_eq!(result.candidates[0].path, PathBuf::from("/workspace"));
+            assert!(result.reasons.is_empty());
+        }
+    }
+
+    #[test]
+    fn jsonl_discovery_does_not_parse_records_beyond_byte_or_line_budget() {
+        for prefix in [" ".repeat(256 * 1024), "{}\n".repeat(32)] {
+            let dir = tempdir().unwrap();
+            fs::write(
+                dir.path().join("limited.jsonl"),
+                format!("{prefix}{{\"cwd\":\"/hidden\"}}\n"),
+            )
+            .unwrap();
+            let result = discover_jsonl_cwds(dir.path(), 1, AgentKind::OpenClaw).unwrap();
+            assert!(result.candidates.is_empty());
+            assert!(result.reasons.contains("scan-budget-exceeded"));
+        }
+    }
+
+    #[test]
+    fn hermes_database_preserves_real_integer_and_rfc3339_timestamps() {
+        for (kind, value, expected) in [
+            ("REAL", "1788860000.5", 1788860000),
+            ("INTEGER", "1788860000", 1788860000),
+            ("INTEGER", "1788860000000", 1788860000),
+            ("TEXT", "2026-09-08T10:53:20Z", 1788864800),
+        ] {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("state.db");
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch(&format!(
+                "CREATE TABLE sessions(cwd TEXT, started_at {kind});"
+            ))
+            .unwrap();
+            db.execute("INSERT INTO sessions VALUES('/workspace', ?1)", [value])
+                .unwrap();
+            drop(db);
+            let candidates = discover_hermes_database(&path).unwrap();
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(
+                candidates[0].last_active_at.unwrap().timestamp(),
+                expected,
+                "{kind}: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_sources_keep_diagnostics_without_candidates() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("opencode.db"), "not sqlite").unwrap();
+        fs::write(dir.path().join("openclaw.json"), "{broken").unwrap();
+        fs::write(dir.path().join("state.db"), "not sqlite").unwrap();
+        let providers: Vec<(Box<dyn WorkspaceDiscoveryProvider>, &str, &str)> = vec![
+            (
+                Box::new(OpenCodeProvider {
+                    config_home: Some(dir.path().to_path_buf()),
+                    data_home: Some(dir.path().to_path_buf()),
+                }),
+                "sqlite",
+                "opencode.db",
+            ),
+            (
+                Box::new(OpenClawProvider {
+                    home: Some(dir.path().to_path_buf()),
+                }),
+                "config",
+                "openclaw.json",
+            ),
+            (
+                Box::new(HermesProvider {
+                    home: Some(dir.path().to_path_buf()),
+                }),
+                "state-db",
+                "state.db",
+            ),
+        ];
+        for (provider, source, file) in providers {
+            let (candidates, diagnostics) = provider.discover_with_diagnostics().unwrap();
+            assert!(candidates.is_empty());
+            let failure = diagnostics.iter().find(|d| d.source == source).unwrap();
+            assert_eq!(
+                failure.path.as_deref(),
+                Some(dir.path().join(file).as_path())
+            );
+            assert_eq!(failure.status, DiscoveryDiagnosticStatus::Failed);
+            assert!(!failure.reasons.is_empty());
+            assert!(diagnostics.len() > 1);
+        }
+    }
+
+    #[test]
+    fn source_failure_keeps_other_source_candidates_and_missing_sources_stay_missing() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("openclaw");
+        let provider = OpenClawProvider {
+            home: Some(home.clone()),
+        };
+        let (candidates, diagnostics) = provider.discover_with_diagnostics().unwrap();
+        assert!(candidates.is_empty());
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.status == DiscoveryDiagnosticStatus::Missing)
+        );
+
+        let sessions = home.join("agents/default/sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::write(home.join("openclaw.json"), "{broken").unwrap();
+        fs::write(
+            sessions.join("session.jsonl"),
+            "{\"cwd\":\"/workspace\",\"timestamp\":\"2026-09-01T12:00:00Z\"}\n",
+        )
+        .unwrap();
+        let (candidates, diagnostics) = provider.discover_with_diagnostics().unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.source == "config" && d.status == DiscoveryDiagnosticStatus::Failed)
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.source == "sessions-jsonl"
+                && d.status == DiscoveryDiagnosticStatus::Succeeded)
+        );
+    }
 
     #[test]
     fn bounded_parallel_map_preserves_input_order() {

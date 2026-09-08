@@ -11,6 +11,14 @@ const session = {
   availability: "readable",
 };
 describe("remote payload validation", () => {
+  it("accepts a mixed catalog of all supported history providers", () => {
+    const agents = ["codex", "claude-code", "opencode", "open-claw", "hermes", "grok-build"];
+    const result = parseRemoteCatalog({
+      workspaces: [workspace],
+      sessions: agents.map((agent) => ({ ...session, id: agent, agent })),
+    });
+    expect(result.sessions.map((item) => item.agent)).toEqual(agents);
+  });
   it("preserves whitelisted turn metadata and degrades old or unknown phases", () => {
     const event = {
       id: "e",
@@ -84,6 +92,7 @@ describe("remote payload validation", () => {
   });
   it.each([
     { workspaces: null, sessions: [] },
+    { workspaces: [workspace], sessions: [{ ...session, agent: "unknown-agent" }] },
     { workspaces: [workspace], sessions: [{ ...session, id: {} }] },
     { workspaces: [workspace, workspace], sessions: [] },
     { workspaces: [workspace], sessions: [session, session] },

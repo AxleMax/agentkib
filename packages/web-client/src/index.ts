@@ -1,7 +1,7 @@
 export interface ConversationSessionSummary {
   id: string;
   workspace_id: string;
-  agent: "codex" | "claude-code" | "opencode";
+  agent: "codex" | "claude-code" | "opencode" | "open-claw" | "hermes" | "grok-build";
   title?: string;
   updated_at?: string;
   availability: "readable" | "metadata-only";

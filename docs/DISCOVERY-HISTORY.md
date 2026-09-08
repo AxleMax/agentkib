@@ -13,11 +13,15 @@
 ## 新增的只读来源
 
 - OpenClaw：Agent 目录中的 `sessions/*.jsonl`，以及 `sessions.json` 提供的标题信息。
-- Hermes：默认 Home 和各 profile 的 `state.db` 与 JSONL；同一 profile 的同一会话合并，数据库元数据优先。一个来源失败不应抹除其他来源或已索引记录。
+- Hermes：默认 Home 和各 profile 的 `state.db` 与 JSONL；同一 profile 的同一会话先合并、再过滤工作区，数据库元数据优先。双方目录冲突时以数据库归属为准；数据库不支持正文读取时仍可使用 JSONL 正文，不改变归属。一个来源失败不应抹除其他来源或已索引记录。
 - Grok Build：`sessions` 和 `archived_sessions` 下的 `summary.json` 与 `chat_history.jsonl`；不展示 reasoning 记录。
 - OpenCode：工作区发现合并 SQLite 和旧 JSON 来源；历史读取继续使用既有 CLI 路径。
 
 会话归属使用可验证的目录信息，不根据标题猜测。历史正文按页有界读取；未知格式或预算限制不视为完整成功。新增 OpenClaw、Hermes、Grok Build 来源不提供续接、导出或实时控制。
+
+Hermes SQLite 历史分页在剩余字节不足以显示一个 UTF-8 字符时，将整条未显示记录留到下一页（包括工具结果）。会话与消息时间均兼容整数／浮点秒、毫秒及 RFC 3339；浮点值按发现层规则转换，不接受非有限值或超范围值。
+
+OpenClaw／Hermes 的 JSONL 工作区发现只检查前 256 KiB 内至多 32 条非空记录，不因会话文件总大小超限而跳过合法头部；预算内信息不足时保留预算提示。来源失败即使没有发现任何候选，也保留独立路径、状态和原因，不覆盖其他来源的结果。Hermes 数据库时间兼容浮点秒、整数秒／毫秒及 RFC 3339 文本。
 
 工作区路径归一化后，来源证据另外保留原始 cwd 集合；同一工作区下的多个目录不互相覆盖。数据库升级使用增量迁移，旧记录没有这些证据时按未知处理。
 

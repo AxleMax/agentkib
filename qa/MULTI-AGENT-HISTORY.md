@@ -59,6 +59,19 @@
 
 ## 过程记录
 
+### 2026-09-08 审查／修复闭环复核
+
+- 比较基点：`origin/main` 的合并基点 `34c65fe6d270b58e0ab5091a63472aa91b30b705`；包含当前未提交修复。未提交、未发布，未向真实 Agent 发送控制请求。
+- 累计修复：Codex 空分叉字段回退；大 JSONL 有界头部发现；零候选时保留来源诊断；Hermes 浮点时间（发现及历史）、双来源归属、UTF-8 分页边界。
+- 本轮新增发现并修复：远程目录校验遗漏 `open-claw`、`hermes`、`grok-build`，导致混合目录整体报 `REMOTE_INVALID_RESPONSE`。先复现失败，再补齐明确白名单及 Web 客户端类型；未知 Agent 仍拒绝，不扩大控制权限。
+- 复审重点：上述修复及调用方、来源身份／工作区归属、索引到远程目录／正文读取、会话／搜索异步状态、只读能力边界。最终复审未发现新的明确可操作问题；这是代码审查结论，不是绝对无缺陷或真实设备全量验收声明。
+- `cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`：通过。
+- `pnpm test`：桌面 81 个文件／559 项、Web 22 项通过。首次全量运行遇到新增回归测试的预期失败，修复后已全量重跑通过。
+- `pnpm typecheck`、`pnpm build`（release runtime、Web、桌面 renderer、Electron main/preload）：通过。类型检查曾拦截修复中 OpenClaw 的拼写错误，已按实际 `open-claw` 协议值修正后重跑。
+- `pnpm format:check`、`cargo fmt --all --check`、`git diff --check`：通过。此前报告的四个格式文件本轮仅做机械排版，已核对无语义改动。
+- 正常构建执行协议生成后，`electron/generated/runtime-protocol.ts` 与 HEAD 无差异，协议仍为 15。
+- 保留上文真实来源、真实设备、多尺寸、HTTPS 和安装包运行验收限制；本轮生产构建成功不等于安装包或真实跨设备验收通过。`design-qa.md` 等无关用户改动未覆盖。
+
 实施中；以下为已执行检查，并非最终全量验收。
 
 - `cargo test -p agentkib-platform --quiet`：31 项通过，包括新增父／嵌套项目与无标记 cwd 归属测试。

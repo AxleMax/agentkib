@@ -1083,7 +1083,7 @@ impl CodexProvider {
                     origin_authoritative: metadata.origin_authoritative,
                     source_present_in_database: source.is_some(),
                     spawned_from_database: parent.is_some(),
-                    forked_from_database: columns.contains("forked_from_id"),
+                    forked_from_database: forked.is_some(),
                     spawned_by_session_id: metadata.spawned_by_session_id,
                     forked_from_session_id: metadata.forked_from_session_id,
                     created_at: row
@@ -3113,6 +3113,56 @@ mod tests {
             sessions[0].forked_from_session_id.as_deref(),
             Some("fork-from-header")
         );
+    }
+
+    #[test]
+    fn codex_falls_back_to_header_for_empty_database_fork_values() {
+        for (database_fork, expected) in [
+            (None, "fork-from-header"),
+            (Some(""), "fork-from-header"),
+            (Some("  "), "fork-from-header"),
+            (Some("fork-from-database"), "fork-from-database"),
+        ] {
+            let dir = tempdir().unwrap();
+            let workspace = dir.path().join("workspace");
+            fs::create_dir_all(&workspace).unwrap();
+            let transcript = dir.path().join("fork.jsonl");
+            fs::write(
+                &transcript,
+                format!(
+                    "{}\n",
+                    codex_meta_line(
+                        "fork",
+                        serde_json::json!("cli"),
+                        serde_json::json!({"forked_from_id":"fork-from-header"}),
+                    )
+                ),
+            )
+            .unwrap();
+            write_codex_metadata_database(
+                &dir.path().join("state_1.sqlite"),
+                &[(
+                    "fork",
+                    transcript.as_path(),
+                    workspace.as_path(),
+                    "Fork",
+                    Some("\"cli\""),
+                    None,
+                    database_fork,
+                    None,
+                )],
+            );
+
+            let sessions = CodexProvider::with_home(dir.path().to_path_buf())
+                .list_sessions(&workspace)
+                .unwrap();
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(
+                sessions[0].forked_from_session_id.as_deref(),
+                Some(expected),
+                "database fork value: {database_fork:?}",
+            );
+        }
     }
 
     #[test]

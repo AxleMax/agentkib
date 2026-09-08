@@ -35,17 +35,28 @@ function errorMessage(error: unknown, detail: string, tr: typeof Translate): str
   }
   if (/pairing not approved/i.test(detail)) return tr("remote.error.approval");
   if (/cannot pair with this device/i.test(detail)) return tr("remote.error.self");
-  if (/private IPv4 address|Remote address must be|Invalid remote address|port required/i.test(detail)) {
+  if (
+    /private IPv4 address|Remote address must be|Invalid remote address|port required/i.test(detail)
+  ) {
     return tr("remote.error.address");
   }
   if (/select a local network interface/i.test(detail)) return tr("remote.error.interface");
   if (/enable sharing first/i.test(detail)) return tr("remote.error.enableSharing");
   if (/address already in use|EADDRINUSE/i.test(detail)) return tr("remote.error.portBusy");
-  if (/connection refused|connection reset|timed out|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH/i.test(detail)) {
+  if (
+    /connection refused|connection reset|timed out|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH/i.test(
+      detail,
+    )
+  ) {
     return tr("remote.error.offline");
   }
   if (/device limit reached|host limit reached/i.test(detail)) return tr("remote.error.limit");
-  if (typeof error === "object" && error !== null && "key" in error && typeof error.key === "string") {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "key" in error &&
+    typeof error.key === "string"
+  ) {
     // Preserve existing structured translations, but keep their diagnostics out of the summary.
     return localizeMessage({ ...error, detail: undefined }, tr);
   }

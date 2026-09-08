@@ -9,7 +9,10 @@ export interface ActivityPresentation {
 const discoveryDetailPattern = /^(\d+) workspaces, (\d+) errors$/;
 const insightsDetailPattern = /^(\d+) providers, (\d+) repositories$/;
 
-export function activityPresentation(record: ActivityRecord, tr = defaultTranslate): ActivityPresentation {
+export function activityPresentation(
+  record: ActivityRecord,
+  tr = defaultTranslate,
+): ActivityPresentation {
   switch (record.action) {
     case "discovery.complete": {
       const match = discoveryDetailPattern.exec(record.detail);

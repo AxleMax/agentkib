@@ -88,10 +88,12 @@ impl HermesProvider {
             if !home.is_dir() {
                 continue;
             }
-            let (mut database, db_incomplete) = scan_database(&home, &profile, workspace)?;
+            // Resolve source precedence before filtering ownership, just as
+            // read_events does. A stale JSONL cwd must not resurrect a DB
+            // session in a different workspace or hide its fallback body.
+            let (mut database, db_incomplete) = scan_database(&home, &profile)?;
             incomplete |= db_incomplete;
-            let (jsonl, jsonl_incomplete) =
-                scan_jsonl(&home, &profile, workspace, &mut visited_jsonl)?;
+            let (jsonl, jsonl_incomplete) = scan_jsonl(&home, &profile, &mut visited_jsonl)?;
             incomplete |= jsonl_incomplete;
             for jsonl_session in jsonl {
                 if let Some(database_session) = database
@@ -124,7 +126,7 @@ impl HermesProvider {
                     session
                         .cwd
                         .as_deref()
-                        .is_some_and(|cwd| crate::history::belongs_to_workspace(cwd, workspace))
+                        .is_some_and(|cwd| belongs_to_workspace(cwd, workspace))
                 });
             }
             all.extend(database);
@@ -229,11 +231,7 @@ fn summary(session: Session) -> NativeSessionSummary {
     }
 }
 
-fn scan_database(
-    home: &Path,
-    profile: &str,
-    workspace: Option<&Path>,
-) -> Result<(Vec<Session>, bool)> {
+fn scan_database(home: &Path, profile: &str) -> Result<(Vec<Session>, bool)> {
     let path = home.join("state.db");
     if !path.is_file() {
         return Ok((Vec::new(), false));
@@ -308,12 +306,6 @@ fn scan_database(
         let cwd = cwd
             .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from);
-        if workspace.is_some_and(|workspace| {
-            cwd.as_deref()
-                .is_some_and(|cwd| !belongs_to_workspace(cwd, workspace))
-        }) {
-            continue;
-        }
         let native_ref = stable_native_ref(
             "hermes",
             &[home.to_string_lossy().as_ref(), profile, &session_id],
@@ -338,12 +330,7 @@ fn scan_database(
     Ok((output, incomplete))
 }
 
-fn scan_jsonl(
-    home: &Path,
-    profile: &str,
-    workspace: Option<&Path>,
-    visited: &mut usize,
-) -> Result<(Vec<Session>, bool)> {
+fn scan_jsonl(home: &Path, profile: &str, visited: &mut usize) -> Result<(Vec<Session>, bool)> {
     let path = home.join("sessions");
     if !path.is_dir() {
         return Ok((Vec::new(), false));
@@ -379,7 +366,7 @@ fn scan_jsonl(
         {
             continue;
         }
-        match parse_jsonl(home, profile, &file, workspace) {
+        match parse_jsonl(home, profile, &file) {
             Ok(JsonlOutcome::Session {
                 session,
                 incomplete: source_incomplete,
@@ -387,9 +374,8 @@ fn scan_jsonl(
                 output.push(session);
                 incomplete |= source_incomplete;
             }
-            // Missing IDs, an already represented DB session, and a
-            // different workspace are valid filters, not partial-read
-            // failures. Actual unreadable files arrive as Err below.
+            // Missing IDs are valid skips, not partial-read failures.
+            // Actual unreadable files arrive as Err below.
             Ok(JsonlOutcome::Skip) => {}
             Err(_) => incomplete = true,
         }
@@ -402,12 +388,7 @@ enum JsonlOutcome {
     Skip,
 }
 
-fn parse_jsonl(
-    home: &Path,
-    profile: &str,
-    path: &Path,
-    workspace: Option<&Path>,
-) -> Result<JsonlOutcome> {
+fn parse_jsonl(home: &Path, profile: &str, path: &Path) -> Result<JsonlOutcome> {
     let (head, tail) = read_head_tail_lines(path)?;
     let mut id = None;
     let mut title = None;
@@ -496,12 +477,6 @@ fn parse_jsonl(
             Ok(JsonlOutcome::Skip)
         };
     };
-    if workspace.is_some_and(|workspace| {
-        !cwd.as_deref()
-            .is_some_and(|cwd| belongs_to_workspace(cwd, workspace))
-    }) {
-        return Ok(JsonlOutcome::Skip);
-    }
     let title = title
         .and_then(|value| super::sanitize_title(Some(&value)))
         .or(first_user)
@@ -605,6 +580,13 @@ fn select_status_expr(columns: &BTreeSet<String>) -> String {
 fn parse_timestamp_text(value: &str) -> Option<DateTime<Utc>> {
     if let Ok(number) = value.parse::<i64>() {
         return super::timestamp_from_integer(number);
+    }
+    // SQLite REAL timestamps are cast to decimal text. Match discovery's
+    // seconds/milliseconds handling without saturating invalid float values.
+    if let Ok(number) = value.parse::<f64>() {
+        return (number.is_finite() && number > 0.0 && number < i64::MAX as f64)
+            .then(|| super::timestamp_from_integer(number as i64))
+            .flatten();
     }
     super::parse_json_timestamp(&Value::String(value.to_owned()))
 }
@@ -899,6 +881,7 @@ fn read_sqlite_events(
         }
         scanned_rows += 1;
         let rowid = row.get::<_, i64>(0)?;
+        let previous_scanned = last_scanned;
         last_scanned = Some(rowid);
         let role = row.get::<_, Option<String>>(1)?.unwrap_or_default();
         let content = row.get::<_, Option<String>>(2)?.unwrap_or_default();
@@ -930,11 +913,19 @@ fn read_sqlite_events(
         }
         let remaining = SQLITE_MAX_PAGE_BYTES.saturating_sub(page_bytes);
         if remaining == 0 {
-            has_more = rows.next()?.is_some();
+            last_scanned = previous_scanned;
+            has_more = true;
             break;
         }
         let (content, truncated) =
             super::truncate_utf8(&content, remaining.min(super::MAX_MESSAGE_BYTES));
+        if content.is_empty() && truncated {
+            // The remaining bytes cannot hold even the first UTF-8 character.
+            // Retry this row on the next page, including tool-result bodies.
+            last_scanned = previous_scanned;
+            has_more = true;
+            break;
+        }
         let content = (!content.is_empty()).then_some(content);
         if content.is_none() && kind != ConversationEventKind::ToolSummary {
             continue;
@@ -1025,6 +1016,57 @@ mod tests {
     }
 
     #[test]
+    fn database_ownership_wins_before_workspace_filtering() {
+        for sqlite_messages in [true, false] {
+            let dir = tempdir().unwrap();
+            let workspace = dir.path().join("owner");
+            let stale_workspace = dir.path().join("stale");
+            fs::create_dir_all(&workspace).unwrap();
+            fs::create_dir_all(&stale_workspace).unwrap();
+            fs::create_dir_all(dir.path().join("sessions")).unwrap();
+            let db = Connection::open(dir.path().join("state.db")).unwrap();
+            db.execute_batch("CREATE TABLE sessions(id TEXT, title TEXT, cwd TEXT);")
+                .unwrap();
+            db.execute(
+                "INSERT INTO sessions VALUES ('same', 'DB title', ?1)",
+                [workspace.display().to_string()],
+            )
+            .unwrap();
+            if sqlite_messages {
+                db.execute_batch(
+                    "CREATE TABLE messages(session_id TEXT, role TEXT, content TEXT, created_at INTEGER);
+                     INSERT INTO messages VALUES ('same', 'user', 'from db', 1700000000);",
+                ).unwrap();
+            }
+            fs::write(
+                dir.path().join("sessions/same.jsonl"),
+                format!(
+                    "{{\"type\":\"session\",\"id\":\"same\",\"cwd\":\"{}\"}}\n{{\"role\":\"user\",\"content\":\"from jsonl\"}}\n",
+                    stale_workspace.display()
+                ),
+            ).unwrap();
+            let provider = HermesProvider::with_home(dir.path().to_path_buf());
+            let sessions = provider.list_sessions(&workspace).unwrap();
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(sessions[0].title.as_deref(), Some("DB title"));
+            assert!(provider.list_sessions(&stale_workspace).unwrap().is_empty());
+            let resolved = provider.resolve(&sessions[0].native_ref).unwrap();
+            assert_eq!(resolved.cwd.as_deref(), Some(workspace.as_path()));
+            let page = provider
+                .read_events(&sessions[0].native_ref, None, 50)
+                .unwrap();
+            assert_eq!(
+                page.events[0].content.as_deref(),
+                Some(if sqlite_messages {
+                    "from db"
+                } else {
+                    "from jsonl"
+                })
+            );
+        }
+    }
+
+    #[test]
     fn profile_identity_keeps_same_native_id_separate() {
         let dir = tempdir().unwrap();
         let workspace = dir.path().join("project");
@@ -1050,6 +1092,88 @@ mod tests {
             .unwrap();
         assert_eq!(sessions.len(), 2);
         assert_ne!(sessions[0].native_ref, sessions[1].native_ref);
+    }
+
+    #[test]
+    fn sqlite_byte_budget_keeps_unrendered_utf8_row_for_next_page() {
+        for remaining in [1, 2] {
+            for role in ["user", "tool"] {
+                let dir = tempdir().unwrap();
+                let path = dir.path().join("state.db");
+                let db = Connection::open(&path).unwrap();
+                db.execute_batch(
+                    "CREATE TABLE messages(session_id TEXT, role TEXT, content TEXT);",
+                )
+                .unwrap();
+                db.execute("INSERT INTO messages VALUES ('s1', ?1, '中文')", [role])
+                    .unwrap();
+                db.execute_batch("INSERT INTO messages VALUES ('s1', 'system', 'hidden');")
+                    .unwrap();
+                for index in 0..8 {
+                    let size =
+                        super::super::MAX_MESSAGE_BYTES - if index == 0 { remaining } else { 0 };
+                    db.execute(
+                        "INSERT INTO messages VALUES ('s1', 'assistant', ?1)",
+                        ["a".repeat(size)],
+                    )
+                    .unwrap();
+                }
+                let first = read_sqlite_events(&path, "s1", None, 50).unwrap();
+                assert_eq!(first.events.len(), 8);
+                let cursor = first
+                    .next_cursor
+                    .as_deref()
+                    .expect("unrendered row needs another page");
+                let second = read_sqlite_events(&path, "s1", Some(cursor), 50).unwrap();
+                assert_eq!(second.events.len(), 1);
+                assert_eq!(second.events[0].id, "hermes-db-1");
+                assert_eq!(second.events[0].content.as_deref(), Some("中文"));
+                assert!(!second.events[0].truncated);
+                assert!(second.next_cursor.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn sqlite_real_timestamps_survive_listing_and_history() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("project");
+        fs::create_dir_all(&workspace).unwrap();
+        let db = Connection::open(dir.path().join("state.db")).unwrap();
+        db.execute_batch(
+            "CREATE TABLE sessions(id TEXT, cwd TEXT, started_at REAL, ended_at REAL);
+             CREATE TABLE messages(session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+             INSERT INTO messages VALUES ('s1', 'user', 'hello', 1788860000.5);",
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO sessions VALUES ('s1', ?1, 1788860000.5, 1788860001.75)",
+            [workspace.display().to_string()],
+        )
+        .unwrap();
+        let provider = HermesProvider::with_home(dir.path().to_path_buf());
+        let sessions = provider.list_sessions(&workspace).unwrap();
+        assert_eq!(sessions[0].created_at.unwrap().timestamp(), 1788860000);
+        assert_eq!(sessions[0].updated_at.unwrap().timestamp(), 1788860001);
+        let page = provider
+            .read_events(&sessions[0].native_ref, None, 50)
+            .unwrap();
+        assert_eq!(page.events[0].timestamp.unwrap().timestamp(), 1788860000);
+        for value in [
+            "1788860000",
+            "1788860000000",
+            "1788860000000.5",
+            "2026-09-08T09:33:20Z",
+        ] {
+            assert_eq!(
+                parse_timestamp_text(value).unwrap().timestamp(),
+                1788860000,
+                "{value}"
+            );
+        }
+        for value in ["NaN", "inf", "-inf", "1e100", "-1e100", "invalid"] {
+            assert!(parse_timestamp_text(value).is_none(), "{value}");
+        }
     }
 
     #[test]

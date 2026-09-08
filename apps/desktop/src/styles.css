@@ -503,10 +503,17 @@ button {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
-.sidebar-resize-handle[aria-disabled="true"] { cursor: default; }
+.sidebar-resize-handle[aria-disabled="true"] {
+  cursor: default;
+}
 .app-shell-sidebar-resizing,
-.app-shell-sidebar-resizing > .app-sidebar { transition: none; }
-.app-shell-sidebar-resizing { user-select: none; cursor: col-resize; }
+.app-shell-sidebar-resizing > .app-sidebar {
+  transition: none;
+}
+.app-shell-sidebar-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
 .sidebar-resize-error {
   position: absolute;
   right: 16px;

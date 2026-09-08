@@ -65,7 +65,15 @@ describe("remote error feedback", () => {
   });
 
   it("retains structured translations and hides details until expanded", () => {
-    render(<RemoteErrorDetails error={{ key: "remote.listening", params: { address: "192.168.1.20:42987" }, detail: "Private diagnostic" }} />);
+    render(
+      <RemoteErrorDetails
+        error={{
+          key: "remote.listening",
+          params: { address: "192.168.1.20:42987" },
+          detail: "Private diagnostic",
+        }}
+      />,
+    );
     expect(screen.getByText("Listening: 192.168.1.20:42987")).toBeVisible();
     expect(screen.queryByText(/Private diagnostic/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: tr("errors.details") }));
@@ -77,7 +85,10 @@ describe("remote error feedback", () => {
     fireEvent.click(screen.getByRole("button", { name: tr("errors.details") }));
     expect(container.querySelector("pre")?.textContent).toHaveLength(4096);
     rerender(<RemoteErrorDetails error="REMOTE_REVOKED" />);
-    expect(screen.getByRole("button", { name: tr("errors.details") })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: tr("errors.details") })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(screen.queryByText("REMOTE_REVOKED")).toBeNull();
   });
 });
