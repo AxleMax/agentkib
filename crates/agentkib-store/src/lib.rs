@@ -33,6 +33,32 @@ pub struct Store {
     connection: Connection,
 }
 
+fn enable_wal(connection: &Connection, budget: std::time::Duration) -> Result<()> {
+    let deadline = std::time::Instant::now() + budget;
+    // Journal-mode conversion can return BUSY immediately instead of invoking SQLite's
+    // busy handler when two fresh connections race. Retry only this pre-migration step.
+    connection.busy_timeout(std::time::Duration::ZERO)?;
+    let result = loop {
+        match connection.execute_batch("PRAGMA journal_mode = WAL;") {
+            Ok(()) => break Ok(()),
+            Err(error)
+                if matches!(
+                    error.sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                ) && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(
+                    std::time::Duration::from_millis(10)
+                        .min(deadline.saturating_duration_since(std::time::Instant::now())),
+                );
+            }
+            Err(error) => break Err(error),
+        }
+    };
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    result.context("enable store WAL journal")
+}
+
 #[cfg(not(feature = "dev-app"))]
 const APP_DATA_DIRECTORY: &str = "ai.agentkib";
 #[cfg(feature = "dev-app")]
@@ -58,10 +84,8 @@ impl Store {
     }
 
     fn migrate(&self) -> Result<()> {
-        self.connection.execute_batch(
-            "PRAGMA foreign_keys = ON;
-             PRAGMA journal_mode = WAL;",
-        )?;
+        self.connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+        enable_wal(&self.connection, std::time::Duration::from_secs(5))?;
         // Hold the write lock before reading the version. Multiple Runtime requests can
         // open the store during startup; each migration must observe the version left by
         // the previous opener instead of replaying a stale migration plan.
@@ -4522,6 +4546,40 @@ mod tests {
         for handle in handles {
             assert_eq!(handle.join().unwrap().unwrap(), "13");
         }
+    }
+
+    #[test]
+    fn wal_conversion_retries_reader_contention_and_has_a_deadline() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("db.sqlite");
+        let reader = Connection::open(&database).unwrap();
+        reader
+            .execute_batch("CREATE TABLE sample(value); BEGIN; SELECT * FROM sample;")
+            .unwrap();
+        let writer = Connection::open(&database).unwrap();
+        let started = std::time::Instant::now();
+        let error = enable_wal(&writer, std::time::Duration::from_millis(30)).unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<rusqlite::Error>()
+                .unwrap()
+                .sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseBusy)
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        let handle =
+            std::thread::spawn(move || enable_wal(&writer, std::time::Duration::from_secs(2)));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        reader.execute_batch("ROLLBACK;").unwrap();
+        handle.join().unwrap().unwrap();
+        // An already-open connection can cache its previous journal mode.
+        let reopened = Connection::open(&database).unwrap();
+        assert_eq!(
+            reopened
+                .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "wal"
+        );
     }
 
     #[test]

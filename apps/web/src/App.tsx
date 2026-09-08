@@ -27,6 +27,7 @@ import {
 import { Transcript } from "@agentkib/session-ui";
 import { dictionaries, type Locale } from "./i18n";
 const client = new WebClient();
+const MAX_MESSAGE_LENGTH = 16_000;
 export function Dialog({
   title,
   closeLabel,
@@ -111,7 +112,7 @@ export function App() {
   }, []);
   const fail = useCallback(
     (e: unknown) => {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+      if (e instanceof ApiError && e.code === "access_ended") {
         clear();
         const ended: Access = {
           status: "ended",
@@ -369,6 +370,8 @@ export function App() {
   }
   async function control(kind: "send" | "approve", approval?: Approval, decision?: Decision) {
     if (mutating.current || !access || !live || !online) return;
+    const text = message.trim();
+    if (kind === "send" && (!text || message.length > MAX_MESSAGE_LENGTH)) return;
     // A stable request ID does not mean the command/scope shown in an open
     // dialog is still current. Require the exact reviewed projection.
     if (
@@ -389,7 +392,7 @@ export function App() {
         bootId: access.bootId,
         expectedRevision: live.revision,
         ...(kind === "send"
-          ? { text: message.trim() }
+          ? { text }
           : { turnId: approval!.turnId, approvalId: approval!.requestId, decision }),
       });
       if (g !== generation.current) return;
@@ -647,7 +650,8 @@ export function App() {
                     className="composer"
                     onSubmit={(e) => {
                       e.preventDefault();
-                      if (canSend && message.trim()) void control("send");
+                      if (canSend && message.trim() && message.length <= MAX_MESSAGE_LENGTH)
+                        void control("send");
                     }}
                   >
                     <label className="sr-only" htmlFor="message">
@@ -656,7 +660,7 @@ export function App() {
                     <textarea
                       id="message"
                       value={message}
-                      maxLength={32000}
+                      maxLength={MAX_MESSAGE_LENGTH}
                       onChange={(e) => setMessage(e.target.value)}
                       placeholder={t.message}
                       disabled={!online || busy}
@@ -668,7 +672,9 @@ export function App() {
                       <button
                         className="send"
                         aria-label={t.send}
-                        disabled={!canSend || !message.trim()}
+                        disabled={
+                          !canSend || !message.trim() || message.length > MAX_MESSAGE_LENGTH
+                        }
                       >
                         <ArrowUp size={20} />
                       </button>

@@ -330,6 +330,16 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn session_line(id: &str, cwd: &Path, timestamp: &str) -> String {
+        serde_json::json!({
+            "type": "session",
+            "id": id,
+            "cwd": cwd.to_string_lossy(),
+            "timestamp": timestamp,
+        })
+        .to_string()
+    }
+
     #[test]
     fn discovers_agent_scoped_session_and_display_name() {
         let dir = tempdir().unwrap();
@@ -345,8 +355,8 @@ mod tests {
         fs::write(
             sessions.join("s1.jsonl"),
             format!(
-                "{{\"type\":\"session\",\"id\":\"s1\",\"cwd\":\"{}\",\"timestamp\":\"2026-01-01T00:00:00Z\"}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"hello\"}},\"timestamp\":\"2026-01-01T00:00:01Z\"}}\n",
-                workspace.display()
+                "{}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"hello\"}},\"timestamp\":\"2026-01-01T00:00:01Z\"}}\n",
+                session_line("s1", &workspace, "2026-01-01T00:00:00Z")
             ),
         )
         .unwrap();
@@ -372,8 +382,8 @@ mod tests {
         fs::write(
             sessions.join("good.jsonl"),
             format!(
-                "{{\"type\":\"session\",\"id\":\"good\",\"cwd\":\"{}\"}}\n",
-                workspace.display()
+                "{}\n",
+                session_line("good", &workspace, "2026-01-01T00:00:00Z")
             ),
         )
         .unwrap();

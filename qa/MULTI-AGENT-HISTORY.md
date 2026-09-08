@@ -59,6 +59,19 @@
 
 ## 过程记录
 
+### 2026-09-08 PR #63 评论与跨平台 CI 修复
+
+- 更正上轮验证范围：本机 macOS 测试通过不能代表跨平台通过。提交 `b8bcfba` 的 CI 暴露了 Linux bridge dead-code lint、SQLite 新库并发 WAL 转换，以及 Windows 历史 fixture／游标问题。
+- PR 评论 `3955647048`：仅明确 `access_ended` 才清空内容并结束访问；错误配对码及其他 403 保留页面，可纠正后重试，控制错误仍保守禁用在线操作。
+- PR 评论 `3955647062`：Web 输入与发送前校验统一为 16,000 字符，与服务端一致。
+- bridge 内部流处理按 macOS／单元测试编译，保留其他平台公开只读类型；不放宽 Clippy。
+- Store 仅在迁移前的 WAL 转换遇到 BUSY／LOCKED 时有界重试，恢复原 busy timeout，迁移继续使用 IMMEDIATE 事务串行化。补 reader 锁超时及释放后成功测试。
+- Windows JSONL fixture 使用 JSON 序列化处理路径反斜线，不改生产路径语义。
+- Hermes Windows 游标改用系统卷号和文件 ID（复用仓库已有 `windows-sys 0.61`）；身份读取失败直接报错，不以时间戳或 `(0, 0)` 降级。补追加稳定、相同正文文件替换失效及 Windows 身份读取失败测试。
+- 本机验证：全工作区 Rust 测试／Clippy、桌面 559 项及 Web 25 项、类型检查和生产构建通过；Linux bridge 交叉目标 Clippy 通过。最终文件身份修改另行重跑 conversations 测试及全工作区 Clippy。
+- Windows conversations 交叉检查被本机缺少 Windows C 标准库头文件阻塞（`libsqlite3-sys` 编译报 `stdlib.h` 不存在），不记为通过；实际 Windows 测试交由 PR CI 验证。
+- 本轮不向真实 Agent 发送控制请求；无关设计稿、截图和 `design-qa.md` 保留。跨平台最终结果以本轮推送后的 CI 为准，不能以交叉编译代替 Windows 实际执行测试。
+
 ### 2026-09-08 审查／修复闭环复核
 
 - 比较基点：`origin/main` 的合并基点 `34c65fe6d270b58e0ab5091a63472aa91b30b705`；包含当前未提交修复。未提交、未发布，未向真实 Agent 发送控制请求。

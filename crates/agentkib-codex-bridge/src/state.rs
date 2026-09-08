@@ -1,5 +1,8 @@
+#[cfg(any(target_os = "macos", test))]
 use crate::method_version;
-use anyhow::{Context, Result, bail, ensure};
+#[cfg(any(target_os = "macos", test))]
+use anyhow::bail;
+use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -34,15 +37,19 @@ pub struct Approval {
 /// Owns one explicitly selected conversation. Never merges another host/thread's data.
 pub struct SessionState {
     pub(crate) conversation: String,
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) owner: String,
     pub(crate) revision: Option<u64>,
     pub(crate) snapshot: Option<Value>,
     pub(crate) status: Status,
+    #[cfg(any(target_os = "macos", test))]
     valid_stream: bool,
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) snapshot_count: u64,
 }
 
 impl SessionState {
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn new(conversation: String, owner: String) -> Self {
         Self {
             conversation,
@@ -67,6 +74,7 @@ impl SessionState {
     pub fn snapshot(&self) -> Option<&Value> {
         self.snapshot.as_ref()
     }
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn invalidate(&mut self, status: Status) {
         self.revision = None;
         self.snapshot = None;
@@ -133,6 +141,7 @@ impl SessionState {
             .collect()
     }
 
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn notification(&mut self, message: Value) -> Result<()> {
         if !self.valid_stream {
             return Ok(());
@@ -171,6 +180,7 @@ impl SessionState {
         result
     }
 
+    #[cfg(any(target_os = "macos", test))]
     fn apply_change(&mut self, message: &Value) -> Result<()> {
         ensure!(
             message["version"].as_u64() == method_version("thread-stream-state-changed"),
@@ -295,6 +305,7 @@ fn conversation_turns(snapshot: &Value) -> Result<Vec<&Value>> {
 }
 
 // Codex stream patches use Immer array paths, not JSON Pointer strings.
+#[cfg(any(target_os = "macos", test))]
 fn apply_patch(root: &mut Value, patch: &Value) -> Result<()> {
     let path = patch["path"]
         .as_array()
@@ -362,6 +373,7 @@ fn apply_patch(root: &mut Value, patch: &Value) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn index(value: &Value) -> Result<usize> {
     usize::try_from(
         value

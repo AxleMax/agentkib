@@ -592,21 +592,36 @@ fn parse_timestamp_text(value: &str) -> Option<DateTime<Utc>> {
 }
 
 #[cfg(unix)]
-fn sqlite_identity(metadata: &fs::Metadata) -> (u64, u64) {
+fn sqlite_identity(_path: &Path, metadata: &fs::Metadata) -> Result<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
-    (metadata.dev(), metadata.ino())
+    Ok((metadata.dev(), metadata.ino()))
 }
 
-#[cfg(not(unix))]
-fn sqlite_identity(metadata: &fs::Metadata) -> (u64, u64) {
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or((0, 0), |value| {
-            (value.as_secs(), u64::from(value.subsec_nanos()))
-        });
-    (metadata.len(), modified.0 ^ modified.1)
+#[cfg(windows)]
+fn sqlite_identity(path: &Path, _metadata: &fs::Metadata) -> Result<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let file = fs::File::open(path)
+        .with_context(|| format!("Cannot open Hermes database identity {}", path.display()))?;
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle is kept open for the call and points to a regular
+    // file; `information` is a valid writable buffer of the required type.
+    let succeeded = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    if succeeded == 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("Cannot query Hermes database identity {}", path.display()));
+    }
+    let file_index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    Ok((u64::from(information.dwVolumeSerialNumber), file_index))
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn sqlite_identity(_path: &Path, _metadata: &fs::Metadata) -> Result<(u64, u64)> {
+    bail!("Hermes database identity is unsupported on this platform")
 }
 
 fn sqlite_source_digest(path: &Path, session_id: &str) -> String {
@@ -808,7 +823,7 @@ fn read_sqlite_events(
     };
     let file_metadata = fs::metadata(path)
         .with_context(|| format!("Cannot stat Hermes database {}", path.display()))?;
-    let db_identity = sqlite_identity(&file_metadata);
+    let db_identity = sqlite_identity(path, &file_metadata)?;
     let source_digest = sqlite_source_digest(path, session_id);
     let max_sql = format!(
         "SELECT COALESCE(MAX(rowid), 0) FROM messages WHERE CAST({} AS TEXT) = ?1",
@@ -974,7 +989,17 @@ fn read_sqlite_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use tempfile::tempdir;
+
+    fn session_line(id: &str, cwd: &Path) -> String {
+        serde_json::json!({
+            "type": "session",
+            "id": id,
+            "cwd": cwd.to_string_lossy(),
+        })
+        .to_string()
+    }
 
     #[test]
     fn merges_database_before_jsonl_for_same_profile_and_id() {
@@ -1000,8 +1025,8 @@ mod tests {
         fs::write(
             dir.path().join("sessions/same.jsonl"),
             format!(
-                "{{\"type\":\"session\",\"id\":\"same\",\"cwd\":\"{}\"}}\n{{\"role\":\"user\",\"content\":\"from jsonl\"}}\n",
-                workspace.display()
+                "{}\n{{\"role\":\"user\",\"content\":\"from jsonl\"}}\n",
+                session_line("same", &workspace)
             ),
         )
         .unwrap();
@@ -1041,10 +1066,11 @@ mod tests {
             fs::write(
                 dir.path().join("sessions/same.jsonl"),
                 format!(
-                    "{{\"type\":\"session\",\"id\":\"same\",\"cwd\":\"{}\"}}\n{{\"role\":\"user\",\"content\":\"from jsonl\"}}\n",
-                    stale_workspace.display()
+                    "{}\n{{\"role\":\"user\",\"content\":\"from jsonl\"}}\n",
+                    session_line("same", &stale_workspace)
                 ),
-            ).unwrap();
+            )
+            .unwrap();
             let provider = HermesProvider::with_home(dir.path().to_path_buf());
             let sessions = provider.list_sessions(&workspace).unwrap();
             assert_eq!(sessions.len(), 1);
@@ -1080,10 +1106,7 @@ mod tests {
             fs::create_dir_all(root.join("sessions")).unwrap();
             fs::write(
                 root.join("sessions/same.jsonl"),
-                format!(
-                    "{{\"type\":\"session\",\"id\":\"same\",\"cwd\":\"{}\"}}\n",
-                    workspace.display()
-                ),
+                format!("{}\n", session_line("same", &workspace)),
             )
             .unwrap();
         }
@@ -1255,6 +1278,61 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_identity_survives_append() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        fs::write(&path, b"initial").unwrap();
+        let before = sqlite_identity(&path, &fs::metadata(&path).unwrap()).unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"appended")
+            .unwrap();
+        let after = sqlite_identity(&path, &fs::metadata(&path).unwrap()).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn sqlite_cursor_rejects_replaced_file_with_identical_contents() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TABLE messages(session_id TEXT, role TEXT, content TEXT);
+            INSERT INTO messages VALUES ('s1', 'user', 'one'), ('s1', 'user', 'two');",
+        )
+        .unwrap();
+        drop(db);
+        let page = read_sqlite_events(&path, "s1", None, 1).unwrap();
+        let metadata = fs::metadata(&path).unwrap();
+        let replacement = dir.path().join("replacement.db");
+        fs::copy(&path, &replacement).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(metadata.modified().unwrap()))
+            .unwrap();
+        // Retain the original file to prevent immediate file-ID reuse.
+        fs::rename(&path, dir.path().join("original.db")).unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        let error = read_sqlite_events(&path, "s1", page.next_cursor.as_deref(), 1).unwrap_err();
+        assert!(error.to_string().contains("TRANSCRIPT_CURSOR_STALE"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn sqlite_identity_failure_is_not_a_shared_placeholder() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        fs::write(&path, "data").unwrap();
+        let metadata = fs::metadata(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(sqlite_identity(&path, &metadata).is_err());
+    }
+
+    #[test]
     fn sqlite_skips_unknown_rows_without_losing_cross_page_events() {
         let dir = tempdir().unwrap();
         let workspace = dir.path().join("project");
@@ -1350,8 +1428,8 @@ mod tests {
         fs::write(
             dir.path().join("sessions/same.jsonl"),
             format!(
-                "{{\"type\":\"session\",\"id\":\"same\",\"cwd\":\"{}\"}}\n{{\"role\":\"user\",\"content\":\"jsonl body\"}}\n",
-                workspace.display()
+                "{}\n{{\"role\":\"user\",\"content\":\"jsonl body\"}}\n",
+                session_line("same", &workspace)
             ),
         )
         .unwrap();

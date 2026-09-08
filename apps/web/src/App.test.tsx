@@ -339,6 +339,22 @@ describe("Web access UI", () => {
     expect(screen.getByRole("button", { name: "请求连接" })).toBeEnabled();
     expect(screen.getByText(/全部已登记及以后新增/)).toBeVisible();
   });
+  it("keeps the pairing page after an invalid pairing code", async () => {
+    const server = mockServer("unpaired");
+    const original = server.fetcher.getMockImplementation()!;
+    server.fetcher.mockImplementation(async (url) => {
+      if (String(url).endsWith("/pair"))
+        return Response.json({ code: "invalid_pairing_code" }, { status: 403 });
+      return original(url);
+    });
+    render(<App />);
+    const code = await screen.findByLabelText("配对码");
+    fireEvent.change(code, { target: { value: "12345678" } });
+    fireEvent.click(screen.getByRole("button", { name: "请求连接" }));
+    await screen.findByRole("alert");
+    expect(screen.getByText("用桌面端授权这个浏览器")).toBeVisible();
+    expect(screen.queryByText("远程访问已结束")).toBeNull();
+  });
   it("does not offer control without independent grants", async () => {
     mockServer();
     render(<App />);
@@ -450,6 +466,75 @@ describe("Web access UI", () => {
       server.fetcher.mock.calls.filter((call) => String(call[0]).endsWith("/send")),
     ).toHaveLength(1);
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+  });
+
+  it("keeps approved access after a permission error and disables sending", async () => {
+    const server = mockServer();
+    const original = server.fetcher.getMockImplementation()!;
+    server.fetcher.mockImplementation(async (url) => {
+      if (String(url).endsWith("/access"))
+        return Response.json({
+          status: "approved",
+          csrfToken: "x",
+          bootId: "b",
+          experimentalEnabled: true,
+          device: { id: "d", name: "Browser", send: true, approve: false },
+        });
+      if (String(url).includes("/live"))
+        return Response.json({
+          sessionId: "s",
+          status: "idle",
+          revision: 1,
+          sendEnabled: true,
+          approvals: [],
+        });
+      if (String(url).endsWith("/send"))
+        return Response.json({ code: "permission_denied" }, { status: 403 });
+      return original(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Test session/ }));
+    await screen.findByText("Secret history");
+    fireEvent.change(screen.getByLabelText("发送消息"), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText(/结果未确认/);
+    expect(screen.getByText("Secret history")).toBeVisible();
+    expect(screen.queryByText("远程访问已结束")).toBeNull();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+  });
+
+  it("limits messages to the server's 16,000-character bound and validates before sending", async () => {
+    const server = mockServer();
+    const original = server.fetcher.getMockImplementation()!;
+    server.fetcher.mockImplementation(async (url) => {
+      if (String(url).endsWith("/access"))
+        return Response.json({
+          status: "approved",
+          csrfToken: "x",
+          bootId: "b",
+          experimentalEnabled: true,
+          device: { id: "d", name: "Browser", send: true, approve: false },
+        });
+      if (String(url).includes("/live"))
+        return Response.json({
+          sessionId: "s",
+          status: "idle",
+          revision: 1,
+          sendEnabled: true,
+          approvals: [],
+        });
+      return original(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Test session/ }));
+    await screen.findByText("Secret history");
+    const input = screen.getByLabelText("发送消息") as HTMLTextAreaElement;
+    expect(input.maxLength).toBe(16_000);
+    fireEvent.change(input, { target: { value: "x".repeat(16_001) } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(
+      server.fetcher.mock.calls.filter((call) => String(call[0]).endsWith("/send")),
+    ).toHaveLength(0);
   });
 
   it("explains the host control fence without suggesting reopening restores control", async () => {

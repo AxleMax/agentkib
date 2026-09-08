@@ -24,6 +24,7 @@ pub const DESKTOP_VERSION: &str = "26.901.51231";
 pub const EXTENSION_VERSION: &str = "26.901.22334";
 
 /// These are per-method versions, not the unrelated App Server protocol version.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn method_version(method: &str) -> Option<u64> {
     match method {
         "initialize" => Some(0),
