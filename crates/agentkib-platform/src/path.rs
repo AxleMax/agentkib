@@ -6,6 +6,45 @@ pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
     fs::canonicalize(path).map(strip_verbatim_prefix)
 }
 
+/// Assign session cwd to one project only, using the same rule in discovery and history.
+/// The caller supplies its resolved user home so global instruction files do not
+/// turn every unmarked directory into one home-wide workspace.
+pub fn session_workspace_root(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let cwd = canonicalize(path).ok()?;
+    let home = home.and_then(|value| canonicalize(value).ok());
+    if !cwd.is_dir() || cwd.parent().is_none() || home.as_ref() == Some(&cwd) {
+        return None;
+    }
+    for parent in cwd.ancestors() {
+        if parent.parent().is_none() || home.as_deref() == Some(parent) {
+            break;
+        }
+        if [
+            ".agentkib",
+            ".git",
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".codex",
+            ".claude",
+            ".cursor",
+            ".opencode",
+            "opencode.json",
+            "opencode.jsonc",
+            ".grok",
+            ".dsh",
+        ]
+        .iter()
+        .any(|marker| parent.join(marker).exists())
+        {
+            return Some(parent.to_path_buf());
+        }
+    }
+    Some(cwd)
+}
+
 /// Resolve an existing path prefix and append only ordinary missing components.
 /// This avoids trusting lexical `..` components in paths that do not exist yet.
 pub fn canonicalize_allow_missing(path: &Path) -> io::Result<PathBuf> {
@@ -273,5 +312,33 @@ mod tests {
 
         fs::write(directory.path().join(".codexbar-session-id"), "probe").unwrap();
         assert!(is_known_agent_probe_workspace(directory.path()));
+    }
+
+    #[test]
+    fn session_workspace_uses_nearest_project_and_keeps_unmarked_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("project");
+        let child = parent.join("nested");
+        let cwd = child.join("src");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(parent.join("AGENTS.md"), "").unwrap();
+        fs::write(child.join("CLAUDE.md"), "").unwrap();
+        assert_eq!(
+            session_workspace_root(&cwd, Some(dir.path())),
+            Some(canonicalize(&child).unwrap())
+        );
+        let plain = dir.path().join("plain");
+        fs::create_dir(&plain).unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), "").unwrap();
+        assert_eq!(
+            session_workspace_root(&plain, Some(dir.path())),
+            Some(canonicalize(&plain).unwrap())
+        );
+        assert_eq!(session_workspace_root(dir.path(), Some(dir.path())), None);
+        assert_eq!(session_workspace_root(Path::new("relative"), None), None);
+        assert_eq!(
+            session_workspace_root(&dir.path().join("missing"), None),
+            None
+        );
     }
 }

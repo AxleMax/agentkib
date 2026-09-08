@@ -10,6 +10,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import type { Manifest, WorkspaceSummary } from "@/core/types";
 import { useAppNavigation } from "./useAppNavigation";
 import type { AppHistoryEntry } from "./useAppHistory";
+import { SESSION_REFRESH_EVENT } from "@/features/sessions/session-refresh";
 
 const testDoubles = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -73,6 +74,20 @@ describe("useAppNavigation guards", () => {
   });
 
   afterEach(cleanup);
+
+  it("routes session refresh to the mounted hub instead of starting discovery", async () => {
+    testDoubles.location.pathname = "/sessions";
+    const listener = vi.fn();
+    window.addEventListener(SESSION_REFRESH_EVENT, listener);
+    try {
+      const { result } = renderHook(() => useAppNavigation());
+      await act(async () => result.current.refreshCurrentView());
+      expect(listener).toHaveBeenCalledOnce();
+      expect(testDoubles.requestRefresh).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener(SESSION_REFRESH_EVENT, listener);
+    }
+  });
 
   it("opens settings without discarding the current workspace draft", () => {
     const workspace: WorkspaceSummary = {

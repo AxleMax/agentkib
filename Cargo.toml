@@ -18,6 +18,8 @@ members = [
   "crates/agentkib-skills",
   "crates/agentkib-gateways",
   "crates/agentkib-tools",
+  "crates/agentkib-remote",
+  "crates/agentkib-codex-bridge",
 ]
 
 [workspace.package]
@@ -26,6 +28,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+agentkib-codex-bridge = { path = "crates/agentkib-codex-bridge" }
 agentkib-protocol = { path = "crates/agentkib-protocol" }
 agentkib-platform = { path = "crates/agentkib-platform" }
 agentkib-core = { path = "crates/agentkib-core" }
@@ -40,6 +43,7 @@ agentkib-mcp = { path = "crates/agentkib-mcp" }
 agentkib-skills = { path = "crates/agentkib-skills" }
 agentkib-gateways = { path = "crates/agentkib-gateways" }
 agentkib-tools = { path = "crates/agentkib-tools" }
+agentkib-remote = { path = "crates/agentkib-remote" }
 agentkib-store = { path = "crates/agentkib-store" }
 anyhow = "1.0"
 async-trait = "0.1"

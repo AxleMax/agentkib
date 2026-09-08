@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -12,9 +13,19 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useEffect, useState } from "react";
-import { ChevronRight, CircleAlert, FileCode2, FolderGit2, PlugZap, Search } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  CircleAlert,
+  FileCode2,
+  FolderGit2,
+  LockKeyhole,
+  PlugZap,
+  Search,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatRelativeTime, tr } from "@/core/i18n";
+import { tr } from "@/core/i18n";
 import type {
   AgentInstallation,
   AgentKind,
@@ -25,6 +36,7 @@ import type {
 } from "@/core/types";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { agentSupportsInsights } from "@/features/insights/insights";
+import { agentSupport } from "@/features/agents/agent-capabilities";
 import type { AgentFilter } from "@/components/AppSidebar";
 
 type AgentDetailSection = "overview" | "assets" | "workspaces" | "usage";
@@ -71,6 +83,7 @@ export function AgentsPage({
   selectedAgent?: AgentKind;
   onSelectedAgentChange: (agent: AgentKind) => void;
 }) {
+  const { tr, formatRelativeTime } = useI18n();
   const [selected, setSelected] = useState<AgentKind>(selectedAgent ?? "codex");
   const [section, setSection] = useState<AgentDetailSection>("overview");
   const [agentQuery, setAgentQuery] = useState("");
@@ -101,6 +114,7 @@ export function AgentsPage({
       .entries(),
   ].sort((left, right) => right[1] - left[1]);
   const selectedRemoteGateways = remoteGateways.filter((gateway) => gateway.kind === selected);
+  const support = agentSupport(installation);
   const remoteWorkspaceCount = selectedRemoteGateways.reduce(
     (total, gateway) => total + gateway.workspaces.length,
     0,
@@ -203,7 +217,9 @@ export function AgentsPage({
                     <span className="min-w-0">
                       <strong className="flex items-center gap-2 truncate text-sm text-foreground">
                         {agentLabels[agent]}
-                        {agent === "deepseek-harness" && <Badge variant="outline">Beta</Badge>}
+                        {agent === "deepseek-harness" && (
+                          <Badge variant="outline">{tr("common.beta")}</Badge>
+                        )}
                       </strong>
                       <small className="mt-1 block text-xs text-muted-foreground">
                         {count} {tr("common.workspaces")}
@@ -244,7 +260,9 @@ export function AgentsPage({
                 </span>
               )}
             </div>
-            {selected === "deepseek-harness" && <Badge variant="outline">Beta</Badge>}
+            {selected === "deepseek-harness" && (
+              <Badge variant="outline">{tr("common.beta")}</Badge>
+            )}
             <Tabs
               value={section}
               onValueChange={(value) => setSection(value as AgentDetailSection)}
@@ -290,9 +308,11 @@ export function AgentsPage({
                   ],
                   [
                     tr("agents.continuationCapability"),
-                    installation?.installed && (selected === "codex" || selected === "claude-code")
-                      ? tr("agents.nativeImportBeta")
-                      : tr("agents.handoffOnly"),
+                    support === undefined
+                      ? tr("agents.capability.unknown")
+                      : support.continuation
+                        ? tr("agents.capability.supported")
+                        : tr("agents.capability.unavailable"),
                   ],
                 ].map(([label, value]) => (
                   <div
@@ -304,6 +324,65 @@ export function AgentsPage({
                   </div>
                 ))}
               </div>
+
+              <section className="grid gap-3 rounded-xl border border-border bg-background p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="text-sm font-semibold">{tr("agents.capabilities")}</h3>
+                  <span className="text-xs text-muted-foreground">
+                    {tr("agents.capabilitiesDescription")}
+                  </span>
+                </div>
+                <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-5">
+                  {[
+                    ["workspace_discovery", tr("agents.capability.workspaceDiscovery")],
+                    ["session_list", tr("agents.capability.sessionList")],
+                    ["history_read", tr("agents.capability.historyRead")],
+                    ["continuation", tr("agents.capability.continuation")],
+                  ].map(([key, label]) => {
+                    const value = support?.[key as keyof typeof support];
+                    const known = typeof value === "boolean";
+                    const enabled = value === true;
+                    return (
+                      <div
+                        className="flex min-h-[58px] items-center justify-between gap-2 rounded-lg bg-muted/25 px-3 py-2 text-sm"
+                        key={key}
+                      >
+                        <span className="text-muted-foreground">{label}</span>
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 text-xs font-medium",
+                            !known
+                              ? "text-muted-foreground"
+                              : enabled
+                                ? "text-emerald-600"
+                                : "text-muted-foreground",
+                          )}
+                        >
+                          {!known ? null : enabled ? <Check size={14} /> : <X size={14} />}
+                          {tr(
+                            !known
+                              ? "agents.capability.unknown"
+                              : enabled
+                                ? "agents.capability.supported"
+                                : "agents.capability.unavailable",
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div className="flex min-h-[58px] items-center justify-between gap-2 rounded-lg bg-muted/25 px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">{tr("agents.capability.control")}</span>
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                      <LockKeyhole size={14} />
+                      {tr(
+                        support
+                          ? `agents.capability.control.${support.control}`
+                          : "agents.capability.unknown",
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </section>
 
               {installation?.home && (
                 <div className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-background px-4 py-3">
@@ -319,7 +398,7 @@ export function AgentsPage({
                   key={warning}
                 >
                   <CircleAlert size={16} />
-                  {installationWarningLabel(warning)}
+                  {installationWarningLabel(warning, tr)}
                 </div>
               ))}
 
@@ -524,6 +603,7 @@ export function AgentsPage({
 }
 
 function RemoteAgentGatewayDetails({ gateways }: { gateways: RemoteGatewaySummary[] }) {
+  const { tr } = useI18n();
   const sectionClass = "grid gap-3 rounded-xl border border-border bg-background p-4";
   return (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -608,9 +688,9 @@ function RemoteAgentGatewayDetails({ gateways }: { gateways: RemoteGatewaySummar
   );
 }
 
-function installationWarningLabel(warning: string) {
+function installationWarningLabel(warning: string, translate = tr) {
   if (warning === "DeepSeek Harness workspace storage version is not supported")
-    return tr("errors.deepseekWorkspaceVersion");
+    return translate("errors.deepseekWorkspaceVersion");
   return warning;
 }
 

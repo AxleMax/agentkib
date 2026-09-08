@@ -49,6 +49,10 @@ Inspect Codex, Claude Code, Cursor, OpenCode, OpenClaw, Hermes, and Grok Build i
 
 [![AgentKib Tools and updates showing versions, installation sources, and diagnostics](docs/assets/agentkib-tools-updates.png)](docs/assets/agentkib-tools-updates.png)
 
+## Built-in Web (development preview)
+
+This monorepo includes a separately built Web client bundled with Electron. Enable it in **Settings → Remote connections → Web access**; configure your own HTTPS proxy or tunnel for remote use. No AgentKib account or coordination server is required. The desktop application must remain running. Experimental sending and approvals stay disabled until live acceptance is completed. See the [self-hosting guide (Chinese)](docs/WEB-SELF-HOSTING.md) and [QA status](qa/WEB-V1.md). This preview is not a claim that the current published release includes Web access.
+
 ## Download
 
 Download the current stable package from the [Latest Release](https://github.com/starroyhq/agentkib/releases/latest):
@@ -75,6 +79,8 @@ Only use files from the official release and verify the matching `.sha256` check
 - **Platforms:** macOS 13.3+, Windows 11, Ubuntu 22.04, and Fedora. ARM64 Windows and Linux packages remain Preview.
 
 See the [complete feature and compatibility matrix](docs/FEATURES.md) for global views, workspace capabilities, agent support, and platform status.
+
+For development-only read-only sources and missing-workspace troubleshooting, see the [discovery and history guide (Chinese)](docs/DISCOVERY-HISTORY.md) and [layered QA record](qa/MULTI-AGENT-HISTORY.md). These additions are not a claim about released packages.
 
 ## Documentation and community
 

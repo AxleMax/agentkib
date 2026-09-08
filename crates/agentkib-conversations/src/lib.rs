@@ -15,12 +15,21 @@ use walkdir::WalkDir;
 
 mod archive;
 mod continuation;
+mod grokbuild;
+mod hermes;
+mod history;
+mod openclaw;
 mod opencode;
+mod paging;
 pub use archive::*;
 pub use continuation::*;
+pub use grokbuild::GrokBuildProvider;
+pub use hermes::HermesProvider;
+pub use openclaw::OpenClawProvider;
 pub use opencode::OpenCodeProvider;
 
 const MAX_TITLE_CHARS: usize = 200;
+pub const DEFAULT_HISTORY_PAGE_SIZE: usize = 50;
 const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 const MAX_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
@@ -28,12 +37,22 @@ const MAX_TRANSCRIPT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_CLAUDE_INDEX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CLAUDE_HEADER_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_CLAUDE_HEADER_LINES: usize = 256;
+const MAX_CODEX_HEADER_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionAvailability {
     Readable,
     MetadataOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionOrigin {
+    Interactive,
+    Auxiliary,
+    #[default]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,12 +71,41 @@ pub enum ConversationEventKind {
     ToolSummary,
 }
 
+/// Optional phase metadata emitted for assistant messages by some Codex models.
+///
+/// A missing or unknown phase remains `None`; callers must retain the legacy
+/// behaviour for providers and records that do not expose this classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessagePhase {
+    Commentary,
+    FinalAnswer,
+}
+
+fn deserialize_message_phase<'de, D>(deserializer: D) -> Result<Option<MessagePhase>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(match value.as_ref().and_then(Value::as_str) {
+        Some("commentary") => Some(MessagePhase::Commentary),
+        Some("final_answer") => Some(MessagePhase::FinalAnswer),
+        _ => None,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeSessionSummary {
     #[serde(skip)]
     pub native_ref: String,
     pub agent: AgentKind,
     pub title: Option<String>,
+    #[serde(default)]
+    pub origin: SessionOrigin,
+    #[serde(default, skip)]
+    pub spawned_by_session_id: Option<String>,
+    #[serde(default, skip)]
+    pub forked_from_session_id: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
     pub message_count: Option<u64>,
@@ -73,6 +121,12 @@ pub struct ConversationSessionSummary {
     pub workspace_id: String,
     pub agent: AgentKind,
     pub title: Option<String>,
+    #[serde(default)]
+    pub origin: SessionOrigin,
+    #[serde(default)]
+    pub spawned_by_session_id: Option<String>,
+    #[serde(default)]
+    pub forked_from_session_id: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
     pub message_count: Option<u64>,
@@ -94,10 +148,28 @@ pub struct ConversationIndexStatus {
     pub error_detail: Option<String>,
 }
 
+/// A provider may return usable sessions while one of its native sources was
+/// unreadable or exceeded the discovery budget. Callers must retain the last
+/// successful index when `incomplete` is true instead of treating it as an
+/// authoritative empty result.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NativeSessionListing {
+    pub sessions: Vec<NativeSessionSummary>,
+    pub incomplete: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationEvent {
     pub id: String,
     pub kind: ConversationEventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_message_phase",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub message_phase: Option<MessagePhase>,
     pub timestamp: Option<DateTime<Utc>>,
     pub content: Option<String>,
     pub tool_name: Option<String>,
@@ -864,6 +936,16 @@ fn key_words(key: &str) -> Vec<String> {
 pub trait ConversationProvider {
     fn agent(&self) -> AgentKind;
     fn list_sessions(&self, workspace: &Path) -> Result<Vec<NativeSessionSummary>>;
+    fn list_sessions_detailed(&self, workspace: &Path) -> Result<NativeSessionListing> {
+        Ok(NativeSessionListing {
+            sessions: self.list_sessions(workspace)?,
+            incomplete: false,
+        })
+    }
+    /// Resolve through provider metadata, never interpret an opaque reference as a file path.
+    fn verified_control_id(&self, _native_ref: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
     fn read_events(
         &self,
         native_ref: &str,
@@ -884,6 +966,9 @@ pub fn providers() -> Vec<Box<dyn ConversationProvider + Send + Sync>> {
         Box::new(CodexProvider::default()),
         Box::new(ClaudeProvider::default()),
         Box::new(OpenCodeProvider::default()),
+        Box::new(OpenClawProvider::default()),
+        Box::new(HermesProvider::default()),
+        Box::new(GrokBuildProvider::default()),
     ]
 }
 
@@ -892,6 +977,9 @@ pub fn provider(agent: AgentKind) -> Option<Box<dyn ConversationProvider + Send 
         AgentKind::Codex => Some(Box::new(CodexProvider::default())),
         AgentKind::ClaudeCode => Some(Box::new(ClaudeProvider::default())),
         AgentKind::OpenCode => Some(Box::new(OpenCodeProvider::default())),
+        AgentKind::OpenClaw => Some(Box::new(OpenClawProvider::default())),
+        AgentKind::Hermes => Some(Box::new(HermesProvider::default())),
+        AgentKind::GrokBuild => Some(Box::new(GrokBuildProvider::default())),
         _ => None,
     }
 }
@@ -915,26 +1003,41 @@ impl CodexProvider {
         })
     }
 
-    fn databases(&self) -> Vec<PathBuf> {
+    fn databases(&self) -> Result<Vec<PathBuf>> {
         let Some(home) = self.home() else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        let current = codex_databases_in(&home);
+        let current = codex_databases_in(&home)?;
         if !current.is_empty() {
-            return current;
+            return Ok(current);
         }
         codex_databases_in(&home.join("sqlite"))
     }
 
     fn native_sessions(&self, workspace: Option<&Path>) -> Result<Vec<CodexNativeSession>> {
+        self.native_sessions_detailed(workspace)
+            .map(|(sessions, _)| sessions)
+    }
+
+    fn native_sessions_detailed(
+        &self,
+        workspace: Option<&Path>,
+    ) -> Result<(Vec<CodexNativeSession>, bool)> {
         let mut output = BTreeMap::new();
-        for database in self.databases() {
+        let mut incomplete = false;
+        for database in self.databases()? {
             let connection = open_read_only(&database)?;
             let columns = table_columns(&connection, "threads")?;
-            if !columns.contains("id")
-                || !columns.contains("cwd")
-                || !columns.contains("rollout_path")
-            {
+            let required = ["id", "cwd", "rollout_path"];
+            let missing = required
+                .iter()
+                .filter(|column| !columns.contains(**column))
+                .copied()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                // An older database can coexist with a usable current one.
+                // Retain valid sources without claiming the refresh was complete.
+                incomplete = true;
                 continue;
             }
             let title = first_column_expression(&columns, &["name", "title", "preview"], "''");
@@ -955,16 +1058,44 @@ impl CodexProvider {
             } else {
                 "0"
             };
+            let source = first_column_expression(&columns, &["source"], "NULL");
+            let parent = first_column_expression(&columns, &["parent_thread_id"], "NULL");
+            let forked = first_column_expression(&columns, &["forked_from_id"], "NULL");
+            let thread_source = first_column_expression(&columns, &["thread_source"], "NULL");
             let sql = format!(
-                "SELECT id, rollout_path, cwd, {title}, {created}, {updated}, {branch}, {archived} FROM threads"
+                "SELECT id, rollout_path, cwd, {title}, {created}, {updated}, {branch}, {archived}, {source}, {parent}, {forked}, {thread_source} FROM threads"
             );
             let mut statement = connection.prepare(&sql)?;
             let rows = statement.query_map([], |row| {
+                let source = row.get::<_, Option<String>>(8)?;
+                let (source_value, source_malformed) = source
+                    .as_deref()
+                    .map(parse_metadata_value)
+                    .unwrap_or((None, false));
+                let parent = non_empty_string(row.get::<_, Option<String>>(9)?);
+                let forked = non_empty_string(row.get::<_, Option<String>>(10)?);
+                let thread_source = row.get::<_, Option<String>>(11)?;
+                let metadata = classify_codex_metadata(
+                    source_value,
+                    thread_source.as_deref(),
+                    parent.clone(),
+                    forked.clone(),
+                    source_malformed,
+                );
                 Ok(CodexNativeSession {
                     native_ref: row.get(0)?,
                     transcript: PathBuf::from(row.get::<_, String>(1)?),
                     cwd: PathBuf::from(row.get::<_, String>(2)?),
                     title: row.get::<_, Option<String>>(3)?,
+                    origin: metadata.origin,
+                    origin_authoritative: metadata.origin_authoritative,
+                    source_present_in_database: source
+                        .as_deref()
+                        .is_some_and(|value| !value.trim().is_empty()),
+                    spawned_from_database: parent.is_some(),
+                    forked_from_database: forked.is_some(),
+                    spawned_by_session_id: metadata.spawned_by_session_id,
+                    forked_from_session_id: metadata.forked_from_session_id,
                     created_at: row
                         .get::<_, Option<i64>>(4)?
                         .and_then(timestamp_from_integer),
@@ -990,16 +1121,62 @@ impl CodexProvider {
                 output.insert(value.native_ref.clone(), value);
             }
         }
-        Ok(output.into_values().collect())
+        Ok((output.into_values().collect(), incomplete))
+    }
+
+    fn enrich_session(&self, mut session: CodexNativeSession) -> CodexNativeSession {
+        // The database is the cheap canonical source. Only inspect a transcript when a
+        // relation/classification is absent, and only after native_sessions has applied the
+        // workspace filter. This keeps unrelated projects out of the header-read path.
+        let needs_origin = !session.source_present_in_database;
+        let needs_spawned =
+            !session.spawned_from_database && session.spawned_by_session_id.is_none();
+        let needs_forked =
+            !session.forked_from_database && session.forked_from_session_id.is_none();
+        if !needs_origin && !needs_spawned && !needs_forked {
+            return session;
+        }
+        let Some(header) = read_codex_header(&session.transcript) else {
+            return session;
+        };
+        if needs_origin
+            && ((header.origin == SessionOrigin::Auxiliary && !session.origin_authoritative)
+                || session.origin == SessionOrigin::Unknown)
+        {
+            session.origin = header.origin;
+            session.origin_authoritative = header.origin_authoritative;
+        }
+        if needs_spawned {
+            session.spawned_by_session_id = header.spawned_by_session_id;
+        }
+        if needs_forked {
+            session.forked_from_session_id = header.forked_from_session_id;
+        }
+        session
     }
 }
 
-fn codex_databases_in(directory: &Path) -> Vec<PathBuf> {
+fn codex_databases_in(directory: &Path) -> Result<Vec<PathBuf>> {
     let mut output = Vec::new();
-    let Ok(entries) = fs::read_dir(directory) else {
-        return output;
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(output),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Cannot read Codex database directory {}",
+                    directory.display()
+                )
+            });
+        }
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "Cannot read Codex database directory {}",
+                directory.display()
+            )
+        })?;
         let path = entry.path();
         if path
             .file_name()
@@ -1011,7 +1188,7 @@ fn codex_databases_in(directory: &Path) -> Vec<PathBuf> {
     }
     output.sort();
     output.dedup();
-    output
+    Ok(output)
 }
 
 impl ConversationProvider for CodexProvider {
@@ -1019,27 +1196,49 @@ impl ConversationProvider for CodexProvider {
         AgentKind::Codex
     }
 
-    fn list_sessions(&self, workspace: &Path) -> Result<Vec<NativeSessionSummary>> {
-        Ok(self
-            .native_sessions(Some(workspace))?
+    fn verified_control_id(&self, native_ref: &str) -> Result<Option<String>> {
+        let session = self
+            .native_sessions(None)?
             .into_iter()
+            .find(|session| session.native_ref == native_ref)
+            .context("Codex session is no longer available")?;
+        verified_codex_control_id(&session.transcript, native_ref).map(Some)
+    }
+
+    fn list_sessions(&self, workspace: &Path) -> Result<Vec<NativeSessionSummary>> {
+        self.list_sessions_detailed(workspace)
+            .map(|listing| listing.sessions)
+    }
+
+    fn list_sessions_detailed(&self, workspace: &Path) -> Result<NativeSessionListing> {
+        let (sessions, incomplete) = self.native_sessions_detailed(Some(workspace))?;
+        let sessions = sessions
+            .into_iter()
+            .map(|session| self.enrich_session(session))
             .map(|session| NativeSessionSummary {
                 native_ref: session.native_ref,
                 agent: AgentKind::Codex,
                 title: sanitize_title(session.title.as_deref()),
+                origin: session.origin,
+                spawned_by_session_id: session.spawned_by_session_id,
+                forked_from_session_id: session.forked_from_session_id,
                 created_at: session.created_at,
                 updated_at: session.updated_at,
                 message_count: None,
                 git_branch: sanitize_metadata(session.git_branch),
                 archived: session.archived,
                 sidechain: false,
-                availability: if session.transcript.is_file() {
+                availability: if paging::is_readable(&session.transcript) {
                     SessionAvailability::Readable
                 } else {
                     SessionAvailability::MetadataOnly
                 },
             })
-            .collect())
+            .collect();
+        Ok(NativeSessionListing {
+            sessions,
+            incomplete,
+        })
     }
 
     fn read_events(
@@ -1080,15 +1279,244 @@ impl ConversationProvider for CodexProvider {
     }
 }
 
+fn verified_codex_control_id(path: &Path, native_ref: &str) -> Result<String> {
+    let mut line = String::new();
+    BufReader::new(File::open(path)?.take(64 * 1024)).read_line(&mut line)?;
+    let value: Value = serde_json::from_str(&line)?;
+    anyhow::ensure!(
+        value["type"] == "session_meta",
+        "unverified-session-identity"
+    );
+    let id = value["payload"]["id"]
+        .as_str()
+        .context("missing-native-id")?;
+    let id = uuid::Uuid::parse_str(id)?;
+    anyhow::ensure!(
+        id == uuid::Uuid::parse_str(native_ref)?,
+        "session-identity-mismatch"
+    );
+    Ok(id.to_string())
+}
+
 struct CodexNativeSession {
     native_ref: String,
     transcript: PathBuf,
     cwd: PathBuf,
     title: Option<String>,
+    origin: SessionOrigin,
+    origin_authoritative: bool,
+    source_present_in_database: bool,
+    spawned_from_database: bool,
+    forked_from_database: bool,
+    spawned_by_session_id: Option<String>,
+    forked_from_session_id: Option<String>,
     created_at: Option<DateTime<Utc>>,
     updated_at: Option<DateTime<Utc>>,
     git_branch: Option<String>,
     archived: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CodexMetadata {
+    origin: SessionOrigin,
+    origin_authoritative: bool,
+    spawned_by_session_id: Option<String>,
+    forked_from_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexSourceEvidence {
+    Interactive,
+    Auxiliary,
+    Unknown,
+    Malformed,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedCodexSource {
+    evidence: CodexSourceEvidence,
+    spawned_by_session_id: Option<String>,
+}
+
+fn classify_codex_metadata(
+    source: Option<Value>,
+    thread_source: Option<&str>,
+    database_parent: Option<String>,
+    database_fork: Option<String>,
+    source_malformed: bool,
+) -> CodexMetadata {
+    let parsed_source = parse_codex_source(source.as_ref());
+    let origin = match parsed_source.evidence {
+        CodexSourceEvidence::Auxiliary => SessionOrigin::Auxiliary,
+        CodexSourceEvidence::Interactive => SessionOrigin::Interactive,
+        CodexSourceEvidence::Unknown if !source_malformed && thread_source == Some("user") => {
+            SessionOrigin::Interactive
+        }
+        CodexSourceEvidence::Unknown | CodexSourceEvidence::Malformed => SessionOrigin::Unknown,
+    };
+    let origin_authoritative = matches!(
+        parsed_source.evidence,
+        CodexSourceEvidence::Auxiliary | CodexSourceEvidence::Interactive
+    );
+    CodexMetadata {
+        origin,
+        origin_authoritative,
+        spawned_by_session_id: database_parent.or(parsed_source.spawned_by_session_id),
+        forked_from_session_id: database_fork,
+    }
+}
+
+fn parse_codex_source(source: Option<&Value>) -> ParsedCodexSource {
+    let Some(source) = source else {
+        return ParsedCodexSource {
+            evidence: CodexSourceEvidence::Unknown,
+            spawned_by_session_id: None,
+        };
+    };
+    match source {
+        Value::String(value) => match value.as_str() {
+            "cli" | "vscode" => ParsedCodexSource {
+                evidence: CodexSourceEvidence::Interactive,
+                spawned_by_session_id: None,
+            },
+            // A bare subagent source is explicit enough to classify, but it
+            // carries no reliable parent relation.
+            "subagent" => ParsedCodexSource {
+                evidence: CodexSourceEvidence::Auxiliary,
+                spawned_by_session_id: None,
+            },
+            value if value.trim_start().starts_with(['{', '[']) => ParsedCodexSource {
+                evidence: CodexSourceEvidence::Malformed,
+                spawned_by_session_id: None,
+            },
+            _ => ParsedCodexSource {
+                evidence: CodexSourceEvidence::Unknown,
+                spawned_by_session_id: None,
+            },
+        },
+        Value::Object(source) => {
+            let Some(subagent) = source.get("subagent") else {
+                return ParsedCodexSource {
+                    evidence: CodexSourceEvidence::Malformed,
+                    spawned_by_session_id: None,
+                };
+            };
+            match subagent {
+                Value::String(value) if !value.trim().is_empty() => ParsedCodexSource {
+                    evidence: CodexSourceEvidence::Auxiliary,
+                    spawned_by_session_id: None,
+                },
+                Value::Object(subagent) => {
+                    if let Some(thread_spawn) = subagent.get("thread_spawn") {
+                        let Some(thread_spawn) = thread_spawn.as_object() else {
+                            return ParsedCodexSource {
+                                evidence: CodexSourceEvidence::Malformed,
+                                spawned_by_session_id: None,
+                            };
+                        };
+                        let parent = thread_spawn
+                            .get("parent_thread_id")
+                            .map(|value| value.as_str().and_then(non_empty_text).ok_or(()))
+                            .transpose();
+                        let Ok(parent) = parent else {
+                            return ParsedCodexSource {
+                                evidence: CodexSourceEvidence::Malformed,
+                                spawned_by_session_id: None,
+                            };
+                        };
+                        ParsedCodexSource {
+                            evidence: CodexSourceEvidence::Auxiliary,
+                            spawned_by_session_id: parent,
+                        }
+                    } else if !subagent.is_empty() {
+                        // The envelope itself is reliable evidence even when a newer
+                        // subagent variant is not known yet. Bare variant names without
+                        // this envelope remain unknown, avoiding false auxiliary hides.
+                        ParsedCodexSource {
+                            evidence: CodexSourceEvidence::Auxiliary,
+                            spawned_by_session_id: None,
+                        }
+                    } else {
+                        ParsedCodexSource {
+                            evidence: CodexSourceEvidence::Malformed,
+                            spawned_by_session_id: None,
+                        }
+                    }
+                }
+                _ => ParsedCodexSource {
+                    evidence: CodexSourceEvidence::Malformed,
+                    spawned_by_session_id: None,
+                },
+            }
+        }
+        _ => ParsedCodexSource {
+            evidence: CodexSourceEvidence::Malformed,
+            spawned_by_session_id: None,
+        },
+    }
+}
+
+fn parse_metadata_value(value: &str) -> (Option<Value>, bool) {
+    let value = value.trim();
+    if value.is_empty() {
+        return (None, false);
+    }
+    if let Ok(parsed) = serde_json::from_str(value) {
+        return (Some(parsed), false);
+    }
+    let known_plain_source = matches!(
+        value,
+        "cli" | "vscode" | "subagent" | "exec" | "mcp" | "unknown" | "appServer"
+    );
+    (Some(Value::String(value.to_owned())), !known_plain_source)
+}
+
+fn non_empty_text(value: &str) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.to_owned())
+}
+
+fn non_empty_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| non_empty_text(&value))
+}
+
+fn json_non_empty_string(value: Option<&Value>) -> Option<String> {
+    value.and_then(Value::as_str).and_then(non_empty_text)
+}
+
+fn read_codex_header(path: &Path) -> Option<CodexMetadata> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() {
+        return None;
+    }
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file.take((MAX_CODEX_HEADER_BYTES + 1) as u64));
+    let mut line = Vec::new();
+    reader.read_until(b'\n', &mut line).ok()?;
+    if line.is_empty() || line.len() > MAX_CODEX_HEADER_BYTES {
+        return None;
+    }
+    while line
+        .last()
+        .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
+    {
+        line.pop();
+    }
+    let value = serde_json::from_slice::<Value>(&line).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return None;
+    }
+    let payload = value.get("payload")?.as_object()?;
+    let source = payload.get("source");
+    let parent = json_non_empty_string(payload.get("parent_thread_id"));
+    let forked = json_non_empty_string(payload.get("forked_from_id"));
+    let thread_source = payload.get("thread_source").and_then(Value::as_str);
+    Some(classify_codex_metadata(
+        source.cloned(),
+        thread_source,
+        parent,
+        forked,
+        false,
+    ))
 }
 
 #[derive(Default)]
@@ -1202,6 +1630,17 @@ impl ClaudeProvider {
                     transcript,
                     project_path,
                     title: sanitize_title(summary.or(first_prompt)),
+                    origin: if item
+                        .get("isSidechain")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        SessionOrigin::Auxiliary
+                    } else {
+                        SessionOrigin::Interactive
+                    },
+                    spawned_by_session_id: None,
+                    forked_from_session_id: None,
                     created_at: item.get("created").and_then(parse_json_timestamp),
                     updated_at: item
                         .get("modified")
@@ -1300,13 +1739,16 @@ impl ConversationProvider for ClaudeProvider {
                 native_ref: session.native_ref,
                 agent: AgentKind::ClaudeCode,
                 title: session.title,
+                origin: session.origin,
+                spawned_by_session_id: session.spawned_by_session_id,
+                forked_from_session_id: session.forked_from_session_id,
                 created_at: session.created_at,
                 updated_at: session.updated_at,
                 message_count: session.message_count,
                 git_branch: sanitize_metadata(session.git_branch),
                 archived: false,
                 sidechain: session.sidechain,
-                availability: if session.transcript.is_file() {
+                availability: if paging::is_readable(&session.transcript) {
                     SessionAvailability::Readable
                 } else {
                     SessionAvailability::MetadataOnly
@@ -1359,6 +1801,9 @@ struct ClaudeNativeSession {
     #[allow(dead_code)]
     project_path: PathBuf,
     title: Option<String>,
+    origin: SessionOrigin,
+    spawned_by_session_id: Option<String>,
+    forked_from_session_id: Option<String>,
     created_at: Option<DateTime<Utc>>,
     updated_at: Option<DateTime<Utc>>,
     message_count: Option<u64>,
@@ -1370,9 +1815,6 @@ fn claude_session_from_transcript(path: &Path) -> Result<Option<ClaudeNativeSess
     let file = File::open(path)
         .with_context(|| format!("Cannot open Claude transcript {}", path.display()))?;
     let metadata = file.metadata()?;
-    if metadata.len() > MAX_TRANSCRIPT_BYTES {
-        bail!("Claude transcript exceeds the 256 MiB read limit");
-    }
     let mut reader = BufReader::new(file.take(metadata.len().min(MAX_CLAUDE_HEADER_BYTES)));
     let mut native_ref = path
         .file_stem()
@@ -1445,6 +1887,13 @@ fn claude_session_from_transcript(path: &Path) -> Result<Option<ClaudeNativeSess
         transcript: path.to_path_buf(),
         project_path,
         title: None,
+        origin: match sidechain_session {
+            Some(true) => SessionOrigin::Auxiliary,
+            Some(false) => SessionOrigin::Interactive,
+            None => SessionOrigin::Unknown,
+        },
+        spawned_by_session_id: None,
+        forked_from_session_id: None,
         created_at,
         updated_at,
         message_count: None,
@@ -1484,8 +1933,7 @@ fn read_codex_events(
     cursor: Option<&str>,
     limit: usize,
 ) -> Result<ConversationEventPage> {
-    let parsed = parse_codex_transcript(path)?;
-    Ok(page_events(parsed.events, cursor, limit, parsed.warnings))
+    paging::read_page(path, cursor, limit, paging::Format::Codex)
 }
 
 fn read_codex_handoff_context(path: &Path) -> Result<HandoffContext> {
@@ -1707,8 +2155,7 @@ fn read_claude_events(
     cursor: Option<&str>,
     limit: usize,
 ) -> Result<ConversationEventPage> {
-    let parsed = parse_claude_transcript(path, true)?;
-    Ok(page_events(parsed.events, cursor, limit, parsed.warnings))
+    paging::read_page(path, cursor, limit, paging::Format::Claude)
 }
 
 fn read_claude_handoff_context(path: &Path, sidechain_session: bool) -> Result<HandoffContext> {
@@ -1924,36 +2371,6 @@ fn workspace_matches(candidate: &Path, workspace: &Path) -> bool {
         || platform_path::starts_with(candidate, workspace)
 }
 
-fn page_events(
-    values: Vec<IndexedEvent>,
-    cursor: Option<&str>,
-    limit: usize,
-    warnings: Vec<String>,
-) -> ConversationEventPage {
-    let end = cursor
-        .and_then(decode_cursor)
-        .unwrap_or(values.len())
-        .min(values.len());
-    let limit = limit.clamp(1, 100);
-    let mut start = end.saturating_sub(limit);
-    let mut bytes = 0_usize;
-    for index in (start..end).rev() {
-        bytes = bytes.saturating_add(values[index].event.content.as_ref().map_or(0, String::len));
-        if bytes > MAX_PAGE_BYTES {
-            start = index.saturating_add(1);
-            break;
-        }
-    }
-    ConversationEventPage {
-        events: values[start..end]
-            .iter()
-            .map(|value| value.event.clone())
-            .collect(),
-        next_cursor: (start > 0).then(|| encode_cursor(start)),
-        warnings,
-    }
-}
-
 fn message_event(
     line: usize,
     kind: ConversationEventKind,
@@ -1967,6 +2384,8 @@ fn message_event(
         event: ConversationEvent {
             id: format!("event-{line}"),
             kind,
+            turn_id: None,
+            message_phase: None,
             timestamp,
             content: Some(content),
             tool_name: None,
@@ -1999,6 +2418,8 @@ fn upsert_tool(
         event: ConversationEvent {
             id: event_id,
             kind: ConversationEventKind::ToolSummary,
+            turn_id: None,
+            message_phase: None,
             timestamp,
             content: None,
             tool_name: Some(sanitize_tool_name(name)),
@@ -2183,14 +2604,6 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> (String, bool) {
     (value[..end].to_owned(), true)
 }
 
-fn encode_cursor(index: usize) -> String {
-    format!("p{index:x}")
-}
-
-fn decode_cursor(value: &str) -> Option<usize> {
-    usize::from_str_radix(value.strip_prefix('p')?, 16).ok()
-}
-
 fn open_read_only(path: &Path) -> Result<Connection> {
     Connection::open_with_flags(
         path,
@@ -2249,6 +2662,17 @@ mod tests {
 
     use super::*;
 
+    type CodexMetadataRow<'a> = (
+        &'a str,
+        &'a Path,
+        &'a Path,
+        &'a str,
+        Option<&'a str>,
+        Option<&'a str>,
+        Option<&'a str>,
+        Option<&'a str>,
+    );
+
     fn write_codex_database(path: &Path, rows: &[(&str, &Path, &Path, &str, bool)]) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -2269,6 +2693,106 @@ mod tests {
                 )
                 .unwrap();
         }
+    }
+
+    fn write_codex_metadata_database(path: &Path, rows: &[CodexMetadataRow<'_>]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let database = Connection::open(path).unwrap();
+        database
+            .execute_batch(
+                "CREATE TABLE threads(
+                    id TEXT,
+                    rollout_path TEXT,
+                    cwd TEXT,
+                    title TEXT,
+                    created_at INTEGER,
+                    updated_at INTEGER,
+                    source TEXT,
+                    parent_thread_id TEXT,
+                    forked_from_id TEXT,
+                    thread_source TEXT
+                );",
+            )
+            .unwrap();
+        for (id, transcript, workspace, title, source, parent, forked, thread_source) in rows {
+            database
+                .execute(
+                    "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, 1, 2, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        id,
+                        transcript.display().to_string(),
+                        workspace.display().to_string(),
+                        title,
+                        source,
+                        parent,
+                        forked,
+                        thread_source,
+                    ],
+                )
+                .unwrap();
+        }
+    }
+
+    fn codex_meta_line(id: &str, source: Value, extra: Value) -> String {
+        let mut payload = serde_json::json!({
+            "id": id,
+            "timestamp": "2026-08-13T10:00:00Z",
+            "cwd": "/workspace",
+            "originator": "codex-tui",
+            "cli_version": "0.1.0",
+            "source": source,
+        });
+        if let (Some(target), Some(values)) = (payload.as_object_mut(), extra.as_object()) {
+            target.extend(values.clone());
+        }
+        serde_json::json!({
+            "timestamp": "2026-08-13T10:00:00Z",
+            "type": "session_meta",
+            "payload": payload,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn codex_control_identity_resolves_opaque_reference_and_checks_transcript() {
+        let dir = tempdir().unwrap();
+        let id = "01a07b7a-68a8-7113-832f-36d1ddd5594f";
+        let transcript = dir.path().join("session.jsonl");
+        write_codex_database(
+            &dir.path().join("state_1.sqlite"),
+            &[(id, &transcript, dir.path(), "Test", false)],
+        );
+        let provider = CodexProvider::with_home(dir.path().to_path_buf());
+        fs::write(&transcript, codex_meta_line(id, Value::Null, Value::Null)).unwrap();
+        assert_eq!(
+            provider.verified_control_id(id).unwrap().as_deref(),
+            Some(id)
+        );
+        assert!(provider.verified_control_id("missing").is_err());
+        fs::write(
+            &transcript,
+            codex_meta_line(
+                "00000000-0000-0000-0000-000000000001",
+                Value::Null,
+                Value::Null,
+            ),
+        )
+        .unwrap();
+        assert!(provider.verified_control_id(id).is_err());
+        fs::write(
+            &transcript,
+            format!(
+                "{}{}",
+                " ".repeat(64 * 1024),
+                codex_meta_line(id, Value::Null, Value::Null)
+            ),
+        )
+        .unwrap();
+        assert!(provider.verified_control_id(id).is_err());
+        fs::write(&transcript, "{\"type\":\"message\"}").unwrap();
+        assert!(provider.verified_control_id(id).is_err());
     }
 
     #[test]
@@ -2313,6 +2837,427 @@ mod tests {
         assert!(sessions.iter().any(|value| value.archived
             && value.availability == SessionAvailability::MetadataOnly
             && value.title.as_deref() == Some("Archived Title")));
+    }
+
+    #[test]
+    fn session_origin_defaults_and_native_relationships_stay_private() {
+        let value: ConversationSessionSummary = serde_json::from_value(serde_json::json!({
+            "id": "hashed",
+            "workspace_id": "workspace",
+            "agent": "codex",
+            "title": "Legacy",
+            "created_at": null,
+            "updated_at": null,
+            "message_count": null,
+            "git_branch": null,
+            "archived": false,
+            "sidechain": false,
+            "availability": "metadata-only"
+        }))
+        .unwrap();
+        assert_eq!(value.origin, SessionOrigin::Unknown);
+        assert_eq!(value.spawned_by_session_id, None);
+        assert_eq!(value.forked_from_session_id, None);
+
+        let native = NativeSessionSummary {
+            native_ref: "native".into(),
+            agent: AgentKind::Codex,
+            title: Some("Legacy".into()),
+            origin: SessionOrigin::Auxiliary,
+            spawned_by_session_id: Some("parent-native".into()),
+            forked_from_session_id: Some("fork-native".into()),
+            created_at: None,
+            updated_at: None,
+            message_count: None,
+            git_branch: None,
+            archived: false,
+            sidechain: false,
+            availability: SessionAvailability::MetadataOnly,
+        };
+        let serialized = serde_json::to_value(native).unwrap();
+        assert_eq!(serialized["origin"], serde_json::json!("auxiliary"));
+        assert!(serialized.get("spawned_by_session_id").is_none());
+        assert!(serialized.get("forked_from_session_id").is_none());
+    }
+
+    #[test]
+    fn codex_classifies_structured_source_and_distinct_relations() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let parent = "parent-thread";
+        let fork = "fork-thread";
+        let fixtures = [
+            ("cli", serde_json::json!("cli"), serde_json::json!({})),
+            ("vscode", serde_json::json!("vscode"), serde_json::json!({})),
+            (
+                "review",
+                serde_json::json!({"subagent":{"review":{}}}),
+                serde_json::json!({}),
+            ),
+            (
+                "thread-spawn",
+                serde_json::json!({"subagent":{"thread_spawn":{"parent_thread_id":parent,"depth":1}}}),
+                serde_json::json!({"forked_from_id":fork}),
+            ),
+            (
+                "missing-parent",
+                serde_json::json!({"subagent":{"thread_spawn":{"depth":1}}}),
+                serde_json::json!({}),
+            ),
+            ("unknown", serde_json::json!("exec"), serde_json::json!({})),
+            (
+                "reliable-user",
+                serde_json::json!("exec"),
+                serde_json::json!({"thread_source":"user"}),
+            ),
+            (
+                "malformed",
+                serde_json::json!({"not_subagent":true}),
+                serde_json::json!({"thread_source":"user"}),
+            ),
+        ];
+        let fixture_count = fixtures.len();
+        let mut rows = Vec::new();
+        for (id, source, extra) in fixtures {
+            let path = dir.path().join(format!("{id}.jsonl"));
+            fs::write(
+                &path,
+                format!(
+                    "{}\n{{\"source\":{{\"subagent\":\"body-only\"}}}}\n",
+                    codex_meta_line(id, source, extra)
+                ),
+            )
+            .unwrap();
+            rows.push((
+                id,
+                path,
+                workspace.clone(),
+                "same title".to_owned(),
+                None,
+                None,
+                (id == "thread-spawn").then_some(fork),
+                None,
+            ));
+        }
+        let row_refs = rows
+            .iter()
+            .map(
+                |(id, path, cwd, title, source, parent, forked, thread_source)| {
+                    (
+                        *id,
+                        path.as_path(),
+                        cwd.as_path(),
+                        title.as_str(),
+                        *source,
+                        *parent,
+                        *forked,
+                        *thread_source,
+                    )
+                },
+            )
+            .collect::<Vec<_>>();
+        write_codex_metadata_database(&dir.path().join("state_1.sqlite"), &row_refs);
+
+        let sessions = CodexProvider::with_home(dir.path().to_path_buf())
+            .list_sessions(&workspace)
+            .unwrap();
+        assert_eq!(sessions.len(), fixture_count);
+        let by_id = |id: &str| {
+            sessions
+                .iter()
+                .find(|session| session.native_ref == id)
+                .unwrap()
+        };
+        assert_eq!(by_id("cli").origin, SessionOrigin::Interactive);
+        assert_eq!(by_id("vscode").origin, SessionOrigin::Interactive);
+        assert_eq!(by_id("review").origin, SessionOrigin::Auxiliary);
+        assert_eq!(by_id("thread-spawn").origin, SessionOrigin::Auxiliary);
+        assert_eq!(
+            by_id("thread-spawn").spawned_by_session_id.as_deref(),
+            Some(parent)
+        );
+        assert_eq!(
+            by_id("thread-spawn").forked_from_session_id.as_deref(),
+            Some(fork)
+        );
+        assert_eq!(by_id("missing-parent").origin, SessionOrigin::Auxiliary);
+        assert_eq!(by_id("missing-parent").spawned_by_session_id, None);
+        assert_eq!(by_id("unknown").origin, SessionOrigin::Unknown);
+        assert_eq!(by_id("reliable-user").origin, SessionOrigin::Interactive);
+        assert_eq!(by_id("malformed").origin, SessionOrigin::Unknown);
+        assert_eq!(
+            sessions
+                .iter()
+                .filter(|session| session.title.as_deref() == Some("same title"))
+                .count(),
+            fixture_count
+        );
+    }
+
+    #[test]
+    fn codex_bad_or_oversized_header_keeps_metadata_row_and_does_not_scan_body() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let body_only = dir.path().join("body-only.jsonl");
+        fs::write(
+            &body_only,
+            format!(
+                "{}\n{}\n",
+                codex_meta_line("body-only", serde_json::json!("cli"), serde_json::json!({})),
+                serde_json::json!({"source":{"subagent":{"other":"body-only"}}})
+            ),
+        )
+        .unwrap();
+        let malformed = dir.path().join("malformed.jsonl");
+        fs::write(&malformed, "{not-json}\n").unwrap();
+        let oversized = dir.path().join("oversized.jsonl");
+        fs::write(
+            &oversized,
+            format!("{}\n", "x".repeat(MAX_CODEX_HEADER_BYTES + 1)),
+        )
+        .unwrap();
+        let rows = [
+            (
+                "body-only",
+                body_only.as_path(),
+                workspace.as_path(),
+                "Body",
+                None,
+                None,
+                None,
+                None,
+            ),
+            (
+                "malformed",
+                malformed.as_path(),
+                workspace.as_path(),
+                "Malformed",
+                None,
+                None,
+                None,
+                None,
+            ),
+            (
+                "oversized",
+                oversized.as_path(),
+                workspace.as_path(),
+                "Oversized",
+                None,
+                None,
+                None,
+                None,
+            ),
+        ];
+        write_codex_metadata_database(&dir.path().join("state_1.sqlite"), &rows);
+        let sessions = CodexProvider::with_home(dir.path().to_path_buf())
+            .list_sessions(&workspace)
+            .unwrap();
+        assert_eq!(sessions.len(), 3);
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|session| session.native_ref == "body-only")
+                .unwrap()
+                .origin,
+            SessionOrigin::Interactive
+        );
+        for id in ["malformed", "oversized"] {
+            let session = sessions
+                .iter()
+                .find(|session| session.native_ref == id)
+                .unwrap();
+            assert_eq!(session.origin, SessionOrigin::Unknown);
+            assert_eq!(session.spawned_by_session_id, None);
+            assert_eq!(session.forked_from_session_id, None);
+        }
+    }
+
+    #[test]
+    fn codex_reads_header_fork_and_spawn_relations_when_database_has_no_relation_columns() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let transcript = dir.path().join("header-only.jsonl");
+        fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                codex_meta_line(
+                    "header-only",
+                    serde_json::json!({"subagent":{"thread_spawn":{"parent_thread_id":"parent-from-header","depth":1}}}),
+                    serde_json::json!({"forked_from_id":"fork-from-header"}),
+                )
+            ),
+        )
+        .unwrap();
+        let database = Connection::open(dir.path().join("state_1.sqlite")).unwrap();
+        database
+            .execute_batch(
+                "CREATE TABLE threads(
+                    id TEXT,
+                    rollout_path TEXT,
+                    cwd TEXT,
+                    title TEXT,
+                    created_at INTEGER,
+                    updated_at INTEGER,
+                    source TEXT
+                );",
+            )
+            .unwrap();
+        database
+            .execute(
+                "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, 1, 2, NULL)",
+                rusqlite::params![
+                    "header-only",
+                    transcript.display().to_string(),
+                    workspace.display().to_string(),
+                    "Header only",
+                ],
+            )
+            .unwrap();
+        drop(database);
+
+        let sessions = CodexProvider::with_home(dir.path().to_path_buf())
+            .list_sessions(&workspace)
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].origin, SessionOrigin::Auxiliary);
+        assert_eq!(
+            sessions[0].spawned_by_session_id.as_deref(),
+            Some("parent-from-header")
+        );
+        assert_eq!(
+            sessions[0].forked_from_session_id.as_deref(),
+            Some("fork-from-header")
+        );
+    }
+
+    #[test]
+    fn codex_falls_back_to_header_for_empty_database_fork_values() {
+        for (database_fork, expected) in [
+            (None, "fork-from-header"),
+            (Some(""), "fork-from-header"),
+            (Some("  "), "fork-from-header"),
+            (Some("fork-from-database"), "fork-from-database"),
+        ] {
+            let dir = tempdir().unwrap();
+            let workspace = dir.path().join("workspace");
+            fs::create_dir_all(&workspace).unwrap();
+            let transcript = dir.path().join("fork.jsonl");
+            fs::write(
+                &transcript,
+                format!(
+                    "{}\n",
+                    codex_meta_line(
+                        "fork",
+                        serde_json::json!("cli"),
+                        serde_json::json!({"forked_from_id":"fork-from-header"}),
+                    )
+                ),
+            )
+            .unwrap();
+            write_codex_metadata_database(
+                &dir.path().join("state_1.sqlite"),
+                &[(
+                    "fork",
+                    transcript.as_path(),
+                    workspace.as_path(),
+                    "Fork",
+                    Some("\"cli\""),
+                    None,
+                    database_fork,
+                    None,
+                )],
+            );
+
+            let sessions = CodexProvider::with_home(dir.path().to_path_buf())
+                .list_sessions(&workspace)
+                .unwrap();
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(
+                sessions[0].forked_from_session_id.as_deref(),
+                Some(expected),
+                "database fork value: {database_fork:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn codex_marks_missing_threads_schema_partial_but_accepts_valid_empty_source() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let database = Connection::open(dir.path().join("state_1.sqlite")).unwrap();
+        database
+            .execute_batch("CREATE TABLE threads(id TEXT, cwd TEXT);")
+            .unwrap();
+        drop(database);
+        let listing = CodexProvider::with_home(dir.path().to_path_buf())
+            .list_sessions_detailed(&workspace)
+            .unwrap();
+        assert!(listing.incomplete);
+        assert!(listing.sessions.is_empty());
+
+        let empty_dir = tempdir().unwrap();
+        let empty_workspace = empty_dir.path().join("workspace");
+        fs::create_dir_all(&empty_workspace).unwrap();
+        let database = Connection::open(empty_dir.path().join("state_1.sqlite")).unwrap();
+        database
+            .execute_batch("CREATE TABLE threads(id TEXT, rollout_path TEXT, cwd TEXT);")
+            .unwrap();
+        drop(database);
+        let sessions = CodexProvider::with_home(empty_dir.path().to_path_buf())
+            .list_sessions(&empty_workspace)
+            .unwrap();
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn codex_partial_schema_keeps_other_database_readable_and_blank_source_uses_header() {
+        for (source, expected_origin) in [
+            ("", SessionOrigin::Auxiliary),
+            ("  ", SessionOrigin::Auxiliary),
+            ("exec", SessionOrigin::Interactive),
+            ("{broken", SessionOrigin::Unknown),
+            ("\"cli\"", SessionOrigin::Interactive),
+        ] {
+            let dir = tempdir().unwrap();
+            let workspace = dir.path().join("workspace");
+            fs::create_dir_all(&workspace).unwrap();
+            let transcript = dir.path().join("session.jsonl");
+            fs::write(&transcript, format!("{}\n{}\n",
+                codex_meta_line("valid", serde_json::json!("subagent"), serde_json::json!({})),
+                serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"kept"}})
+            )).unwrap();
+            write_codex_metadata_database(
+                &dir.path().join("state_1.sqlite"),
+                &[(
+                    "valid",
+                    transcript.as_path(),
+                    workspace.as_path(),
+                    "Valid",
+                    Some(source),
+                    None,
+                    None,
+                    Some("user"),
+                )],
+            );
+            let old = Connection::open(dir.path().join("state_0.sqlite")).unwrap();
+            old.execute_batch("CREATE TABLE threads(id TEXT);").unwrap();
+            let provider = CodexProvider::with_home(dir.path().to_path_buf());
+            let listing = provider.list_sessions_detailed(&workspace).unwrap();
+            assert!(listing.incomplete);
+            assert_eq!(listing.sessions.len(), 1);
+            assert_eq!(listing.sessions[0].origin, expected_origin, "{source:?}");
+            assert_eq!(
+                provider.read_events("valid", None, 50).unwrap().events[0]
+                    .content
+                    .as_deref(),
+                Some("kept")
+            );
+        }
     }
 
     #[test]
@@ -2495,6 +3440,7 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].title.as_deref(), Some("Summary Title"));
         assert!(sessions[0].sidechain);
+        assert_eq!(sessions[0].origin, SessionOrigin::Auxiliary);
         let page = provider.read_events("private-session", None, 100).unwrap();
         assert_eq!(page.events.len(), 3);
         let debug = format!("{page:?}");
@@ -2558,6 +3504,7 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].native_ref, "transcript-only");
         assert_eq!(sessions[0].availability, SessionAvailability::Readable);
+        assert_eq!(sessions[0].origin, SessionOrigin::Interactive);
         assert_eq!(
             sessions[0].git_branch.as_deref(),
             Some("feature/session-browser")
@@ -2770,6 +3717,9 @@ mod tests {
             workspace_id: "workspace".into(),
             agent,
             title: Some("Fix auth".into()),
+            origin: SessionOrigin::Unknown,
+            spawned_by_session_id: None,
+            forked_from_session_id: None,
             created_at: None,
             updated_at: None,
             message_count: None,
@@ -2799,6 +3749,8 @@ mod tests {
         ConversationEvent {
             id: "event".into(),
             kind,
+            turn_id: None,
+            message_phase: None,
             timestamp: None,
             content: Some(content.into()),
             tool_name: None,
@@ -2920,6 +3872,8 @@ mod tests {
             compact_summary: Some("Continue from /Users/example/project".into()),
             messages: vec![ConversationEvent {
                 attachment_count: 1,
+                turn_id: None,
+                message_phase: None,
                 ..handoff_message(
                     ConversationEventKind::UserMessage,
                     "Authorization: Bearer private\nAuthorization=Bearer opaque-value\nAPI_KEY=private\nToken budget: 8000\nuse sk-secret-value",

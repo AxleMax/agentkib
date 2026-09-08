@@ -12,6 +12,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 mod obsidian;
+mod web;
 
 use agentkib_conversations::{
     ContinuationCapabilities, ContinuationCapability, ContinuationCapabilityStatus, HandoffFormat,
@@ -69,8 +70,9 @@ use agentkib_protocol::{
     SEARCH_MEMORIES_METHOD, SESSION_EVENTS_METHOD, SET_ACCENT_THEME_PREFERENCE_METHOD,
     SET_APP_ICON_PREFERENCE_METHOD, SET_CLOSE_BEHAVIOR_METHOD, SET_GIT_IDENTITY_ENABLED_METHOD,
     SET_LOCALE_METHOD, SET_QUOTA_AUTO_REFRESH_METHOD, SET_QUOTA_PREFERENCES_METHOD,
-    SET_QUOTA_PROMPT_SEEN_METHOD, SET_SESSION_INDEX_ENABLED_METHOD, SET_THEME_PREFERENCE_METHOD,
-    SHUTDOWN_METHOD, START_MCP_OAUTH_METHOD, STOP_MCP_RUNTIME_METHOD, STORAGE_CHILDREN_METHOD,
+    SET_QUOTA_PROMPT_SEEN_METHOD, SET_SESSION_INDEX_ENABLED_METHOD,
+    SET_SIDEBAR_WIDTH_PREFERENCE_METHOD, SET_THEME_PREFERENCE_METHOD, SHUTDOWN_METHOD,
+    START_MCP_OAUTH_METHOD, STOP_MCP_RUNTIME_METHOD, STORAGE_CHILDREN_METHOD,
     STORAGE_OVERVIEW_METHOD, UNINSTALL_MCP_METHOD, UNINSTALL_SKILL_METHOD,
     UNLINK_OBSIDIAN_WORKSPACE_METHOD, UPDATE_MCP_METHOD, UPDATE_MCP_NETWORK_METHOD,
     UPDATE_ONBOARDING_METHOD, WORKSPACE_DOCTOR_REPORT_METHOD, WORKSPACE_DOCTOR_SUMMARIES_METHOD,
@@ -120,6 +122,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     spawn_stdin_reader(events_tx.clone());
     let mut storage_scan: Option<StorageScan> = None;
     let mut agent_tool_workers = AgentToolWorkers::default();
+    let remote_worker = RemoteWorker::new(events_tx.clone());
+    let web_worker = web::Worker::new(events_tx.clone());
 
     while let Ok(event) = events_rx.recv() {
         match event {
@@ -195,6 +199,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
 
+                if request.method == agentkib_protocol::WEB_REQUEST_METHOD {
+                    if let Some(response) = web_worker.submit(request) {
+                        write_response(&mut stdout, response)?;
+                    }
+                    continue;
+                }
+                if request.method == agentkib_protocol::REMOTE_REQUEST_METHOD {
+                    if let Some(response) = remote_worker.submit(request) {
+                        write_response(&mut stdout, response)?;
+                    }
+                    continue;
+                }
                 let starts_hub = request.method == HANDSHAKE_METHOD;
                 let (response, should_shutdown) = handle_request(request);
                 let handshake_succeeded = starts_hub && response.error.is_none();
@@ -204,6 +220,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if handshake_succeeded {
                     initialize_mcp_hub()?;
                     initialize_skill_hub()?;
+                    remote_worker.initialize();
                 }
                 if should_shutdown {
                     if let Some(scan) = storage_scan.take() {
@@ -256,6 +273,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 write_response(&mut stdout, result_response(request_id, *result))?;
             }
+            RuntimeEvent::RemoteFinished { request_id, result } => {
+                write_response(&mut stdout, result_response(request_id, *result))?;
+            }
         }
     }
 
@@ -287,6 +307,10 @@ fn initialize_skill_hub() -> anyhow::Result<()> {
 }
 
 enum RuntimeEvent {
+    RemoteFinished {
+        request_id: Value,
+        result: Box<anyhow::Result<Value>>,
+    },
     Input(io::Result<String>),
     EndOfInput,
     StorageFinished {
@@ -303,6 +327,223 @@ enum RuntimeEvent {
         request_id: Value,
         result: Box<anyhow::Result<agentkib_core::AgentToolSnapshot>>,
     },
+}
+
+enum RemoteWork {
+    Initialize,
+    Request(RpcRequest),
+}
+
+struct RemoteWorker {
+    sender: Option<mpsc::SyncSender<RemoteWork>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    stopped: Arc<AtomicBool>,
+    service: Arc<std::sync::Mutex<Option<Arc<agentkib_remote::RemoteService>>>>,
+}
+
+impl RemoteWorker {
+    fn new(events: Sender<RuntimeEvent>) -> Self {
+        let (sender, receiver) = mpsc::sync_channel::<RemoteWork>(16);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let worker_stopped = stopped.clone();
+        let service = Arc::new(std::sync::Mutex::new(None));
+        let worker_service = service.clone();
+        let handle = std::thread::spawn(move || {
+            let mut initialized = None;
+            while let Ok(work) = receiver.recv() {
+                if worker_stopped.load(Ordering::SeqCst) {
+                    break;
+                }
+                if initialized.is_none() {
+                    initialized = Some((|| {
+                        let data_dir = agentkib_store::default_data_dir()?;
+                        let service = Arc::new(agentkib_remote::RemoteService::new(
+                            data_dir.clone(),
+                            Arc::new(RemoteSessionSource { data_dir }),
+                        )?);
+                        *worker_service
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("remote-unavailable"))? =
+                            Some(service.clone());
+                        Ok::<_, anyhow::Error>(service)
+                    })());
+                }
+                if let RemoteWork::Request(request) = work {
+                    let result = match initialized.as_ref().expect("initialized above") {
+                        Ok(service) => service.request(request.params),
+                        Err(_) => Err(anyhow::anyhow!("remote-unavailable")),
+                    };
+                    let _ = events.send(RuntimeEvent::RemoteFinished {
+                        request_id: request.id,
+                        result: Box::new(result),
+                    });
+                }
+            }
+            if let Some(Ok(service)) = initialized {
+                service.shutdown();
+            }
+        });
+        Self {
+            sender: Some(sender),
+            handle: Some(handle),
+            stopped,
+            service,
+        }
+    }
+
+    fn initialize(&self) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.try_send(RemoteWork::Initialize);
+        }
+    }
+
+    fn submit(&self, request: RpcRequest) -> Option<RpcResponse> {
+        let id = request.id.clone();
+        match self
+            .sender
+            .as_ref()
+            .map(|sender| sender.try_send(RemoteWork::Request(request)))
+        {
+            Some(Ok(())) => None,
+            _ => Some(RpcResponse::error(id, -32000, "remote-busy", None)),
+        }
+    }
+}
+
+impl Drop for RemoteWorker {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::SeqCst);
+        if let Ok(service) = self.service.lock()
+            && let Some(service) = service.as_ref()
+        {
+            service.shutdown();
+        }
+        self.sender.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+struct RemoteSessionSource {
+    data_dir: PathBuf,
+}
+
+impl RemoteSessionSource {
+    fn ensure_enabled(&self, epoch: u64) -> anyhow::Result<()> {
+        // Remote reads must fail closed while a preferences file is unreadable or being
+        // rewritten; the ordinary UI loader intentionally tolerates malformed preferences.
+        let preferences = match fs::read(self.data_dir.join("preferences.json")) {
+            Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .filter(Value::is_object)
+                .ok_or_else(|| anyhow::anyhow!("index-disabled"))?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => json!({}),
+            Err(_) => anyhow::bail!("index-disabled"),
+        };
+        let enabled = match preferences.get("session_index_enabled") {
+            None => true,
+            Some(Value::Bool(enabled)) => *enabled,
+            Some(_) => false,
+        };
+        anyhow::ensure!(enabled && session_index_epoch() == epoch, "index-disabled");
+        Ok(())
+    }
+}
+
+impl agentkib_remote::Source for RemoteSessionSource {
+    fn ensure_available(&self) -> anyhow::Result<()> {
+        self.ensure_enabled(session_index_epoch())
+    }
+
+    fn availability_epoch(&self) -> anyhow::Result<u64> {
+        let epoch = session_index_epoch();
+        self.ensure_enabled(epoch)?;
+        Ok(epoch)
+    }
+
+    fn catalog(&self) -> anyhow::Result<Value> {
+        let epoch = session_index_epoch();
+        self.ensure_enabled(epoch)?;
+        let store = Store::open(&self.data_dir.join("agentkib.db"))?;
+        let mut workspaces = store.list_workspaces()?;
+        let mut sessions = Vec::new();
+        for workspace in &workspaces {
+            sessions.extend(store.list_conversation_sessions(&workspace.id)?);
+            anyhow::ensure!(sessions.len() <= 20_000, "response-too-large");
+        }
+        // Discovery/exclusion can remove a registration while the snapshot is being read.
+        let registered = store
+            .list_workspaces()?
+            .into_iter()
+            .map(|workspace| workspace.id)
+            .collect::<BTreeSet<_>>();
+        workspaces.retain(|workspace| registered.contains(&workspace.id));
+        sessions.retain(|session| registered.contains(&session.workspace_id));
+        self.ensure_enabled(epoch)?;
+        // Minimize data before it crosses the network. WorkspaceSummary is a
+        // local model whose discovery provenance must not reach paired clients;
+        // receiver-side stripping cannot enforce that boundary.
+        let workspaces = workspaces
+            .into_iter()
+            .map(|workspace| {
+                json!({
+                    "id": workspace.id,
+                    "path": workspace.path,
+                    "name": workspace.name,
+                    "status": workspace.status,
+                    "asset_count": workspace.asset_count,
+                    "warning_count": workspace.warning_count,
+                    "last_active_at": workspace.last_active_at,
+                    "last_scanned_at": workspace.last_scanned_at,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"workspaces": workspaces, "sessions": sessions}))
+    }
+
+    fn events(
+        &self,
+        session_id: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Value> {
+        let epoch = session_index_epoch();
+        self.ensure_enabled(epoch)?;
+        anyhow::ensure!(
+            !session_id.is_empty() && session_id.len() <= 256 && limit > 0 && limit <= 100,
+            "invalid-request"
+        );
+        anyhow::ensure!(
+            cursor.is_none_or(|cursor| cursor.len() <= 1024),
+            "invalid-request"
+        );
+        let store = Store::open(&self.data_dir.join("agentkib.db"))?;
+        let session = store
+            .get_conversation_session(session_id)?
+            .ok_or_else(|| anyhow::anyhow!("session-unavailable"))?;
+        // Lookup through the registry, never accept a remote-supplied path or native transcript reference.
+        let workspace = store.workspace_path(&session.workspace_id)?;
+        let source =
+            provider(session.agent).ok_or_else(|| anyhow::anyhow!("provider-unavailable"))?;
+        let native = source
+            .list_sessions(&workspace)?
+            .into_iter()
+            .find(|candidate| {
+                store
+                    .conversation_id(session.agent, &candidate.native_ref)
+                    .is_ok_and(|id| id == session_id)
+            })
+            .ok_or_else(|| anyhow::anyhow!("session-unavailable"))?;
+        let page = source.read_events(&native.native_ref, cursor, limit)?;
+        self.ensure_enabled(epoch)?;
+        anyhow::ensure!(
+            store.workspace_path(&session.workspace_id).is_ok()
+                && store.get_conversation_session(session_id)?.is_some(),
+            "session-unavailable"
+        );
+        Ok(serde_json::to_value(page)?)
+    }
 }
 
 struct StorageScan {
@@ -613,6 +854,9 @@ fn handle_request(request: RpcRequest) -> (RpcResponse, bool) {
         SET_ACCENT_THEME_PREFERENCE_METHOD => {
             command_response(request, set_accent_theme_preference)
         }
+        SET_SIDEBAR_WIDTH_PREFERENCE_METHOD => {
+            command_response(request, set_sidebar_width_preference)
+        }
         SET_APP_ICON_PREFERENCE_METHOD => command_response(request, set_app_icon_preference),
         PLAN_CHANGES_METHOD => command_response(request, plan_changes),
         APPLY_CHANGES_METHOD => command_response(request, apply_changes),
@@ -921,13 +1165,32 @@ fn refresh_workspace_sessions(
     let workspace = store.workspace_path(&request.workspace_id)?;
     for source in providers() {
         let agent = source.agent();
-        match source.list_sessions(&workspace) {
-            Ok(sessions) => {
+        match source.list_sessions_detailed(&workspace) {
+            Ok(listing) => {
                 let _guard = session_index_write_lock()?;
                 if !session_index_refresh_is_current(refresh_epoch, &data_dir) {
                     return Ok(Vec::new());
                 }
-                store.sync_conversation_sessions(&request.workspace_id, agent, &sessions)?;
+                if listing.incomplete {
+                    // A failed profile/source must not erase its previously indexed sessions.
+                    store.sync_conversation_sessions_partial(
+                        &request.workspace_id,
+                        agent,
+                        &listing.sessions,
+                    )?;
+                    store.record_conversation_index_failure(
+                        &request.workspace_id,
+                        agent,
+                        "errors.conversations.sourceUnavailable",
+                        "Some conversation sources could not be read; previous records were retained",
+                    )?;
+                } else {
+                    store.sync_conversation_sessions(
+                        &request.workspace_id,
+                        agent,
+                        &listing.sessions,
+                    )?;
+                }
             }
             Err(_) => {
                 let _guard = session_index_write_lock()?;
@@ -1090,7 +1353,9 @@ fn session_events(
     source.read_events(
         &native.native_ref,
         request.cursor.as_deref(),
-        request.limit.unwrap_or(100),
+        request
+            .limit
+            .unwrap_or(agentkib_conversations::DEFAULT_HISTORY_PAGE_SIZE),
     )
 }
 
@@ -2740,6 +3005,25 @@ fn set_accent_theme_preference(request: PreferenceRequest<AccentThemeId>) -> any
     update_preference("accent_theme_preference", request.preference)
 }
 
+fn sidebar_width_preference(preferences: &Value) -> Option<u16> {
+    optional_stored_value::<u16>(preferences, "sidebar_width_preference")
+        .filter(|width| (250..=400).contains(width))
+}
+
+fn save_sidebar_width_preference(data_dir: &Path, width: u16) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        (250..=400).contains(&width),
+        "Sidebar width preference must be an integer between 250 and 400"
+    );
+    save_preference(data_dir, "sidebar_width_preference", width)
+}
+
+fn set_sidebar_width_preference(request: PreferenceRequest<u16>) -> anyhow::Result<Value> {
+    let data_dir = agentkib_store::default_data_dir()?;
+    save_sidebar_width_preference(&data_dir, request.preference)?;
+    runtime_info(EmptyRequest {})
+}
+
 fn set_app_icon_preference(request: PreferenceRequest<AppIconPreference>) -> anyhow::Result<Value> {
     update_preference("app_icon_preference", request.preference)
 }
@@ -2814,6 +3098,7 @@ fn runtime_info(_: EmptyRequest) -> anyhow::Result<Value> {
         "theme_preference": theme_preference,
         "effective_theme": effective_theme,
         "accent_theme_preference": accent_theme_preference,
+        "sidebar_width_preference": sidebar_width_preference(&preferences),
         "app_icon_preference": app_icon_preference,
         "tray_available": false,
         "session_index_enabled": preferences
@@ -4005,12 +4290,13 @@ fn refresh_discovery(_: EmptyRequest) -> anyhow::Result<RefreshReceipt> {
         .map(|root| (root.path, root.max_depth))
         .collect::<Vec<_>>();
     let snapshot = discover_local_workspaces(&roots);
-    Store::open_default()?.sync_discovery(
+    Store::open_default()?.sync_discovery_with_diagnostics(
         &snapshot.candidates,
         &snapshot.installations,
         &snapshot.home_assets,
         started_at,
         &snapshot.errors,
+        &snapshot.source_diagnostics,
     )?;
     Ok(completed_refresh_receipt(
         "discovery",
@@ -4811,6 +5097,12 @@ fn handle_handshake(request: RpcRequest) -> (RpcResponse, bool) {
             version: env!("CARGO_PKG_VERSION").to_owned(),
         },
         pid: std::process::id(),
+        capabilities: vec![
+            "web-v1".into(),
+            "experimental-codex-bridge-version-gated".into(),
+            "discovery-source-diagnostics".into(),
+            "agent-history-capabilities".into(),
+        ],
     };
 
     (
@@ -4829,6 +5121,237 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn remote_source_enforces_index_preference_before_opening_database() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join("preferences.json"),
+            r#"{"session_index_enabled":false}"#,
+        )
+        .unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        assert_eq!(source.catalog().unwrap_err().to_string(), "index-disabled");
+        assert_eq!(
+            source.events("opaque", None, 100).unwrap_err().to_string(),
+            "index-disabled"
+        );
+        assert!(!directory.path().join("agentkib.db").exists());
+    }
+
+    #[test]
+    fn remote_source_rechecks_disabled_and_stale_index_state() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        let epoch = session_index_epoch();
+        assert!(source.ensure_enabled(epoch).is_ok());
+        assert!(source.ensure_enabled(epoch.wrapping_add(1)).is_err());
+        fs::write(
+            directory.path().join("preferences.json"),
+            r#"{"session_index_enabled":false}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            source.ensure_available().unwrap_err().to_string(),
+            "index-disabled"
+        );
+        assert_eq!(
+            source.ensure_enabled(epoch).unwrap_err().to_string(),
+            "index-disabled"
+        );
+    }
+
+    #[test]
+    fn remote_source_fails_closed_on_truncated_or_invalid_preferences() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        for invalid in ["", "{", "null", "[]", r#"{"session_index_enabled":"true"}"#] {
+            fs::write(directory.path().join("preferences.json"), invalid).unwrap();
+            assert_eq!(
+                source.ensure_available().unwrap_err().to_string(),
+                "index-disabled"
+            );
+            assert!(source.catalog().is_err());
+        }
+        assert!(!directory.path().join("agentkib.db").exists());
+    }
+
+    #[test]
+    fn remote_catalog_reads_only_registered_cached_sessions() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        let store = Store::open(&directory.path().join("agentkib.db")).unwrap();
+        let workspace = directory.path().join("synthetic-project");
+        fs::create_dir_all(&workspace).unwrap();
+        let registered = store.add_workspace(&workspace).unwrap();
+        let private_cwd = workspace.join("private-discovery-subdirectory");
+        store
+            .sync_discovery(
+                &[agentkib_core::DiscoveryCandidate {
+                    path: workspace.clone(),
+                    display_name: None,
+                    source_agent: Some(AgentKind::Codex),
+                    evidence: agentkib_core::DiscoveryEvidence::SessionCwd,
+                    last_active_at: Some(Utc::now()),
+                    session_count: 1,
+                    explicit_workspace: false,
+                    repository_group_id: Some("private-repository-id".into()),
+                    session_cwds: Some(vec![private_cwd.clone()]),
+                }],
+                &[],
+                &[],
+                Utc::now(),
+                &[],
+            )
+            .unwrap();
+        // Assert the fixture really hydrates internal evidence, rather than
+        // passing because the store happened to contain no discovery sources.
+        let local = store.list_workspaces().unwrap().remove(0);
+        assert!(
+            local
+                .sources
+                .iter()
+                .any(|source| { source.session_cwds.as_ref() == Some(&vec![private_cwd.clone()]) })
+        );
+        assert_eq!(
+            local.repository_group_id.as_deref(),
+            Some("private-repository-id")
+        );
+        let native = agentkib_conversations::NativeSessionSummary {
+            native_ref: "synthetic-native-id".into(),
+            agent: AgentKind::Codex,
+            title: Some("Cached only".into()),
+            origin: agentkib_conversations::SessionOrigin::Unknown,
+            spawned_by_session_id: None,
+            forked_from_session_id: None,
+            created_at: None,
+            updated_at: None,
+            message_count: None,
+            git_branch: None,
+            archived: false,
+            sidechain: false,
+            availability: agentkib_conversations::SessionAvailability::MetadataOnly,
+        };
+        let indexed = store
+            .sync_conversation_sessions(&registered.id, AgentKind::Codex, &[native])
+            .unwrap();
+        let catalog = source.catalog().unwrap();
+        assert_eq!(catalog["workspaces"].as_array().unwrap().len(), 1);
+        let expected_workspace = json!({
+            "id": local.id,
+            "path": local.path,
+            "name": local.name,
+            "status": local.status,
+            "asset_count": local.asset_count,
+            "warning_count": local.warning_count,
+            "last_active_at": local.last_active_at,
+            "last_scanned_at": local.last_scanned_at,
+        });
+        assert_eq!(catalog["workspaces"][0], expected_workspace);
+        assert!(
+            !catalog
+                .to_string()
+                .contains("private-discovery-subdirectory")
+        );
+        assert!(!catalog.to_string().contains("private-repository-id"));
+        assert_eq!(catalog["sessions"][0]["id"], indexed[0].id);
+        assert!(!catalog.to_string().contains("synthetic-native-id"));
+        store.exclude_workspace(&registered.id).unwrap();
+        assert_eq!(source.catalog().unwrap()["sessions"], json!([]));
+        assert!(source.events(&indexed[0].id, None, 100).is_err());
+    }
+
+    #[test]
+    fn remote_events_reject_invalid_limits_and_unindexed_ids() {
+        use agentkib_remote::Source;
+        let directory = tempdir().unwrap();
+        let source = RemoteSessionSource {
+            data_dir: directory.path().to_owned(),
+        };
+        assert!(
+            source
+                .events("unindexed", None, 100)
+                .unwrap_err()
+                .to_string()
+                .contains("session-unavailable")
+        );
+        for limit in [0, 101, usize::MAX] {
+            assert!(source.events("id", None, limit).is_err());
+        }
+        assert!(source.events("id", Some(&"x".repeat(1025)), 100).is_err());
+    }
+
+    #[test]
+    fn sidebar_width_reads_only_valid_persisted_integers() {
+        assert_eq!(sidebar_width_preference(&json!({})), None);
+        for width in [
+            json!(null),
+            json!("300"),
+            json!(249),
+            json!(401),
+            json!(300.5),
+        ] {
+            assert_eq!(
+                sidebar_width_preference(&json!({"sidebar_width_preference": width})),
+                None
+            );
+        }
+        for width in [250, 325, 400] {
+            assert_eq!(
+                sidebar_width_preference(&json!({"sidebar_width_preference": width})),
+                Some(width)
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_width_request_rejects_non_integer_and_negative_values() {
+        for width in [json!(null), json!("300"), json!(300.5), json!(-1)] {
+            assert!(
+                serde_json::from_value::<PreferenceRequest<u16>>(json!({"preference": width}))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_width_save_preserves_preferences_and_rejects_out_of_range() {
+        let directory = tempdir().unwrap();
+        let original = json!({
+            "locale_preference": "zh-CN",
+            "theme_preference": "dark",
+            "accent_theme_preference": "sakura",
+            "app_icon_preference": "black",
+            "session_index_enabled": false
+        });
+        save_preferences_root(directory.path(), &original).unwrap();
+        for width in [250, 325, 400] {
+            save_sidebar_width_preference(directory.path(), width).unwrap();
+            let mut expected = original.clone();
+            expected["sidebar_width_preference"] = json!(width);
+            assert_eq!(load_preferences_root(directory.path()), expected);
+        }
+        let saved = fs::read(directory.path().join("preferences.json")).unwrap();
+        for width in [0, 249, 401, u16::MAX] {
+            assert!(save_sidebar_width_preference(directory.path(), width).is_err());
+            assert_eq!(
+                fs::read(directory.path().join("preferences.json")).unwrap(),
+                saved
+            );
+        }
+    }
 
     #[test]
     fn accent_theme_preference_uses_stable_serialized_ids() {
@@ -4951,7 +5474,52 @@ mod tests {
 
         assert!(response.error.is_none());
         assert!(!should_shutdown);
+        let result = response.result.unwrap();
+        assert_eq!(result["protocolVersion"], PROTOCOL_VERSION);
+        let capabilities = result["capabilities"].as_array().unwrap();
+        assert!(capabilities.contains(&json!("discovery-source-diagnostics")));
+        assert!(capabilities.contains(&json!("agent-history-capabilities")));
         assert!(MCP_HUB.get().is_none());
+    }
+
+    #[test]
+    fn previous_desktop_protocol_cannot_silently_use_new_runtime() {
+        let (response, should_shutdown) = handle_handshake(RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(1),
+            method: HANDSHAKE_METHOD.into(),
+            params: json!({
+                "protocolVersion": PROTOCOL_VERSION - 1,
+                "client": {"name": "older-desktop", "version": "0.0.0"}
+            }),
+        });
+        assert!(response.error.is_some());
+        assert!(response.result.is_none());
+        assert!(!should_shutdown);
+    }
+
+    #[test]
+    fn declared_history_support_matches_registered_providers_without_expanding_control() {
+        use agentkib_core::{AgentControlSupport, AgentSupportCapabilities};
+        for agent in AgentKind::ALL {
+            let support = AgentSupportCapabilities::for_agent(agent);
+            assert_eq!(support.session_list, provider(agent).is_some(), "{agent:?}");
+            assert_eq!(support.history_read, support.session_list);
+            if matches!(
+                agent,
+                AgentKind::OpenClaw | AgentKind::Hermes | AgentKind::GrokBuild
+            ) {
+                assert!(!support.continuation);
+                assert_eq!(support.control, AgentControlSupport::None);
+                assert!(
+                    provider(agent)
+                        .unwrap()
+                        .verified_control_id("untrusted")
+                        .unwrap()
+                        .is_none()
+                );
+            }
+        }
     }
 
     #[test]

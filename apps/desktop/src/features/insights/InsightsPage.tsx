@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import {
   Select,
   SelectContent,
@@ -46,14 +47,7 @@ import {
   type AchievementTrack,
   type AchievementWallItem,
 } from "@/features/insights/achievements";
-import {
-  formatCompactNumber,
-  formatDateTime,
-  formatRelativeTime,
-  localizeMessage,
-  currentLocale,
-  tr,
-} from "@/core/i18n";
+
 import {
   agentSupportsInsights,
   buildHeatmapMonthMarkers,
@@ -93,6 +87,7 @@ export function InsightsPage({
   section: InsightsSection;
   workspaces: WorkspaceSummary[];
 }) {
+  const { formatCompactNumber, formatRelativeTime, localizeMessage, tr } = useI18n();
   const [agent, setAgent] = useState<"all" | AgentKind>("all");
   const [workspaceId, setWorkspaceId] = useState("all");
   const [repository, setRepository] = useState("all");
@@ -311,7 +306,7 @@ export function InsightsPage({
                 icon={Sparkles}
                 tone="blue"
                 label={tr("insights.totalToken")}
-                value={formatCompact(summary.total_tokens)}
+                value={formatCompactNumber(summary.total_tokens)}
                 detail={
                   summary.coverage_from ? `${summary.coverage_from} — ${summary.coverage_to}` : ""
                 }
@@ -320,8 +315,10 @@ export function InsightsPage({
                 icon={GitCommitHorizontal}
                 tone="violet"
                 label={tr("insights.myCommits")}
-                value={formatCompact(summary.my_commits)}
-                detail={tr("insights.allActivity", { count: formatCompact(summary.all_commits) })}
+                value={formatCompactNumber(summary.my_commits)}
+                detail={tr("insights.allActivity", {
+                  count: formatCompactNumber(summary.all_commits),
+                })}
               />
               <AchievementMetric
                 icon={CalendarDays}
@@ -329,7 +326,7 @@ export function InsightsPage({
                 label={tr("insights.activeDays")}
                 value={`${summary.active_days} ${tr("common.days")}`}
                 detail={tr("insights.recordedSessions", {
-                  count: formatCompact(summary.session_count),
+                  count: formatCompactNumber(summary.session_count),
                 })}
               />
               <AchievementMetric
@@ -388,7 +385,7 @@ export function InsightsPage({
                               <span
                                 key={point.date}
                                 className={heatmapCellClass(level)}
-                                title={`${point.date} · ${metricLabels[metric]} ${formatCompact(value)}`}
+                                title={`${point.date} · ${metricLabels[metric]} ${formatCompactNumber(value)}`}
                               />
                             );
                           })}
@@ -445,7 +442,7 @@ export function InsightsPage({
                     </span>
                     <div className="grid justify-items-end">
                       <strong className="text-sm tabular-nums">
-                        {formatCompact(value.total_tokens)}
+                        {formatCompactNumber(value.total_tokens)}
                       </strong>
                       <small className="text-xs text-muted-foreground">Token</small>
                     </div>
@@ -541,7 +538,7 @@ export function InsightsPage({
 }
 
 function HeatmapWeekdays() {
-  const locale = document.documentElement.lang || "en-US";
+  const { locale } = useI18n();
   const labels = Array.from({ length: 7 }, (_, index) =>
     new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(
       new Date(Date.UTC(2024, 0, 1 + index)),
@@ -567,7 +564,7 @@ function HeatmapMonths({
   columns: number;
   year?: number;
 }) {
-  const locale = document.documentElement.lang || "en-US";
+  const { locale } = useI18n();
   const markers = year
     ? Array.from({ length: 12 }, (_, month) => {
         const date = new Date(year, month, 1);
@@ -649,6 +646,7 @@ const specialAchievementIcons: Record<string, typeof Activity> = {
 };
 
 function AchievementWall({ achievements }: { achievements: Achievement[] }) {
+  const { tr } = useI18n();
   const [selected, setSelected] = useState<AchievementWallItem>();
   if (!achievements.length)
     return (
@@ -705,6 +703,7 @@ function AchievementWall({ achievements }: { achievements: Achievement[] }) {
 }
 
 function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOpen: () => void }) {
+  const { formatCompactNumber, formatDateTime, tr } = useI18n();
   if (item.kind === "track") {
     const Icon = milestoneIcons[item.track.category];
     const title = tr(`achievements.${achievementTranslationKey(item.cover.code)}.title`);
@@ -736,7 +735,7 @@ function AchievementWallCard({ item, onOpen }: { item: AchievementWallItem; onOp
         </span>
         <strong className="self-start truncate text-base text-foreground">{title}</strong>
         <small className="col-span-full self-center truncate text-xs">
-          {formatMilestoneValue(item.track.category, item.cover.threshold)}
+          {formatMilestoneValue(item.track.category, item.cover.threshold, formatCompactNumber, tr)}
         </small>
         <span
           className={cn(
@@ -812,6 +811,7 @@ function AchievementDetailDialog({
   item: AchievementWallItem;
   onClose: () => void;
 }) {
+  const { tr } = useI18n();
   const title =
     item.kind === "track"
       ? tr(`milestones.category.${item.track.category}`)
@@ -853,6 +853,7 @@ function AchievementDetailDialog({
 }
 
 function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
+  const { formatCompactNumber, formatDateTime, tr } = useI18n();
   const [selected, setSelected] = useState(() => selectDefaultTrackMilestone(track));
   const progressPercent = Math.round(track.progressRatio * 100);
   const selectedReached = achievementReached(selected);
@@ -864,7 +865,7 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
         {[
           [
             tr("achievementWall.currentValue"),
-            formatMilestoneValue(track.category, track.progress),
+            formatMilestoneValue(track.category, track.progress, formatCompactNumber, tr),
           ],
           [
             tr("achievementWall.completedStages"),
@@ -873,7 +874,7 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
           [
             tr("achievementWall.nextTarget"),
             track.next
-              ? formatMilestoneValue(track.category, track.next.threshold)
+              ? formatMilestoneValue(track.category, track.next.threshold, formatCompactNumber, tr)
               : tr("milestones.highest"),
           ],
         ].map(([label, value], index) => (
@@ -931,7 +932,12 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
                   {reached ? <Check size={13} /> : ""}
                 </span>
                 <strong className="max-w-full whitespace-normal text-xs leading-tight">
-                  {formatMilestoneValue(track.category, milestone.threshold)}
+                  {formatMilestoneValue(
+                    track.category,
+                    milestone.threshold,
+                    formatCompactNumber,
+                    tr,
+                  )}
                 </strong>
                 <small className="max-w-full whitespace-normal text-xs leading-tight">
                   {tr(`achievements.${achievementTranslationKey(milestone.code)}.title`)}
@@ -962,7 +968,7 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
           </div>
         </div>
         <strong className="text-sm text-foreground">
-          {formatMilestoneValue(track.category, selected.threshold)}
+          {formatMilestoneValue(track.category, selected.threshold, formatCompactNumber, tr)}
         </strong>
         <p className="col-span-full m-0 pl-[41px] text-xs text-muted-foreground max-[760px]:pl-[41px]">
           {selected.unlocked_at
@@ -971,7 +977,12 @@ function AchievementTrackDetail({ track }: { track: AchievementTrack }) {
               ? tr("special.reachedDateUnknown")
               : selectedCurrent
                 ? tr("milestones.currentProgress", {
-                    progress: formatMilestoneValue(track.category, track.progress),
+                    progress: formatMilestoneValue(
+                      track.category,
+                      track.progress,
+                      formatCompactNumber,
+                      tr,
+                    ),
                   })
                 : tr("milestones.locked")}
         </p>
@@ -985,6 +996,7 @@ function SpecialAchievementDetail({
 }: {
   item: Extract<AchievementWallItem, { kind: "special" }>;
 }) {
+  const { formatDateTime, tr } = useI18n();
   const { achievement, secret, unlocked } = item.special;
   const hidden = secret && !unlocked;
   const key = achievementTranslationKey(achievement.code);
@@ -1016,6 +1028,7 @@ function SpecialAchievementDetail({
 }
 
 function ProviderRow({ provider }: { provider: NonNullable<InsightsStatus["providers"]>[number] }) {
+  const { localizeMessage, tr } = useI18n();
   const summary = provider.coverage_from
     ? `${provider.coverage_from} — ${provider.coverage_to}`
     : provider.error_key
@@ -1057,6 +1070,7 @@ function TokenTrendCard({
   metric: HeatmapMetric;
   metricLabel: string;
 }) {
+  const { locale, tr } = useI18n();
   const monthly = new Map<string, number>();
   for (const point of points) {
     const key = point.date.slice(0, 7);
@@ -1073,7 +1087,7 @@ function TokenTrendCard({
     })
     .join(" ");
   const trendLabel = tr("insights.trend", { metric: metricLabel });
-  const monthFormatter = new Intl.DateTimeFormat(currentLocale(), { month: "short" });
+  const monthFormatter = new Intl.DateTimeFormat(locale, { month: "short" });
   return (
     <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
       <CardHeader className="flex min-h-[58px] flex-row items-center justify-between gap-3 border-b border-border px-5 py-4">
@@ -1144,6 +1158,7 @@ function TokenTrendCard({
 }
 
 function AgentUsageSummary({ agents }: { agents: AgentUsageBreakdown[] }) {
+  const { formatCompactNumber, tr } = useI18n();
   const values = [...agents]
     .sort((left, right) => right.total_tokens - left.total_tokens)
     .slice(0, 5);
@@ -1171,7 +1186,9 @@ function AgentUsageSummary({ agents }: { agents: AgentUsageBreakdown[] }) {
                   />
                 </span>
               </span>
-              <strong className="text-sm tabular-nums">{formatCompact(value.total_tokens)}</strong>
+              <strong className="text-sm tabular-nums">
+                {formatCompactNumber(value.total_tokens)}
+              </strong>
             </div>
           ))}
           {!values.length && (
@@ -1241,6 +1258,7 @@ function BreakdownPanel({
   title: string;
   values: Array<{ key: string; label: string; detail: string; value: number }>;
 }) {
+  const { formatCompactNumber, tr } = useI18n();
   return (
     <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
       <CardHeader className="flex min-h-[58px] items-center border-b border-border px-5 py-4">
@@ -1251,10 +1269,10 @@ function BreakdownPanel({
           {values.slice(0, 10).map((item) => (
             <div className="flex items-center justify-between gap-4 px-4 py-3" key={item.key}>
               <span className="grid min-w-0 gap-0.5">
-                <strong className="truncate text-sm">{metadataLabel(item.label)}</strong>
+                <strong className="truncate text-sm">{metadataLabel(item.label, tr)}</strong>
                 <small className="text-xs text-muted-foreground">{item.detail}</small>
               </span>
-              <strong className="text-sm tabular-nums">{formatCompact(item.value)}</strong>
+              <strong className="text-sm tabular-nums">{formatCompactNumber(item.value)}</strong>
             </div>
           ))}
           {!values.length && (
@@ -1282,11 +1300,13 @@ function Empty({
     </div>
   );
 }
-function formatMilestoneValue(category: AchievementCategory, value: number) {
-  return tr(`milestones.value.${category}`, { value: formatCompact(value) });
-}
-function formatCompact(value: number) {
-  return formatCompactNumber(value);
+function formatMilestoneValue(
+  category: AchievementCategory,
+  value: number,
+  formatCompactNumber: ReturnType<typeof useI18n>["formatCompactNumber"],
+  tr: ReturnType<typeof useI18n>["tr"],
+) {
+  return tr(`milestones.value.${category}`, { value: formatCompactNumber(value) });
 }
 function localDate(value: Date) {
   const year = value.getFullYear();
@@ -1294,7 +1314,7 @@ function localDate(value: Date) {
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
-function metadataLabel(value: string) {
+function metadataLabel(value: string, tr: ReturnType<typeof useI18n>["tr"]) {
   if (value === "__unknown_model__") return tr("insights.unknownModel");
   if (value === "__unlinked_workspace__") return tr("insights.unlinkedWorkspace");
   if (value === "仓库 Git 身份") return tr("settings.gitIdentityRepository");

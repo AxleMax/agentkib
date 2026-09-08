@@ -1,3 +1,6 @@
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Check,
@@ -27,12 +30,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { ObsidianSettingsCard } from "@/features/obsidian/ObsidianIntegration";
 import { QuotaDiagnostics } from "@/features/quota/QuotaDiagnostics";
 import { RemoteGatewaysSettings } from "./RemoteGateways";
 import { AgentToolsSettings } from "./AgentToolsSettings";
+import { RemoteConnectionSettings } from "@/features/remote/RemoteConnectionPanel";
 import {
   SettingsCopy,
   SettingsAnchor,
@@ -46,13 +51,7 @@ import {
 } from "./components/SettingsLayout";
 import { api } from "@/core/api";
 import { desktopApi } from "@/core/desktop";
-import {
-  cacheEffectiveLocale,
-  changeLocale,
-  formatDateTime,
-  localizeMessage,
-  tr,
-} from "@/core/i18n";
+import { cacheEffectiveLocale, changeLocale, localizeMessage } from "@/core/i18n";
 import {
   ACCENT_THEME_IDS,
   accentThemePreference,
@@ -157,6 +156,9 @@ export function GlobalSettings({
   onRemoteGatewaysChanged,
   onRefreshDiagnostics,
 }: GlobalSettingsProps) {
+  const { tr, formatDateTime } = useI18n();
+  if (section === "remote") return <RemoteConnectionSettings />;
+
   if (section === "general")
     return (
       <SettingsPage variant="form">
@@ -238,6 +240,7 @@ export function GlobalSettings({
               </SettingsNotice>
             ))}
           </SettingsSection>
+          <DiscoveryDiagnostics discovery={discovery} />
           <SettingsSection
             title={tr("settings.scanRoots")}
             target="discovery-roots"
@@ -424,7 +427,127 @@ export function GlobalSettings({
   );
 }
 
+function DiscoveryDiagnostics({ discovery }: { discovery?: DiscoveryReport }) {
+  const { tr, formatDateTime } = useI18n();
+  const sources = discovery?.source_diagnostics ?? [];
+  return (
+    <SettingsSection
+      title={tr("settings.discoverySources")}
+      description={tr("settings.discoveryDetails")}
+      target="discovery-sources"
+    >
+      {sources.length ? (
+        <div className="divide-y divide-border/60">
+          {sources.map((source, index) => (
+            <Collapsible
+              className="group px-5 py-3"
+              key={`${source.agent ?? "unknown"}:${source.source}:${index}`}
+            >
+              <CollapsibleTrigger className="flex w-full cursor-pointer items-center gap-3 bg-transparent p-0 text-left">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted/50 text-muted-foreground">
+                  <FolderGit2 size={15} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <strong className="block truncate text-sm font-medium">
+                    {source.agent ? agentLabels[source.agent] : tr("agents.capability.unknown")}
+                    {` · ${source.source}`}
+                  </strong>
+                  <small className="mt-1 block truncate text-xs text-muted-foreground">
+                    {source.path ?? tr("settings.discoveryPathUnavailable")}
+                  </small>
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 text-xs font-medium",
+                    source.status === "succeeded" || source.status === "empty"
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : source.status === "partial"
+                        ? "text-amber-700 dark:text-amber-300"
+                        : "text-destructive",
+                  )}
+                >
+                  {discoverySourceStatusLabel(source.status, tr)}
+                </span>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 grid gap-3 border-t border-border/60 pt-3 text-xs">
+                <div className="grid gap-1">
+                  <span className="text-muted-foreground">{tr("settings.discoveryDetails")}</span>
+                  <code className="break-all rounded-md bg-muted/40 px-2 py-1 text-[11px] text-foreground">
+                    {source.path ?? tr("settings.discoveryPathUnavailable")}
+                  </code>
+                </div>
+                <div className="grid gap-x-5 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <DiscoveryMetric
+                    label={tr("settings.discoveryCandidates")}
+                    value={source.candidate_count}
+                  />
+                  <DiscoveryMetric
+                    label={tr("settings.discoveryWorkspaces")}
+                    value={source.included_count}
+                  />
+                  <DiscoveryMetric
+                    label={tr("settings.discoverySkipped")}
+                    value={source.skipped_count}
+                  />
+                  <DiscoveryMetric
+                    label={tr("settings.discoveryStarted")}
+                    value={source.started_at ? formatDateTime(source.started_at) : undefined}
+                  />
+                  <DiscoveryMetric
+                    label={tr("settings.discoveryFinished")}
+                    value={source.finished_at ? formatDateTime(source.finished_at) : undefined}
+                  />
+                </div>
+                {source.reasons?.length ? (
+                  <div className="grid gap-1.5">
+                    <strong className="font-medium">{tr("settings.discoveryReasons")}</strong>
+                    <ul className="grid gap-1 text-muted-foreground">
+                      {source.reasons.map((reason, reasonIndex) => (
+                        <li className="flex flex-wrap gap-x-2" key={`${reason}:${reasonIndex}`}>
+                          <span>{discoveryReasonLabel(reason, tr)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground">{tr("settings.discoveryNoReasons")}</span>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
+          ))}
+        </div>
+      ) : (
+        <SettingsNotice inset={false} className="m-0 rounded-none border-0">
+          {discovery ? tr("settings.discoveryDetailsUnavailable") : tr("home.discovering")}
+        </SettingsNotice>
+      )}
+    </SettingsSection>
+  );
+}
+
+function discoveryReasonLabel(reason: string, translate: (key: string) => string) {
+  const key = `settings.discovery.reason.${reason}`;
+  const translated = String(translate(key));
+  return translated === key ? translate("settings.discovery.reason.unknown") : translated;
+}
+
+function DiscoveryMetric({ label, value }: { label: string; value?: number | string }) {
+  return (
+    <span className="grid gap-1">
+      <span className="text-muted-foreground">{label}</span>
+      <strong className="font-medium text-foreground">{value ?? "—"}</strong>
+    </span>
+  );
+}
+
+function discoverySourceStatusLabel(status: string, translate: (key: string) => string) {
+  const key = `settings.discovery.status.${status}`;
+  const translated = translate(key);
+  return translated === key ? status : translated;
+}
+
 function ActivityPage({ records }: { records: ActivityRecord[] }) {
+  const { t: tr } = useTranslation();
   return (
     <SettingsPanel title={tr("activity.title")} contentClassName="divide-y divide-border/60">
       {records.map((record) => (
@@ -441,7 +564,8 @@ function ActivityPage({ records }: { records: ActivityRecord[] }) {
   );
 }
 function ActivityRow({ record }: { record: ActivityRecord }) {
-  const presentation = activityPresentation(record);
+  const { tr, formatDateTime } = useI18n();
+  const presentation = activityPresentation(record, tr);
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-5 py-4">
       <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" />
@@ -475,6 +599,7 @@ function SettingsListEmptyState({
 }
 
 function FileAccessSettingsRow() {
+  const { t: tr } = useTranslation();
   const [error, setError] = useState("");
   const openSettings = async () => {
     setError("");
@@ -509,6 +634,7 @@ function FileAccessSettingsRow() {
 }
 
 function KeyboardShortcutsSetting() {
+  const { t: tr } = useTranslation();
   const { openShortcutHelp } = useShortcutHelp();
   const platform = currentAppPlatform();
   const definition = getShortcutDefinition("open-help");
@@ -540,6 +666,7 @@ function QuotaAutoRefreshSetting({
   runtime?: RuntimeInfo;
   onChanged: (runtime: RuntimeInfo) => void;
 }) {
+  const { t: tr } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const toggle = async (enabled: boolean) => {
@@ -588,6 +715,7 @@ function ConversationPrivacySettings({
   onChanged: (runtime: RuntimeInfo) => void;
   onIndexCleared: () => void;
 }) {
+  const { t: tr } = useTranslation();
   const dialogs = useAppDialogs();
   const [indexedCount, setIndexedCount] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -676,6 +804,7 @@ function LanguageSetting({
   runtime?: RuntimeInfo;
   onChanged: (runtime: RuntimeInfo) => void;
 }) {
+  const { t: tr } = useTranslation();
   const update = async (preference: LocalePreference) => {
     const nextRuntime = await api.setLocale(preference);
     cacheEffectiveLocale(nextRuntime.effective_locale, nextRuntime.locale_preference);
@@ -717,6 +846,7 @@ function ThemeSetting({
   runtime?: RuntimeInfo;
   onChanged: (runtime: RuntimeInfo) => void;
 }) {
+  const { t: tr } = useTranslation();
   const update = async (preference: ThemePreference) => {
     const nextRuntime = await api.setThemePreference(preference);
     applyTheme(nextRuntime.effective_theme);
@@ -768,6 +898,7 @@ export function AccentThemeSetting({
   runtime?: RuntimeInfo;
   onChanged: (runtime: RuntimeInfo) => void;
 }) {
+  const { t: tr } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const selected = runtime?.accent_theme_preference ?? accentThemePreference();
@@ -835,6 +966,7 @@ function AppIconSetting({
   runtime?: RuntimeInfo;
   onChanged: (runtime: RuntimeInfo) => void;
 }) {
+  const { t: tr } = useTranslation();
   const update = async (preference: AppIconPreference) => {
     onChanged(await api.setAppIconPreference(preference));
   };
@@ -885,6 +1017,7 @@ function CloseBehaviorSelect({
   trayAvailable?: boolean;
   onChange: (behavior?: CloseBehavior) => Promise<void>;
 }) {
+  const { t: tr } = useTranslation();
   const modifier = primaryShortcutModifier(buildPlatform);
   const trayKey = usesSystemTrayWording(buildPlatform)
     ? "settings.close.systemTray"
@@ -923,6 +1056,7 @@ function CloseBehaviorSelect({
 }
 
 function GitIdentitySettings() {
+  const { t: tr } = useTranslation();
   const [identities, setIdentities] = useState<GitIdentitySummary[]>([]);
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
@@ -978,7 +1112,7 @@ function GitIdentitySettings() {
             <GitCommitHorizontal size={15} className="text-muted-foreground" />
             <span className="min-w-0">
               <strong className="block break-all text-sm font-medium">
-                {metadataLabel(identity.label)}
+                {metadataLabel(identity.label, tr)}
               </strong>
               <small className="mt-1 block text-xs text-muted-foreground">
                 {identity.source} · {identity.id.slice(0, 10)}…
@@ -1003,7 +1137,7 @@ function GitIdentitySettings() {
   );
 }
 
-function metadataLabel(value: string) {
+function metadataLabel(value: string, tr: TFunction) {
   if (value === "__unknown_model__") return tr("insights.unknownModel");
   if (value === "__unlinked_workspace__") return tr("insights.unlinkedWorkspace");
   if (value === "仓庫 Git 身份") return tr("settings.gitIdentityRepository");

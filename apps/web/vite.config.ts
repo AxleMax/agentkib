@@ -1,0 +1,50 @@
+import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+export default defineConfig({
+  plugins: [
+    react(),
+    {
+      name: "agentkib-build-info",
+      generateBundle() {
+        const version = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"))
+          .version as string;
+        let revision = "unknown";
+        let dirty: boolean | null = null;
+        try {
+          revision = execFileSync("git", ["rev-parse", "HEAD"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          }).trim();
+          dirty =
+            execFileSync("git", ["status", "--porcelain"], {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            }).trim().length > 0;
+        } catch {
+          /* Source archives need not contain Git metadata. */
+        }
+        this.emitFile({
+          type: "asset",
+          fileName: "build-info.json",
+          source: JSON.stringify({ version, revision, dirty }, null, 2) + "\n",
+        });
+      },
+    },
+  ],
+  server: {
+    port: 1422,
+    strictPort: true,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:1421",
+        changeOrigin: true,
+        configure(proxy) {
+          proxy.on("proxyReq", (request) => request.setHeader("Origin", "http://127.0.0.1:1421"));
+        },
+      },
+    },
+  },
+  test: { environment: "jsdom", setupFiles: ["./src/test-setup.ts"] },
+});

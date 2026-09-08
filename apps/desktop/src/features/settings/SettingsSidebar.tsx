@@ -1,11 +1,14 @@
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SidebarSearchButton } from "@/components/SidebarSearchButton";
 import { useEffect, useId, useState, type ComponentType } from "react";
 import {
   ArrowLeft,
   Database,
   FolderSearch,
   Menu,
+  MonitorSmartphone,
   PackageSearch,
   PlugZap,
   Search,
@@ -23,6 +26,7 @@ export type SettingsSection =
   | "general"
   | "discovery"
   | "tools"
+  | "remote"
   | "integrations"
   | "privacy"
   | "diagnostics";
@@ -32,11 +36,14 @@ export const settingsTargets = [
   "general-shortcuts",
   "general-quota",
   "discovery-status",
+  "discovery-sources",
   "discovery-roots",
   "discovery-excluded",
   "tools-app",
   "tools-environment",
   "tools-actions",
+  "remote-access",
+  "remote-devices",
   "integrations-mcp",
   "integrations-gateways",
   "integrations-obsidian",
@@ -59,6 +66,7 @@ const sections: Array<{
   { id: "general", label: "settings.section.general", icon: Settings2 },
   { id: "discovery", label: "settings.section.discovery", icon: FolderSearch },
   { id: "tools", label: "settings.section.tools", icon: PackageSearch },
+  { id: "remote", label: "settings.section.remote", icon: MonitorSmartphone },
   { id: "integrations", label: "settings.section.integrations", icon: PlugZap },
   { id: "privacy", label: "settings.section.privacy", icon: Database },
   { id: "diagnostics", label: "settings.section.diagnostics", icon: Stethoscope },
@@ -70,6 +78,18 @@ const searchEntries: Array<{
   label: string;
   keywords: string[];
 }> = [
+  {
+    section: "remote",
+    target: "remote-access",
+    label: "remote.access",
+    keywords: ["remote.pair", "remote.address"],
+  },
+  {
+    section: "remote",
+    target: "remote-devices",
+    label: "remote.authorized",
+    keywords: ["remote.revoke", "remote.connections"],
+  },
   {
     section: "general",
     target: "general-interface",
@@ -105,6 +125,12 @@ const searchEntries: Array<{
     target: "discovery-roots",
     label: "settings.scanRoots",
     keywords: ["settings.addFolder", "settings.maxDepth"],
+  },
+  {
+    section: "discovery",
+    target: "discovery-sources",
+    label: "settings.discoverySources",
+    keywords: ["settings.discoveryDetails", "settings.discoveryReasons"],
   },
   {
     section: "discovery",
@@ -197,12 +223,18 @@ export function SettingsSidebar(props: {
   activeTarget?: SettingsTarget;
   onSelect: (section: SettingsSection, target?: SettingsTarget) => void;
   onBack: () => void;
+  onOpenSearch?: () => void;
+  searchOpen?: boolean;
   onSettings?: () => void;
   collapsed: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
 }) {
+  const { t: tr } = useTranslation();
   const { active, activeTarget, onSelect, onBack, collapsed } = props;
   const [mobileOpen, setMobileOpen] = useState(false);
+  useEffect(() => {
+    if (props.searchOpen) setMobileOpen(false);
+  }, [props.searchOpen]);
   const [query, setQuery] = useState("");
   const sidebarPeek = useAppStore((state) => state.sidebarPeek);
   const setSidebarPeek = useAppStore((state) => state.setSidebarPeek);
@@ -287,24 +319,27 @@ export function SettingsSidebar(props: {
       >
         <div className="app-sidebar-content">
           <div className="app-sidebar-header">
-            <Button
-              variant="bare"
-              size="content"
-              className="app-sidebar-item app-sidebar-back-item app-settings-back"
-              type="button"
-              title={tr("settings.backToApp")}
-              onClick={() => {
-                setMobileOpen(false);
-                onBack();
-              }}
-            >
-              <span className="app-sidebar-item-icon">
-                <ArrowLeft size={18} />
-              </span>
-              <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
-                {tr("settings.backToApp")}
-              </span>
-            </Button>
+            <div className="app-sidebar-header-row">
+              <Button
+                variant="bare"
+                size="content"
+                className="app-sidebar-item app-sidebar-back-item app-settings-back"
+                type="button"
+                title={tr("settings.backToApp")}
+                onClick={() => {
+                  setMobileOpen(false);
+                  onBack();
+                }}
+              >
+                <span className="app-sidebar-item-icon">
+                  <ArrowLeft size={18} />
+                </span>
+                <span className="app-sidebar-item-label min-w-0 flex-1 truncate text-left">
+                  {tr("settings.backToApp")}
+                </span>
+              </Button>
+              {props.onOpenSearch && <SidebarSearchButton onOpenSearch={props.onOpenSearch} />}
+            </div>
             <label className="relative block">
               <Search
                 size={16}

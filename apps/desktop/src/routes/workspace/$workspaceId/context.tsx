@@ -1,9 +1,10 @@
+import { useI18n } from "@/core/useI18n";
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { WorkspaceContextSkeleton } from "@/features/workspace/WorkspaceSkeleton";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../../core/api";
-import { localizeMessage, tr } from "../../../core/i18n";
+import { tr } from "../../../core/i18n";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -64,6 +65,7 @@ function ContextPage({
   project: string;
   onOpenInstructions: () => void;
 }) {
+  const { localizeMessage, tr } = useI18n();
   const [agent, setAgent] = useState<AgentKind>("codex");
   const [cwd, setCwd] = useState(project);
   const [preview, setPreview] = useState<ContextPreview>();

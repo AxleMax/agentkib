@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import {
   Check,
   ChevronRight,
@@ -8,7 +9,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { formatRelativeTime, tr } from "@/core/i18n";
+
 import type { ContextDoctorSummary } from "@/core/types";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,7 @@ export function WorkspaceContextHealthCard({
   onOpenDoctor: () => void;
   onOpenChanges: () => void;
 }) {
+  const { formatRelativeTime, tr } = useI18n();
   const issueCount = (summary?.error_count ?? 0) + (summary?.warning_count ?? 0);
   const healthy = Boolean(summary) && issueCount === 0;
   const repairable = summary?.repairable_count ?? 0;

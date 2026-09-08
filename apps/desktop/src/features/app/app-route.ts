@@ -5,7 +5,14 @@ import type { AgentKind } from "@/core/types";
 import type { AgentFilter } from "@/components/AppSidebar";
 
 export type Page = "overview" | "sessions" | "git" | "assets" | "context" | "doctor" | "changes";
-export type GlobalPage = "home" | "workspaces" | "catalog" | "agents" | "quota" | "insights";
+export type GlobalPage =
+  | "home"
+  | "workspaces"
+  | "catalog"
+  | "agents"
+  | "sessions"
+  | "quota"
+  | "insights";
 
 export type AppSearch = {
   assetSection?: AssetSection;
@@ -75,6 +82,7 @@ export function parseRoute(pathname: string): ParsedRoute {
     page === "workspaces" ||
     page === "catalog" ||
     page === "agents" ||
+    page === "sessions" ||
     page === "quota" ||
     page === "insights"
       ? page

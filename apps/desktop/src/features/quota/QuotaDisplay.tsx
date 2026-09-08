@@ -1,6 +1,7 @@
+import { useI18n } from "@/core/useI18n";
 import { Button } from "@/components/ui/button";
 import { Gauge } from "lucide-react";
-import { tr } from "@/core/i18n";
+
 import { quotaSeverity, type QuotaDisplayWindow } from "@/features/quota/quota";
 import type { AgentKind, QuotaProvider } from "@/core/types";
 import { AgentIcon } from "@/features/agents/AgentIcon";
@@ -26,6 +27,7 @@ export function QuotaWindowRow({
   target?: boolean;
   onOpen?: (item: QuotaDisplayWindow) => void;
 }) {
+  const { tr } = useI18n();
   const remaining = item.window.remaining_percent;
   const severity = quotaSeverity(remaining);
   const content = (
@@ -66,7 +68,7 @@ export function QuotaWindowRow({
         <span>{tr("quota.remaining", { value: Math.round(remaining) })}</span>
         <span>
           {item.window.reset_at
-            ? tr("quota.resets", { time: relativeReset(item.window.reset_at) })
+            ? tr("quota.resets", { time: relativeReset(item.window.reset_at, tr) })
             : tr("quota.noReset")}
         </span>
       </div>
@@ -109,7 +111,7 @@ function providerAgent(id: string, name: string): AgentKind | undefined {
   return undefined;
 }
 
-function relativeReset(value: string) {
+function relativeReset(value: string, tr: ReturnType<typeof useI18n>["tr"]) {
   const seconds = Math.max(0, Math.round((new Date(value).getTime() - Date.now()) / 1000));
   if (seconds < 3600)
     return tr("quota.duration.minutes", { value: Math.max(1, Math.round(seconds / 60)) });

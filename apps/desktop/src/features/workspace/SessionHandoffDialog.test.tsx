@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/core/api";
@@ -179,6 +180,28 @@ describe("SessionHandoffDialog", () => {
 
     expect(await screen.findByRole("button", { name: "Connect Codex MCP" })).toBeTruthy();
   });
+
+  it.each(["open-claw", "hermes", "grok-build"] as const)(
+    "blocks handoff preparation for %s history sources",
+    (agent) => {
+      render(
+        <SessionHandoffDialog
+          workspace={workspace}
+          session={{ ...session, agent }}
+          targetAgents={["grok-build"]}
+          onClose={vi.fn()}
+          onPlanned={vi.fn()}
+          onMcpConnectionPlanned={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "This history source is read-only. Open it in the original Agent to continue or export it.",
+      );
+      expect(screen.getByRole("button", { name: "Inspect transferable content" })).toBeDisabled();
+      expect(api.prepareSessionHandoff).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["cursor", "Cursor"],

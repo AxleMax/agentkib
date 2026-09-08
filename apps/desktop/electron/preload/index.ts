@@ -228,6 +228,12 @@ const desktopApi = Object.freeze({
     hideWindow: () => ipcRenderer.invoke("agentkib:shell:hide-window"),
     quit: () => ipcRenderer.invoke("agentkib:shell:quit"),
   }),
+  remote: Object.freeze({
+    request: (request: unknown) => ipcRenderer.invoke("agentkib:remote:request", request),
+  }),
+  web: Object.freeze({
+    request: (request: unknown) => ipcRenderer.invoke("agentkib:web:request", request),
+  }),
   settings: Object.freeze({
     setCloseBehavior: (value: unknown) =>
       ipcRenderer.invoke("agentkib:settings:set-close-behavior", value),
@@ -237,6 +243,8 @@ const desktopApi = Object.freeze({
       ipcRenderer.invoke("agentkib:settings:set-theme", preference),
     setAccentThemePreference: (preference: string) =>
       ipcRenderer.invoke("agentkib:settings:set-accent-theme", preference),
+    setSidebarWidthPreference: (preference: number) =>
+      ipcRenderer.invoke("agentkib:settings:set-sidebar-width", preference),
     setAppIconPreference: (preference: string) =>
       ipcRenderer.invoke("agentkib:settings:set-app-icon", preference),
   }),

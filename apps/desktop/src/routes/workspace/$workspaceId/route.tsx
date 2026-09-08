@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useRef } from "react";
 import {
   createFileRoute,
@@ -23,7 +24,7 @@ import { useAppStore } from "../../../stores/app-store";
 import { useHomeWorkspaces } from "@/features/home/home-query";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { api } from "../../../core/api";
-import { localizeMessage, tr } from "../../../core/i18n";
+import { tr } from "../../../core/i18n";
 import { cn } from "@/lib/utils";
 import type { Manifest, WorkspaceSummary } from "../../../core/types";
 import {
@@ -49,6 +50,7 @@ function WorkspaceActions({
   onReview: () => void | Promise<void>;
   reviewDisabled: boolean;
 }) {
+  const { tr } = useI18n();
   return (
     <div className="flex flex-wrap items-center justify-end gap-1.5 md:gap-2">
       {workspace.status === "attention" && (
@@ -101,6 +103,7 @@ function workspaceStatusLabel(status: WorkspaceSummary["status"]) {
 
 type Page = "overview" | "sessions" | "git" | "assets" | "context" | "doctor" | "changes";
 function WorkspaceLayout() {
+  const { localizeMessage, tr } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
   const { workspaceId } = useParams({ from: "/workspace/$workspaceId" });

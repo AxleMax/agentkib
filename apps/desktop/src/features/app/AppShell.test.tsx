@@ -50,11 +50,36 @@ describe("WindowNavigationControls", () => {
     expect(onBack).toHaveBeenCalledOnce();
     expect(onForward).toHaveBeenCalledOnce();
   });
+
+  it("does not move search into the collapsed navigation controls", () => {
+    useAppStore.getState().setSidebarCollapsed(true);
+    const { container } = render(<WindowNavigationControls />);
+    expect(screen.queryByRole("button", { name: "搜索" })).toBeNull();
+    expect(container.querySelectorAll("button")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "展开侧栏" })).toBeTruthy();
+  });
 });
 
 describe("AppShell settings mode", () => {
   beforeEach(() => useAppStore.getState().reset());
   afterEach(cleanup);
+
+  it("keeps search in the sidebar rather than duplicating it in window controls", () => {
+    render(
+      <AppShell
+        sidebar={
+          <aside>
+            <button>搜索</button>
+          </aside>
+        }
+        headerless
+      >
+        Content
+      </AppShell>,
+    );
+    expect(screen.getAllByRole("button", { name: "搜索" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "搜索" }).closest("aside")).toBeTruthy();
+  });
 
   it("removes the visible toolbar while retaining the window controls", () => {
     const { container } = render(

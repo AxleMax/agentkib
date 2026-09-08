@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { AppDialogProvider } from "@/components/AppDialogProvider";
-import { initializeI18n } from "@/core/i18n";
+import { changeLocale, formatDateTime, initializeI18n, tr } from "@/core/i18n";
 import type {
   AgentKind,
   AgentToolExecutionResult,
@@ -163,6 +163,36 @@ describe("AgentToolsSettings", () => {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
+  });
+
+  it("refreshes tool labels and dates while preserving loaded data", async () => {
+    renderSettings();
+    const englishDate = tr("settings.tools.lastChecked", {
+      time: formatDateTime(snapshot.latest_checked_at!),
+    });
+    expect(screen.getByText(englishDate)).toBeTruthy();
+
+    try {
+      await act(() => changeLocale("zh-CN"));
+      expect(
+        screen.getAllByText(tr("settings.tools.channel.official-installer"), { exact: false })
+          .length,
+      ).toBeGreaterThan(0);
+      expect(
+        screen.getAllByText(tr("settings.tools.environment.standalone"), { exact: false }).length,
+      ).toBeGreaterThan(0);
+      expect(
+        screen.getByText(
+          tr("settings.tools.lastChecked", {
+            time: formatDateTime(snapshot.latest_checked_at!),
+          }),
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByText(englishDate)).toBeNull();
+      expect(screen.getByText("Codex")).toBeTruthy();
+    } finally {
+      await act(() => changeLocale("en-US"));
+    }
   });
 
   it("shows all supported Agents and links to the AgentKib project", async () => {

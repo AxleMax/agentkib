@@ -1,10 +1,11 @@
+import { useI18n } from "@/core/useI18n";
 import { Button } from "@/components/ui/button";
 import { WorkspaceDoctorSkeleton } from "./WorkspaceSkeleton";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useEffect, useState } from "react";
 import { Check, CircleAlert, Minus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
-import { localizeMessage, tr } from "@/core/i18n";
+
 import type {
   ContextDoctorReport,
   ContextDoctorSummary,
@@ -26,6 +27,7 @@ export function WorkspaceDoctorPage({
   verification?: "applied";
   onDiagnosed: (summary: ContextDoctorSummary) => void | Promise<void>;
 }) {
+  const { localizeMessage, tr } = useI18n();
   const {
     data: report,
     isPending: loading,
@@ -96,7 +98,7 @@ export function WorkspaceDoctorPage({
       <Card className="grid items-center gap-5 p-5 md:grid-cols-[minmax(260px,1fr)_auto_auto]">
         <div>
           <span className="text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground">
-            Context Doctor
+            {tr("doctor.label")}
           </span>
           <h2>{tr("doctor.title")}</h2>
           {conclusion && <strong className="mt-1 block text-sm">{conclusion}</strong>}
@@ -151,8 +153,8 @@ export function WorkspaceDoctorPage({
               role="row"
             >
               <span>{tr("doctor.agent")}</span>
-              <span>Instructions</span>
-              <span>Skills</span>
+              <span>{tr("assets.instructions")}</span>
+              <span>{tr("assets.skills")}</span>
               <span>MCP</span>
             </div>
             {activeReport.matrix.map((row) => (
@@ -256,6 +258,7 @@ export function WorkspaceDoctorPage({
 }
 
 function DoctorCell({ value }: { value: DoctorAssetStatus }) {
+  const { tr } = useI18n();
   const Icon =
     value.status === "healthy" ? Check : value.status === "not-applicable" ? Minus : CircleAlert;
   return (

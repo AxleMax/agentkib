@@ -46,8 +46,8 @@
 :root {
   --window-safe-top: 16px;
   --window-toolbar-height: var(--window-safe-top);
-  --sidebar-width: 224px;
-  --sidebar-expanded-width: 224px;
+  --sidebar-width: var(--sidebar-expanded-width);
+  --sidebar-expanded-width: 250px;
   --radius: 0.625rem;
   --panel: var(--card);
   --panel-2: var(--secondary);
@@ -462,6 +462,8 @@ button {
 
 /* Application shell: layout variables are shared by the desktop and settings shells. */
 .app-shell {
+  --sidebar-width: var(--sidebar-expanded-width);
+  position: relative;
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   grid-template-rows: var(--window-safe-top) 52px minmax(0, 1fr);
@@ -477,11 +479,55 @@ button {
 .app-shell-sidebar-collapsed {
   --sidebar-width: 0px;
 }
-.app-shell-headerless {
-  --sidebar-expanded-width: 224px;
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 65;
+  top: 52px;
+  bottom: 0;
+  left: calc(var(--sidebar-expanded-width) - 4px);
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-app-region: no-drag;
 }
-.app-shell-headerless:not(.app-shell-sidebar-collapsed) {
-  --sidebar-width: 224px;
+.sidebar-resize-handle::after {
+  position: absolute;
+  inset: 0 3px;
+  content: "";
+}
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after {
+  background: var(--sidebar-border);
+}
+.sidebar-resize-handle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.sidebar-resize-handle[aria-disabled="true"] {
+  cursor: default;
+}
+.app-shell-sidebar-resizing,
+.app-shell-sidebar-resizing > .app-sidebar {
+  transition: none;
+}
+.app-shell-sidebar-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+.sidebar-resize-error {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  color: var(--destructive);
+  font-size: 14px;
 }
 .app-shell::before {
   grid-column: 1;
@@ -568,6 +614,35 @@ button {
   display: grid;
   gap: 0.875rem;
   padding: 0 0 1rem;
+}
+.app-sidebar-header-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.app-sidebar-header-row .app-settings-back {
+  min-width: 0;
+  flex: 1;
+}
+.sidebar-search-button {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 0.5rem;
+  color: var(--muted-foreground);
+  -webkit-app-region: no-drag;
+}
+.sidebar-search-button:hover {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+.sidebar-search-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 .sidebar-brand {
   display: inline-flex;

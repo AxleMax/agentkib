@@ -45,6 +45,15 @@ Write only after explicit approval
 
 Browsing, previewing, and diagnostics do not create a manifest or modify agent configuration. A workspace needs no pre-existing `.agentkib/manifest.yaml`; AgentKib adds one to the reviewed ChangeSet only when shared assets are first saved.
 
+### Session history
+
+- The default directory shows interactive conversations and user-created forks. Recognized auxiliary/subagent records are retained but hidden until **Show auxiliary sessions** is enabled; unknown sources remain visible. The source-visibility preference is shared by session browsing and search for the current app run.
+- Forks keep their own identity and title, with a small fork indicator and source information. Spawned-parent and fork-source relationships are independent; identical titles are never merged. Successful source refreshes reconcile archived/deleted records, while unavailable or unsupported sources retain the last cached snapshot.
+- History opens with the latest 50 records (messages and tool summaries), displayed chronologically. Load earlier records on demand.
+- Codex and Claude Code JSONL histories are read from the tail with bounded scanning and memory, rather than loading the entire transcript before pagination. Page byte limits may return fewer than 50 records; an empty scan window can still offer earlier records.
+- Damaged or oversized log records produce a warning. Very distant message/tool associations or ambiguous legacy metadata may be shown conservatively with a warning instead of requiring a full-file scan.
+- History pagination is read-only. Full-context continuation and export retain their separate safety limits.
+
 ### Skill Hub
 
 - A Skill is represented as one directory-level package rooted at `SKILL.md`; supporting files remain inside that package.
@@ -129,6 +138,15 @@ Platform setup and known limitations are documented in the [Windows guide](WINDO
 ```
 
 浏览、预览和诊断不会创建 manifest，也不会修改 Agent 配置。工作区不需要预先存在 `.agentkib/manifest.yaml`；只有首次保存共享资产时，AgentKib 才会把它加入待审查的 ChangeSet。
+
+### 会话历史
+
+- 默认目录显示用户对话和用户创建的分叉。明确的辅助/子代理记录保留在索引中，开启“显示辅助会话”后才显示；无法识别的来源仍保留显示。来源可见性在本次应用运行期间由会话浏览与搜索共享。
+- 分叉保留独立身份和原标题，通过小型分叉标识及来源信息区分；子代理父关系与历史分叉关系独立，不按同名合并。成功刷新会同步归档、删除状态；来源不可用或结构不支持时保留上次缓存快照。
+- 默认加载最新 50 条记录（消息和工具摘要），按时间正序展示；更早记录按需加载。
+- Codex 与 Claude Code 的 JSONL 历史从文件尾部开始有界读取，不再先读取完整文件才分页。单页体积限制可能使结果少于 50 条；本次扫描窗口为空时，仍可能继续加载更早记录。
+- 损坏或超大的日志记录会显示提示；距离过远的消息/工具关联，以及无法明确判断的旧格式元数据，会保守展示并提示，而非要求扫描完整文件。
+- 历史分页只读，不修改原记录；完整上下文续接和导出仍保留独立的安全限制。
 
 ### Skill Hub
 

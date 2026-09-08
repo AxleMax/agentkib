@@ -11,10 +11,10 @@ const internalTitlePrefixes = [
   "# AGENTS.md instructions",
 ];
 
-export function displaySessionTitle(title?: string) {
+export function displaySessionTitle(title?: string, translate = tr) {
   const value = title?.trim();
   if (!value || internalTitlePrefixes.some((prefix) => value.startsWith(prefix))) {
-    return tr("conversations.untitled");
+    return translate("conversations.untitled");
   }
   return value;
 }

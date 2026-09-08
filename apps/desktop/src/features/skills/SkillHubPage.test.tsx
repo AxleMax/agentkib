@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AppDialogProvider } from "@/components/AppDialogProvider";
-import { initializeI18n } from "@/core/i18n";
+import { changeLocale, initializeI18n, localizeMessage } from "@/core/i18n";
 import type { SkillCandidate, SkillOperationPreview } from "@/core/types";
 import { SkillHubPage } from "./SkillHubPage";
 
@@ -290,6 +290,9 @@ describe("SkillHubPage", () => {
   });
 
   it("keeps a successful rollback and refresh error while refreshing the catalog", async () => {
+    const refreshFailure = { key: "errors.providerUnavailable" };
+    const catalogFailure = { key: "errors.conversations.refreshFailed" };
+    const reloadFailure = new Error("reload failed");
     const current = {
       name: "reviewer",
       display_name: "reviewer",
@@ -299,15 +302,15 @@ describe("SkillHubPage", () => {
       status: "current" as const,
       can_rollback: true,
     };
-    mocks.installedSkills
-      .mockResolvedValueOnce([current])
-      .mockRejectedValue(new Error("refresh failed"));
+    mocks.installedSkills.mockResolvedValueOnce([current]).mockRejectedValue(refreshFailure);
     mocks.removedSkills.mockResolvedValue([]);
-    mocks.skillCatalog.mockResolvedValue({
-      entries: [],
-      cached_at: "2026-09-02T00:00:00Z",
-      stale: false,
-    });
+    mocks.skillCatalog
+      .mockResolvedValueOnce({
+        entries: [],
+        cached_at: "2026-09-02T00:00:00Z",
+        stale: false,
+      })
+      .mockRejectedValue(catalogFailure);
     mocks.rollbackSkill.mockResolvedValue({
       ...current,
       description: "Previous version",
@@ -321,7 +324,7 @@ describe("SkillHubPage", () => {
           workspaceAssets={[]}
           workspaces={[]}
           onOpen={vi.fn()}
-          onReload={vi.fn().mockRejectedValue(new Error("reload failed"))}
+          onReload={vi.fn().mockRejectedValue(reloadFailure)}
         />
       </AppDialogProvider>,
     );
@@ -334,7 +337,20 @@ describe("SkillHubPage", () => {
 
     expect(await screen.findByText("Previous version")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Roll back" })).toBeNull();
-    expect(await screen.findByText(/refresh failed|reload failed/)).toBeTruthy();
+    const failures = [refreshFailure, reloadFailure, catalogFailure];
+    const englishError = failures.map((failure) => localizeMessage(failure)).join(" · ");
+    const message = await screen.findByText(englishError);
     expect(mocks.skillCatalog).toHaveBeenCalledTimes(2);
+    try {
+      await act(() => changeLocale("zh-CN"));
+      expect(
+        screen.getByText(failures.map((failure) => localizeMessage(failure)).join(" · ")),
+      ).toBe(message);
+      expect(screen.queryByText(englishError)).toBeNull();
+      expect(screen.getByText("Previous version")).toBeTruthy();
+      expect(mocks.skillCatalog).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(() => changeLocale("en-US"));
+    }
   });
 });

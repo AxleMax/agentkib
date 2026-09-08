@@ -1,4 +1,5 @@
 import type { ConversationSessionSummary, RuntimeInfo, WorkspaceSummary } from "@/core/types";
+import { isSessionVisible } from "@/features/sessions/session-catalog";
 
 export interface RecentContinuation {
   workspace: WorkspaceSummary;
@@ -23,11 +24,15 @@ export function selectRecentContinuations(
   workspaces: WorkspaceSummary[],
   sessionsByWorkspace: Array<ConversationSessionSummary[] | undefined>,
   limit = 3,
+  showAuxiliary = false,
 ): RecentContinuation[] {
   return workspaces
     .flatMap((workspace, index) => {
       return (sessionsByWorkspace[index] ?? [])
-        .filter((session) => session.availability === "readable")
+        .filter(
+          (session) =>
+            session.availability === "readable" && isSessionVisible(session, showAuxiliary),
+        )
         .map((session) => ({ workspace, session }));
     })
     .sort(
@@ -41,9 +46,13 @@ export function selectRecentContinuations(
 export function metadataOnlyContinuationWorkspace(
   workspaces: WorkspaceSummary[],
   sessionsByWorkspace: Array<ConversationSessionSummary[] | undefined>,
+  showAuxiliary = false,
 ) {
   return workspaces.find((_, index) =>
-    (sessionsByWorkspace[index] ?? []).some((session) => session.availability === "metadata-only"),
+    (sessionsByWorkspace[index] ?? []).some(
+      (session) =>
+        session.availability === "metadata-only" && isSessionVisible(session, showAuxiliary),
+    ),
   );
 }
 

@@ -1,4 +1,6 @@
 import { desktopApi } from "./desktop";
+import { DEFAULT_SESSION_PAGE_SIZE } from "./session-history";
+import type { RemoteRequest } from "./remote-types";
 import type {
   AgentKind,
   AgentToolExecutionResult,
@@ -33,6 +35,7 @@ import type {
 const DOCTOR_SUMMARY_BATCH_LIMIT = 100;
 
 export const api = {
+  remoteRequest: <T extends RemoteRequest>(request: T) => desktopApi().remote.request(request),
   scan: (project: string) => desktopApi().workspace.scan(project),
   manifest: async (project: string) => {
     const manifest = await desktopApi().workspace.prepareManifest(project);
@@ -76,6 +79,8 @@ export const api = {
     desktopApi().settings.setThemePreference(preference),
   setAccentThemePreference: (preference: AccentThemeId) =>
     desktopApi().settings.setAccentThemePreference(preference),
+  setSidebarWidthPreference: (preference: number) =>
+    desktopApi().settings.setSidebarWidthPreference(preference),
   setAppIconPreference: (preference: AppIconPreference) =>
     desktopApi().settings.setAppIconPreference(preference),
   checkAppUpdate: () => desktopApi().updates.check(),
@@ -163,7 +168,7 @@ export const api = {
   workspaceSessions: (workspaceId: string) => desktopApi().workspace.sessions(workspaceId),
   refreshWorkspaceSessions: (workspaceId: string, force = false) =>
     desktopApi().workspace.refreshSessions(workspaceId, force),
-  sessionEvents: (sessionId: string, cursor?: string, limit = 100) =>
+  sessionEvents: (sessionId: string, cursor?: string, limit = DEFAULT_SESSION_PAGE_SIZE) =>
     desktopApi().workspace.sessionEvents(sessionId, cursor, limit),
   prepareSessionHandoff: (request: SessionHandoffRequest) =>
     desktopApi().workspace.prepareHandoff(request),

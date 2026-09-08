@@ -2,7 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { changeLocale, initializeI18n } from "@/core/i18n";
+import { changeLocale, initializeI18n, tr } from "@/core/i18n";
 import { ShortcutHelpProvider } from "@/features/app/ShortcutHelpContext";
 import { SettingsSidebar } from "./SettingsSidebar";
 import { settingsTargetId } from "./components/SettingsLayout";
@@ -11,7 +11,54 @@ describe("SettingsSidebar v9 navigation", () => {
   beforeAll(() => initializeI18n("en-US"));
   afterEach(cleanup);
 
-  it("shows only the back entry and six settings sections", () => {
+  it("closes the settings drawer when global search opens without losing the search action", () => {
+    const onOpenSearch = vi.fn();
+    const props = {
+      active: "general" as const,
+      onSelect: vi.fn(),
+      onBack: vi.fn(),
+      onOpenSearch,
+      collapsed: false,
+    };
+    const { container, rerender } = render(<SettingsSidebar {...props} searchOpen={false} />);
+    fireEvent.click(screen.getByRole("button", { name: tr("settings.navigation") }));
+    expect(container.querySelector(".app-sidebar-open")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: tr("search.open") }));
+    expect(onOpenSearch).toHaveBeenCalledOnce();
+    rerender(<SettingsSidebar {...props} searchOpen />);
+    expect(container.querySelector(".app-sidebar-open")).toBeNull();
+    rerender(<SettingsSidebar {...props} searchOpen={false} />);
+    fireEvent.click(screen.getByRole("button", { name: tr("settings.navigation") }));
+    expect(container.querySelector(".app-sidebar-open")).toBeTruthy();
+    rerender(<SettingsSidebar {...props} searchOpen />);
+    expect(container.querySelector(".app-sidebar-open")).toBeNull();
+    expect(onOpenSearch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps global search separate from the local settings filter", () => {
+    const onOpenSearch = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = render(
+      <SettingsSidebar
+        active="general"
+        onBack={() => undefined}
+        onSelect={onSelect}
+        onOpenSearch={onOpenSearch}
+        collapsed={false}
+      />,
+    );
+    const localSearch = screen.getByRole("searchbox", { name: "Search settings…" });
+    fireEvent.change(localSearch, { target: { value: "Vault" } });
+    fireEvent.click(screen.getByRole("button", { name: tr("search.open") }));
+    expect(onOpenSearch).toHaveBeenCalledOnce();
+    expect((localSearch as HTMLInputElement).value).toBe("Vault");
+    expect(onSelect).not.toHaveBeenCalled();
+    const row = container.querySelector(".app-sidebar-header-row")!;
+    expect(row.querySelectorAll("button")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Obsidian" })).toBeTruthy();
+  });
+
+  it("shows only the back entry and seven settings sections", () => {
     const { container } = render(
       <ShortcutHelpProvider openShortcutHelp={() => undefined}>
         <SettingsSidebar
@@ -31,7 +78,8 @@ describe("SettingsSidebar v9 navigation", () => {
     expect(screen.getByRole("button", { name: "Back" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Tools & updates" })).toBeTruthy();
     expect(screen.getByRole("searchbox", { name: "Search settings…" })).toBeTruthy();
-    expect(screen.getAllByRole("button")).toHaveLength(8);
+    expect(screen.getAllByRole("button")).toHaveLength(9);
+    expect(screen.getByRole("button", { name: "Remote connections" })).toBeTruthy();
   });
 
   it("searches settings content and selects the matching target", () => {
@@ -119,7 +167,7 @@ describe("SettingsSidebar v9 navigation", () => {
   });
 
   it("recomputes search matches when the locale changes", async () => {
-    const view = render(
+    render(
       <ShortcutHelpProvider openShortcutHelp={() => undefined}>
         <SettingsSidebar
           active="general"
@@ -137,16 +185,9 @@ describe("SettingsSidebar v9 navigation", () => {
 
     try {
       await act(() => changeLocale("zh-CN"));
-      view.rerender(
-        <ShortcutHelpProvider openShortcutHelp={() => undefined}>
-          <SettingsSidebar
-            active="general"
-            onSelect={() => undefined}
-            onBack={() => undefined}
-            collapsed={false}
-          />
-        </ShortcutHelpProvider>,
-      );
+      expect(
+        screen.getByRole("searchbox", { name: tr("settings.search.placeholder") }),
+      ).toBeTruthy();
       expect(screen.getByText("没有匹配的设置")).toBeTruthy();
     } finally {
       await act(() => changeLocale("en-US"));

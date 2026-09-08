@@ -1,10 +1,10 @@
+import { useI18n } from "@/core/useI18n";
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../core/api";
 import { GlobalSettings } from "@/features/settings/GlobalSettings";
 import { SettingsContentSkeleton } from "@/features/settings/SettingsSkeleton";
 import type { SettingsPageVariant } from "@/features/settings/components/SettingsLayout";
-import { localizeMessage, tr } from "../core/i18n";
 import type { SettingsSection, SettingsTarget } from "@/features/settings/SettingsSidebar";
 import { useSettingsTargetFocus } from "@/features/settings/useSettingsTargetFocus";
 import { useAppStore } from "../stores/app-store";
@@ -25,6 +25,7 @@ import type { CloseBehavior, RefreshKind, RuntimeInfo } from "../core/types";
 type SettingsSearch = { settingsSection?: SettingsSection; settingsTarget?: SettingsTarget };
 
 function SettingsRoute() {
+  const { localizeMessage, tr } = useI18n();
   const queryClient = useQueryClient();
   const search = useSearch({ strict: false }) as SettingsSearch;
   const section = search.settingsSection ?? "general";

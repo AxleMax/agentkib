@@ -1,3 +1,4 @@
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArchiveRestore,
@@ -28,7 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/core/api";
-import { formatDateTime, localizeMessage, tr } from "@/core/i18n";
+import { tr } from "@/core/i18n";
 import type {
   InstalledSkill,
   RemovedSkill,
@@ -56,10 +57,10 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function sourceLabel(candidate: SkillCandidate | InstalledSkill) {
-  if (!candidate.source) return tr("skills.localSource");
+function sourceLabel(candidate: SkillCandidate | InstalledSkill, translate = tr) {
+  if (!candidate.source) return translate("skills.localSource");
   return candidate.source.kind === "openai-curated"
-    ? tr("skills.openaiCurated")
+    ? translate("skills.openaiCurated")
     : candidate.source.repository;
 }
 
@@ -71,8 +72,8 @@ function isSameSource(installed: InstalledSkill["source"], candidate: SkillCandi
   );
 }
 
-function statusLabel(status: InstalledSkill["status"]) {
-  return tr(`skills.status.${status}`);
+function statusLabel(status: InstalledSkill["status"], translate = tr) {
+  return translate(`skills.status.${status}`);
 }
 
 function statusClass(status: InstalledSkill["status"]) {
@@ -95,6 +96,7 @@ function upsertRemovedSkill(items: RemovedSkill[], next: RemovedSkill) {
 }
 
 export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: SkillHubPageProps) {
+  const { localizeMessage, tr, formatDateTime } = useI18n();
   const dialogs = useAppDialogs();
   const [section, setSection] = useState<SkillHubSection>("library");
   const [installed, setInstalled] = useState<InstalledSkill[]>([]);
@@ -105,7 +107,8 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
   const [query, setQuery] = useState("");
   const [preview, setPreview] = useState<SkillOperationPreview>();
   const [busy, setBusy] = useState<string>();
-  const [error, setError] = useState("");
+  const [errors, setErrors] = useState<unknown[]>([]);
+  const error = errors.map(localizeMessage).join(" · ");
 
   const loadLibrary = async () => {
     const [nextInstalled, nextRemoved] = await Promise.all([
@@ -116,16 +119,15 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
     setRemoved(nextRemoved);
   };
 
-  const loadCatalog = async (force = false, reportError = true) => {
+  const loadCatalog = async (force = false, reportError = true): Promise<unknown[]> => {
     setBusy("catalog");
-    if (reportError) setError("");
+    if (reportError) setErrors([]);
     try {
       setCatalog(await api.skillCatalog(force));
-      return undefined;
+      return [];
     } catch (nextError) {
-      const message = localizeMessage(nextError);
-      if (reportError) setError(message);
-      return message;
+      if (reportError) setErrors([nextError]);
+      return [nextError];
     } finally {
       setBusy(undefined);
     }
@@ -140,7 +142,7 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
         setRemoved(nextRemoved);
       })
       .catch((nextError) => {
-        if (!cancelled) setError(localizeMessage(nextError));
+        if (!cancelled) setErrors([nextError]);
       });
     return () => {
       cancelled = true;
@@ -149,11 +151,11 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
 
   const run = async (key: string, task: () => Promise<void>) => {
     setBusy(key);
-    setError("");
+    setErrors([]);
     try {
       await task();
     } catch (nextError) {
-      setError(localizeMessage(nextError));
+      setErrors([nextError]);
     } finally {
       setBusy(undefined);
     }
@@ -162,13 +164,12 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
   const refreshAfterMutation = async () => {
     const refreshResults = await Promise.allSettled([loadLibrary(), onReload()]);
     const refreshErrors = refreshResults.flatMap((result) =>
-      result.status === "rejected" ? [localizeMessage(result.reason)] : [],
+      result.status === "rejected" ? [result.reason] : [],
     );
     if (catalog) {
-      const catalogError = await loadCatalog(true, false);
-      if (catalogError) refreshErrors.push(catalogError);
+      refreshErrors.push(...(await loadCatalog(true, false)));
     }
-    if (refreshErrors.length) setError(refreshErrors.join(" · "));
+    if (refreshErrors.length) setErrors(refreshErrors);
   };
 
   const prepareInstall = (candidate: SkillCandidate) =>
@@ -255,9 +256,11 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
   const availableEntries = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return (candidates.length ? candidates : (catalog?.entries ?? [])).filter((entry) =>
-      `${entry.name} ${entry.description} ${sourceLabel(entry)}`.toLowerCase().includes(normalized),
+      `${entry.name} ${entry.description} ${sourceLabel(entry, tr)}`
+        .toLowerCase()
+        .includes(normalized),
     );
-  }, [candidates, catalog, query]);
+  }, [candidates, catalog, query, tr]);
 
   return (
     <div className="grid min-w-0 gap-4">
@@ -328,7 +331,7 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="truncate font-semibold">{skill.display_name}</h3>
                         <Badge variant="outline" className={statusClass(skill.status)}>
-                          {statusLabel(skill.status)}
+                          {statusLabel(skill.status, tr)}
                         </Badge>
                       </div>
                       <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
@@ -338,7 +341,7 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
                   </CardHeader>
                   <CardContent className="grid gap-3 p-4 pt-1">
                     <div className="grid gap-1 text-xs text-muted-foreground">
-                      <span className="truncate">{sourceLabel(skill)}</span>
+                      <span className="truncate">{sourceLabel(skill, tr)}</span>
                       <span>
                         {formatBytes(skill.size)}
                         {skill.updated_at ? ` · ${formatDateTime(skill.updated_at)}` : ""}
@@ -512,7 +515,7 @@ export function SkillHubPage({ workspaceAssets, workspaces, onOpen, onReload }: 
                             {candidate.description || tr("skills.noDescription")}
                           </p>
                         </div>
-                        <Badge variant="outline">{sourceLabel(candidate)}</Badge>
+                        <Badge variant="outline">{sourceLabel(candidate, tr)}</Badge>
                       </div>
                     </CardHeader>
                     <CardContent className="flex items-end justify-between gap-3 p-4 pt-2">
@@ -576,6 +579,7 @@ function SkillPreviewDialog({
   onClose: () => void;
   onApply: () => void;
 }) {
+  const { tr, formatDateTime } = useI18n();
   return (
     <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && onClose()}>
       {preview && (
@@ -656,6 +660,7 @@ function PreviewMetric({ label, value }: { label: string; value: string }) {
 }
 
 function FileChanges({ title, files }: { title: string; files: string[] }) {
+  const { tr } = useI18n();
   return (
     <div className="min-w-0 rounded-xl border p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

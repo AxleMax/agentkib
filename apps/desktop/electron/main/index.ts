@@ -1,5 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { WebAccessService } from "./web/service";
+import { acceptanceSession } from "./web/acceptance";
+import { requireRemoteRequest } from "./ipc/remote-validation";
 import {
   app,
   autoUpdater as nativeAutoUpdater,
@@ -31,6 +34,7 @@ import {
   requireBoolean,
   requireObject,
   requirePositiveInteger,
+  requireSidebarWidthPreference,
   requireString,
   requireText,
   requireThemePreference,
@@ -57,6 +61,7 @@ let mainWindow: BrowserWindow | undefined;
 let nativeShell: ElectronNativeShell | undefined;
 let refreshCoordinator: ElectronRefreshCoordinator | undefined;
 let runtimeHost: DesktopRuntimeHost | undefined;
+let webAccess: WebAccessService | undefined;
 let runtimeHandshake: RuntimeHandshakeResult | undefined;
 let shutdownStarted = false;
 let quitApproved = false;
@@ -86,6 +91,7 @@ interface ElectronRuntimeInfo {
     | "sakura"
     | "ocean-breeze"
     | null;
+  sidebar_width_preference?: number | null;
   effective_theme?: "light" | "dark";
   effective_locale?: SupportedLocale;
   quota_auto_refresh_enabled?: boolean;
@@ -123,7 +129,13 @@ app.on("before-quit", (event) => {
   shutdownStarted = true;
   refreshCoordinator?.stop();
   nativeShell?.destroy();
-  void runtimeHost.stop().finally(() => app.quit());
+  void (async () => {
+    try {
+      await webAccess?.shutdown();
+    } finally {
+      await runtimeHost?.stop();
+    }
+  })().finally(() => app.quit());
 });
 
 nativeTheme.on("updated", () => {
@@ -160,6 +172,7 @@ async function startApplication(): Promise<void> {
   });
   runtimeHost.on("exit", ({ expected }: { expected: boolean }) => {
     runtimeHandshake = undefined;
+    webAccess?.runtimeUnavailable();
     if (!expected) refreshCoordinator?.setRuntimeAvailable(false);
   });
   runtimeHost.on("restart-error", (error: unknown) => {
@@ -169,6 +182,18 @@ async function startApplication(): Promise<void> {
     process.stderr.write(`AgentKib runtime entered a crash loop: ${error.message}\n`);
   });
 
+  webAccess = new WebAccessService({
+    acceptanceSessionId: acceptanceSession(process.env),
+    dataDir: path.join(electronDataPath, "web"),
+    staticDir: app.isPackaged
+      ? path.join(process.resourcesPath, "web")
+      : path.resolve(app.getAppPath(), "../web/dist"),
+    runtimeRequest: (params) => {
+      if (!runtimeHandshake) return Promise.reject(new Error("runtime_unavailable"));
+      return requireRuntime().request(RUNTIME_METHODS.webRequest, params);
+    },
+  });
+  await webAccess.initialize();
   registerApplicationIpc();
   refreshCoordinator = new ElectronRefreshCoordinator({
     runtime: requireRuntime,
@@ -481,9 +506,25 @@ function registerShellIpc(): void {
         return withElectronRuntimeCapabilities(runtime);
       });
   });
+  ipcMain.handle("agentkib:settings:set-sidebar-width", (event, preference: unknown) => {
+    assertTrustedRenderer(event);
+    const next = requireSidebarWidthPreference(preference);
+    return requireRuntime()
+      .request(RUNTIME_METHODS.setSidebarWidthPreference, { preference: next })
+      .then(withElectronRuntimeCapabilities);
+  });
 }
 
 function registerHomeIpc(): void {
+  ipcMain.handle("agentkib:remote:request", (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    return requireRuntime().request(RUNTIME_METHODS.remoteRequest, requireRemoteRequest(input));
+  });
+  ipcMain.handle("agentkib:web:request", (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    if (!webAccess) throw new Error("web_unavailable");
+    return webAccess.request(input as Parameters<WebAccessService["request"]>[0]);
+  });
   ipcMain.handle("agentkib:home:runtime", async (event) => {
     assertTrustedRenderer(event);
     const runtime = await requireRuntime().request(RUNTIME_METHODS.runtimeInfo, {});

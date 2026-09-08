@@ -20,6 +20,27 @@ const readableSession = {
 } as ConversationSessionSummary;
 
 describe("selectRecentContinuations", () => {
+  it("shares auxiliary visibility without merging same-title forks or hiding unknown sources", () => {
+    const sessions: ConversationSessionSummary[] = [
+      { ...readableSession, id: "aux", title: "Same", origin: "auxiliary" },
+      {
+        ...readableSession,
+        id: "fork",
+        title: "Same",
+        origin: "interactive",
+        forked_from_session_id: "main",
+      },
+      { ...readableSession, id: "unknown", title: "Same", origin: "unknown" },
+    ];
+    expect(
+      selectRecentContinuations(workspaces, [sessions]).map(({ session }) => session.id),
+    ).toEqual(["fork", "unknown"]);
+    expect(selectRecentContinuations(workspaces, [sessions], 3, true)).toHaveLength(3);
+    const metadata = [{ ...sessions[0], availability: "metadata-only" as const }];
+    expect(metadataOnlyContinuationWorkspace(workspaces, [metadata])).toBeUndefined();
+    expect(metadataOnlyContinuationWorkspace(workspaces, [metadata], true)?.id).toBe("first");
+  });
+
   it("waits for the runtime preference before enabling session indexing", () => {
     expect(continuationIndexingEnabled()).toBe(false);
     expect(continuationIndexingEnabled({ session_index_enabled: false })).toBe(false);

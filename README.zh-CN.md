@@ -49,6 +49,10 @@ AgentKib 把这些状态汇集到一个本地、可检查的桌面界面中。�
 
 [![AgentKib 工具与更新，展示版本、安装来源和诊断](docs/assets/agentkib-tools-updates.png)](docs/assets/agentkib-tools-updates.png)
 
+## 内置 Web（开发预览）
+
+monorepo 中的独立 Web 构建随 Electron 打包。在 **设置 → 远程连接 → Web 访问** 中开启，远程使用时自行配置 HTTPS 反向代理或隧道，无需 AgentKib 账号或官方协调服务。桌面应用必须保持运行。实验发送和审批在真实验收完成前保持禁用。参见[自部署说明](docs/WEB-SELF-HOSTING.md)和[分层验收状态](qa/WEB-V1.md)。此处描述的是开发预览，不代表当前已发布版本已包含 Web。
+
 ## 下载
 
 从 [Latest Release](https://github.com/starroyhq/agentkib/releases/latest) 下载当前稳定版本：
@@ -75,6 +79,8 @@ AgentKib 把这些状态汇集到一个本地、可检查的桌面界面中。�
 - **平台：** macOS 13.3+、Windows 11、Ubuntu 22.04 和 Fedora；Windows 与 Linux ARM64 安装包仍为 Preview。
 
 完整的全局视图、工作区能力、Agent 支持和平台状态见[功能与兼容矩阵](docs/FEATURES.md)。
+
+开发版的新增只读来源和“找不到工作区”排查方式见[发现与历史阅读说明](docs/DISCOVERY-HISTORY.md)，实际验证范围见[分层 QA](qa/MULTI-AGENT-HISTORY.md)。
 
 ## 文档与社区
 

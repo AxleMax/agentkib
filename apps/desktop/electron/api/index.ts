@@ -1,4 +1,6 @@
 import type { RuntimeHandshakeResult } from "../generated/runtime-protocol";
+import type { WebAdminRequest, WebAdminStatus } from "../main/web/service";
+import type { RemoteRequest, RemoteResponse } from "../../src/core/remote-types";
 import type {
   AgentKind,
   AccentThemeId,
@@ -90,6 +92,7 @@ export interface DesktopRuntimeStatus {
 }
 
 export interface DesktopApi {
+  web: { request(input: WebAdminRequest): Promise<WebAdminStatus> };
   platform: NodeJS.Platform;
   events: {
     onQuitRequested(listener: () => void): DesktopEventUnsubscribe;
@@ -237,11 +240,15 @@ export interface DesktopApi {
     hideWindow(): Promise<void>;
     quit(): Promise<void>;
   };
+  remote: {
+    request<T extends RemoteRequest>(request: T): Promise<RemoteResponse<T>>;
+  };
   settings: {
     setCloseBehavior(value?: CloseBehavior): Promise<void>;
     setLocale(preference: LocalePreference): Promise<RuntimeInfo>;
     setThemePreference(preference: "system" | "light" | "dark"): Promise<RuntimeInfo>;
     setAccentThemePreference(preference: AccentThemeId): Promise<RuntimeInfo>;
+    setSidebarWidthPreference(preference: number): Promise<RuntimeInfo>;
     setAppIconPreference(preference: AppIconPreference): Promise<RuntimeInfo>;
   };
   home: {

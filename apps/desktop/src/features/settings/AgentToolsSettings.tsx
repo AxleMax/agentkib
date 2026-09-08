@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+import { useI18n } from "@/core/useI18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -38,7 +40,7 @@ import {
 } from "@/components/ui/select";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { api } from "@/core/api";
-import { formatDateTime, localizeMessage, tr } from "@/core/i18n";
+import { localizeMessage, tr } from "@/core/i18n";
 import type {
   AgentKind,
   AgentToolAction,
@@ -59,6 +61,8 @@ import {
   SettingsPanel,
   settingsTargetId,
 } from "./components/SettingsLayout";
+
+type Translate = typeof tr;
 
 const PROJECT_URL = "https://github.com/starroyhq/agentkib";
 const RELEASES_URL = `${PROJECT_URL}/releases`;
@@ -98,6 +102,7 @@ export function AgentToolsSettings({
   currentVersion?: string;
   updatesEnabled?: boolean;
 }) {
+  const { tr, formatDateTime, localizeMessage } = useI18n();
   const queryClient = useQueryClient();
   const dialogs = useAppDialogs();
   const toolsQuery = useAgentTools();
@@ -181,7 +186,7 @@ export function AgentToolsSettings({
           title: tr("settings.tools.executeTitle"),
           description: tr("settings.tools.executeConfirm", {
             agent: agentLabels[tool.agent],
-            channel: channelLabel(action.channel),
+            channel: channelLabel(action.channel, tr),
             current: tool.current_version ?? tr("common.unknown"),
             target: action.target_version ?? tr("common.unknown"),
             path: installation?.path ?? tr("settings.tools.executableMissing"),
@@ -504,6 +509,7 @@ function AgentToolCard({
   onExecute: (tool: AgentToolStatus, action: AgentToolAction) => void;
   executing: boolean;
 }) {
+  const { t: tr } = useTranslation();
   const [selectedActionId, setSelectedActionId] = useState(tool.actions[0]?.id ?? "");
   useEffect(() => {
     if (!tool.actions.some((action) => action.id === selectedActionId)) {
@@ -517,7 +523,7 @@ function AgentToolCard({
   const DetailIcon = hasMultipleInstallations ? CircleAlert : StateIcon;
   const warningDetails =
     tool.state === "conflict" || tool.state === "unknown" || hasMultipleInstallations
-      ? toolWarnings(tool)
+      ? toolWarnings(tool, tr)
       : [];
   const stateClass = {
     current: "border-emerald-500/35 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300",
@@ -566,8 +572,8 @@ function AgentToolCard({
             : ""}
         </p>
         <p className="truncate text-muted-foreground">
-          {channelLabel(action?.channel ?? tool.channel)}
-          {installation && ` · ${environmentLabel(installation.environment)}`}
+          {channelLabel(action?.channel ?? tool.channel, tr)}
+          {installation && ` · ${environmentLabel(installation.environment, tr)}`}
         </p>
       </div>
       <Badge className={cn("gap-1 border px-1.5", stateClass)} variant="outline">
@@ -587,12 +593,12 @@ function AgentToolCard({
               className="h-8 w-32 text-xs"
               aria-label={tr("settings.tools.selectChannel")}
             >
-              <SelectValue>{channelLabel(action?.channel ?? tool.channel)}</SelectValue>
+              <SelectValue>{channelLabel(action?.channel ?? tool.channel, tr)}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {tool.actions.map((candidate) => (
                 <SelectItem key={candidate.id} value={candidate.id}>
-                  {channelLabel(candidate.channel)}
+                  {channelLabel(candidate.channel, tr)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -648,6 +654,7 @@ function AppUpdateSetting({
   currentVersion?: string;
   updatesEnabled?: boolean;
 }) {
+  const { t: tr } = useTranslation();
   const dialogs = useAppDialogs();
   const [status, setStatus] = useState<
     "idle" | "checking" | "up-to-date" | "available" | "downloading" | "installing" | "failed"
@@ -733,7 +740,7 @@ function AppUpdateSetting({
     if (status === "installing") return tr("settings.updateInstalling");
     if (status === "failed") return error;
     return tr("settings.updateCurrentVersion", { version: currentVersion ?? "—" });
-  }, [contentLength, currentVersion, error, progress, status, update, updatesEnabled]);
+  }, [contentLength, currentVersion, error, progress, status, update, updatesEnabled, tr]);
 
   return (
     <SettingsPanel title={tr("settings.updates")}>
@@ -840,6 +847,7 @@ function InstallationDiagnosticsDialog({
   onOpenChange: (open: boolean) => void;
   tools: AgentToolStatus[];
 }) {
+  const { t: tr } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
@@ -865,8 +873,8 @@ function InstallationDiagnosticsDialog({
                           <Badge variant="outline">{tr("settings.tools.pathDefault")}</Badge>
                         )}
                         <span>
-                          {channelLabel(installation.channel)} ·{" "}
-                          {environmentLabel(installation.environment)}
+                          {channelLabel(installation.channel, tr)} ·{" "}
+                          {environmentLabel(installation.environment, tr)}
                         </span>
                         <span>{installation.version ?? tr("common.unknown")}</span>
                       </div>
@@ -915,10 +923,11 @@ function BatchCommandsDialog({
   executing: boolean;
   onExecute: () => void;
 }) {
+  const { t: tr } = useTranslation();
   const commands = upgrades
     .map(
       ({ tool, action }) =>
-        `# ${agentLabels[tool.agent]} · ${channelLabel(action.channel)}\n${action.command}`,
+        `# ${agentLabels[tool.agent]} · ${channelLabel(action.channel, tr)}\n${action.command}`,
     )
     .join("\n\n");
   return (
@@ -947,6 +956,7 @@ function BatchCommandsDialog({
 }
 
 function AgentToolsLoading() {
+  const { t: tr } = useTranslation();
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label={tr("common.loading")}>
       {Array.from({ length: 7 }, (_, index) => (
@@ -956,11 +966,11 @@ function AgentToolsLoading() {
   );
 }
 
-function channelLabel(channel: AgentToolChannel) {
+function channelLabel(channel: AgentToolChannel, tr: Translate) {
   return tr(`settings.tools.channel.${channel}`);
 }
 
-function environmentLabel(environment: AgentToolEnvironment) {
+function environmentLabel(environment: AgentToolEnvironment, tr: Translate) {
   return tr(`settings.tools.environment.${environment}`);
 }
 
@@ -984,7 +994,7 @@ function executionResultDescription(result: AgentToolExecutionResult) {
     .join("\n");
 }
 
-function toolWarnings(tool: AgentToolStatus) {
+function toolWarnings(tool: AgentToolStatus, tr: Translate) {
   const warnings: string[] = [];
   if (tool.state === "conflict") {
     warnings.push(tr("settings.tools.multipleExecutables", { count: tool.installations.length }));
@@ -995,7 +1005,7 @@ function toolWarnings(tool: AgentToolStatus) {
   }
 
   for (const warning of tool.warnings) {
-    const message = toolWarningMessage(warning);
+    const message = toolWarningMessage(warning, tr);
     if (message) warnings.push(message);
   }
 
@@ -1006,7 +1016,7 @@ function toolWarnings(tool: AgentToolStatus) {
   return [tr("settings.tools.latestUnavailable")];
 }
 
-function toolWarningMessage(warning: string) {
+function toolWarningMessage(warning: string, tr: Translate) {
   switch (warning) {
     case "channel-unverified":
       return tr("settings.tools.channelUnverified");
