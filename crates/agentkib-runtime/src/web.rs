@@ -580,8 +580,10 @@ mod tests {
             let store = Store::open(&directory.path().join("agentkib.db")).unwrap();
             let workspace = directory.path().join("project");
             fs::create_dir(&workspace).unwrap();
-            let workspace = workspace.canonicalize().unwrap();
             let registered = store.add_workspace(&workspace).unwrap();
+            // Match request admission: Store strips Windows verbatim prefixes,
+            // unlike std::fs::canonicalize, so use its persisted path here too.
+            let workspace = store.workspace_path(&registered.id).unwrap();
             let session = store
                 .sync_conversation_sessions(
                     &registered.id,
