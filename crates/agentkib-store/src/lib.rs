@@ -880,7 +880,29 @@ impl Store {
         let agent_value = enum_string(agent)?;
         let indexed_at = Utc::now();
         let transaction = self.connection.unchecked_transaction()?;
-        if replace_existing {
+        let (owner_id, aliases) = if matches!(
+            agent,
+            AgentKind::OpenClaw | AgentKind::Hermes | AgentKind::GrokBuild
+        ) {
+            self.normalized_session_owner(workspace_id)?
+        } else {
+            (workspace_id.to_owned(), Vec::new())
+        };
+        // Preserve cached history when a newly registered root supersedes an
+        // alias, including partial scans before that root has ever refreshed.
+        for alias in aliases.iter().filter(|id| **id != owner_id) {
+            transaction.execute(
+                "UPDATE conversation_sessions SET workspace_id = ?1 WHERE workspace_id = ?2 AND agent = ?3",
+                params![owner_id, alias, agent_value],
+            )?;
+            transaction.execute(
+                "UPDATE conversation_index_status SET session_count = 0 WHERE workspace_id = ?1 AND agent = ?2",
+                params![alias, agent_value],
+            )?;
+        }
+        // Only the owner's complete scan may remove absent sessions. Alias
+        // scans can contribute records but cannot erase the owner's cache.
+        if replace_existing && owner_id == workspace_id {
             transaction.execute(
                 "DELETE FROM conversation_sessions WHERE workspace_id = ?1 AND agent = ?2",
                 params![workspace_id, agent_value],
@@ -914,7 +936,7 @@ impl Store {
                    forked_from_session_id = excluded.forked_from_session_id",
                 params![
                     id,
-                    workspace_id,
+                    owner_id,
                     &agent_value,
                     session.title.as_deref(),
                     session.created_at.map(|value| value.to_rfc3339()),
@@ -939,15 +961,21 @@ impl Store {
                 ],
             )?;
         }
-        let session_count = if replace_existing {
-            sessions.len() as u64
-        } else {
-            transaction.query_row(
-                "SELECT COUNT(*) FROM conversation_sessions WHERE workspace_id = ?1 AND agent = ?2",
-                params![workspace_id, &agent_value],
-                |row| row.get::<_, i64>(0),
-            )? as u64
-        };
+        if owner_id != workspace_id {
+            // Moving cache is not a successful owner refresh. Keep its existing
+            // freshness/error metadata rather than claiming a fresh snapshot.
+            transaction.execute(
+                "UPDATE conversation_index_status SET session_count = (
+                   SELECT COUNT(*) FROM conversation_sessions WHERE workspace_id = ?1 AND agent = ?2
+                 ) WHERE workspace_id = ?1 AND agent = ?2",
+                params![owner_id, agent_value],
+            )?;
+        }
+        let session_count = transaction.query_row(
+            "SELECT COUNT(*) FROM conversation_sessions WHERE workspace_id = ?1 AND agent = ?2",
+            params![workspace_id, &agent_value],
+            |row| row.get::<_, i64>(0),
+        )? as u64;
         transaction.execute(
             "INSERT INTO conversation_index_status(
                workspace_id, agent, session_count, last_attempt_at, last_success_at, error_key, error_detail
@@ -962,6 +990,40 @@ impl Store {
         )?;
         transaction.commit()?;
         self.list_conversation_sessions(workspace_id)
+    }
+
+    /// These providers normalize both cwd and registered workspace paths. Pick
+    /// one registered representative before writing their globally stable IDs;
+    /// otherwise aliases can steal each other's sessions on every refresh.
+    fn normalized_session_owner(&self, workspace_id: &str) -> Result<(String, Vec<String>)> {
+        let home = dirs::home_dir();
+        let workspace = self.workspace_path(workspace_id)?;
+        let Some(root) = platform_path::session_workspace_root(&workspace, home.as_deref()) else {
+            return Ok((workspace_id.to_owned(), Vec::new()));
+        };
+        let mut candidates = self
+            .workspace_path_index()?
+            .into_iter()
+            .filter(|(path, _)| {
+                platform_path::session_workspace_root(path, home.as_deref())
+                    .is_some_and(|candidate| platform_path::equivalent(&candidate, &root))
+            })
+            .collect::<Vec<_>>();
+        // Prefer the project root itself, then a stable shallow alias when only
+        // subdirectories were registered. Activity/refresh order is irrelevant.
+        candidates.sort_by_key(|(path, id)| {
+            (
+                !platform_path::equivalent(path, &root),
+                path.components().count(),
+                platform_path::identity(path),
+                id.clone(),
+            )
+        });
+        let owner = candidates
+            .first()
+            .map(|(_, id)| id.clone())
+            .unwrap_or_else(|| workspace_id.to_owned());
+        Ok((owner, candidates.into_iter().map(|(_, id)| id).collect()))
     }
 
     pub fn record_conversation_index_failure(
@@ -4400,6 +4462,160 @@ mod tests {
             remaining[0].spawned_by_session_id.as_deref(),
             Some(parent_id.as_str())
         );
+    }
+
+    #[test]
+    fn normalized_session_ownership_is_independent_of_refresh_order() {
+        for agent in [AgentKind::OpenClaw, AgentKind::Hermes, AgentKind::GrokBuild] {
+            let dir = tempdir().unwrap();
+            let root = dir.path().join("project");
+            let child = root.join("child");
+            let sibling = root.join("sibling");
+            fs::create_dir_all(&child).unwrap();
+            fs::create_dir_all(&sibling).unwrap();
+            fs::create_dir(root.join(".git")).unwrap();
+            let store = Store::open(&dir.path().join("db.sqlite")).unwrap();
+            let child = store.add_workspace(&child).unwrap();
+            let sibling = store.add_workspace(&sibling).unwrap();
+            let native = NativeSessionSummary {
+                native_ref: "stable-native-session".into(),
+                agent,
+                title: Some("History".into()),
+                created_at: None,
+                updated_at: None,
+                message_count: None,
+                git_branch: None,
+                archived: false,
+                sidechain: false,
+                origin: SessionOrigin::Unknown,
+                spawned_by_session_id: None,
+                forked_from_session_id: None,
+                availability: agentkib_conversations::SessionAvailability::Readable,
+            };
+            let id = store.conversation_id(agent, &native.native_ref).unwrap();
+            // With no root registered, one stable alias owns the session.
+            for workspace in [&sibling, &child, &sibling] {
+                store
+                    .sync_conversation_sessions(&workspace.id, agent, std::slice::from_ref(&native))
+                    .unwrap();
+            }
+            assert_eq!(
+                store
+                    .get_conversation_session(&id)
+                    .unwrap()
+                    .unwrap()
+                    .workspace_id,
+                child.id
+            );
+            let root = store.add_workspace(&root).unwrap();
+            // A partial alias refresh must migrate, not delete, the sole cache
+            // even when the new preferred root has not been scanned yet.
+            store
+                .sync_conversation_sessions_partial(&child.id, agent, &[])
+                .unwrap();
+            assert_eq!(
+                store
+                    .get_conversation_session(&id)
+                    .unwrap()
+                    .unwrap()
+                    .workspace_id,
+                root.id
+            );
+            assert!(
+                store
+                    .conversation_index_status(&root.id)
+                    .unwrap()
+                    .is_empty()
+            );
+            store
+                .record_conversation_index_failure(&root.id, agent, "source_failed", "offline")
+                .unwrap();
+            store
+                .sync_conversation_sessions_partial(&child.id, agent, std::slice::from_ref(&native))
+                .unwrap();
+            let status = store.conversation_index_status(&root.id).unwrap();
+            assert_eq!(status[0].session_count, 1);
+            assert_eq!(status[0].error_key.as_deref(), Some("source_failed"));
+            assert!(status[0].last_success_at.is_none());
+
+            let nested_path = store.workspace_path(&root.id).unwrap().join("nested");
+            fs::create_dir_all(nested_path.join(".git")).unwrap();
+            let nested = store.add_workspace(&nested_path).unwrap();
+            let mut nested_native = native.clone();
+            nested_native.native_ref = "independent-nested-session".into();
+            let nested_id = store
+                .conversation_id(agent, &nested_native.native_ref)
+                .unwrap();
+            store
+                .sync_conversation_sessions(&nested.id, agent, &[nested_native])
+                .unwrap();
+            for order in [[&root, &child, &sibling], [&sibling, &child, &root]] {
+                for workspace in order {
+                    store
+                        .sync_conversation_sessions(
+                            &workspace.id,
+                            agent,
+                            std::slice::from_ref(&native),
+                        )
+                        .unwrap();
+                    store
+                        .sync_conversation_sessions_partial(
+                            &workspace.id,
+                            agent,
+                            std::slice::from_ref(&native),
+                        )
+                        .unwrap();
+                }
+                assert_eq!(
+                    store
+                        .get_conversation_session(&id)
+                        .unwrap()
+                        .unwrap()
+                        .workspace_id,
+                    root.id
+                );
+                assert!(
+                    store
+                        .list_conversation_sessions(&child.id)
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    store
+                        .list_conversation_sessions(&sibling.id)
+                        .unwrap()
+                        .is_empty()
+                );
+                assert_eq!(
+                    store.conversation_index_status(&child.id).unwrap()[0].session_count,
+                    0
+                );
+                assert_eq!(
+                    store
+                        .get_conversation_session(&nested_id)
+                        .unwrap()
+                        .unwrap()
+                        .workspace_id,
+                    nested.id
+                );
+            }
+            // Removing the preferred root restores the same deterministic alias.
+            store.exclude_workspace(&root.id).unwrap();
+            store
+                .sync_conversation_sessions(&sibling.id, agent, std::slice::from_ref(&native))
+                .unwrap();
+            store
+                .sync_conversation_sessions(&child.id, agent, &[native])
+                .unwrap();
+            assert_eq!(
+                store
+                    .get_conversation_session(&id)
+                    .unwrap()
+                    .unwrap()
+                    .workspace_id,
+                child.id
+            );
+        }
     }
 
     #[test]

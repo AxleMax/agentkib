@@ -658,6 +658,8 @@ export function WorkspaceSessionsPage({
                           aria-label={source.label}
                           onClick={() => {
                             revealSession(source.session!);
+                            setQuery("");
+                            setAgent("all");
                             setFilter("all");
                             setSelectedId(source.session!.id);
                             setShowDetail(true);

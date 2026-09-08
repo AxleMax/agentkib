@@ -1015,7 +1015,16 @@ impl CodexProvider {
     }
 
     fn native_sessions(&self, workspace: Option<&Path>) -> Result<Vec<CodexNativeSession>> {
+        self.native_sessions_detailed(workspace)
+            .map(|(sessions, _)| sessions)
+    }
+
+    fn native_sessions_detailed(
+        &self,
+        workspace: Option<&Path>,
+    ) -> Result<(Vec<CodexNativeSession>, bool)> {
         let mut output = BTreeMap::new();
+        let mut incomplete = false;
         for database in self.databases()? {
             let connection = open_read_only(&database)?;
             let columns = table_columns(&connection, "threads")?;
@@ -1026,11 +1035,10 @@ impl CodexProvider {
                 .copied()
                 .collect::<Vec<_>>();
             if !missing.is_empty() {
-                bail!(
-                    "Unsupported Codex threads schema in {}: missing required column(s) {}",
-                    database.display(),
-                    missing.join(", ")
-                );
+                // An older database can coexist with a usable current one.
+                // Retain valid sources without claiming the refresh was complete.
+                incomplete = true;
+                continue;
             }
             let title = first_column_expression(&columns, &["name", "title", "preview"], "''");
             let created =
@@ -1081,7 +1089,9 @@ impl CodexProvider {
                     title: row.get::<_, Option<String>>(3)?,
                     origin: metadata.origin,
                     origin_authoritative: metadata.origin_authoritative,
-                    source_present_in_database: source.is_some(),
+                    source_present_in_database: source
+                        .as_deref()
+                        .is_some_and(|value| !value.trim().is_empty()),
                     spawned_from_database: parent.is_some(),
                     forked_from_database: forked.is_some(),
                     spawned_by_session_id: metadata.spawned_by_session_id,
@@ -1111,7 +1121,7 @@ impl CodexProvider {
                 output.insert(value.native_ref.clone(), value);
             }
         }
-        Ok(output.into_values().collect())
+        Ok((output.into_values().collect(), incomplete))
     }
 
     fn enrich_session(&self, mut session: CodexNativeSession) -> CodexNativeSession {
@@ -1196,8 +1206,13 @@ impl ConversationProvider for CodexProvider {
     }
 
     fn list_sessions(&self, workspace: &Path) -> Result<Vec<NativeSessionSummary>> {
-        Ok(self
-            .native_sessions(Some(workspace))?
+        self.list_sessions_detailed(workspace)
+            .map(|listing| listing.sessions)
+    }
+
+    fn list_sessions_detailed(&self, workspace: &Path) -> Result<NativeSessionListing> {
+        let (sessions, incomplete) = self.native_sessions_detailed(Some(workspace))?;
+        let sessions = sessions
             .into_iter()
             .map(|session| self.enrich_session(session))
             .map(|session| NativeSessionSummary {
@@ -1219,7 +1234,11 @@ impl ConversationProvider for CodexProvider {
                     SessionAvailability::MetadataOnly
                 },
             })
-            .collect())
+            .collect();
+        Ok(NativeSessionListing {
+            sessions,
+            incomplete,
+        })
     }
 
     fn read_events(
@@ -3166,7 +3185,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_rejects_missing_threads_schema_but_accepts_valid_empty_source() {
+    fn codex_marks_missing_threads_schema_partial_but_accepts_valid_empty_source() {
         let dir = tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         fs::create_dir_all(&workspace).unwrap();
@@ -3175,10 +3194,11 @@ mod tests {
             .execute_batch("CREATE TABLE threads(id TEXT, cwd TEXT);")
             .unwrap();
         drop(database);
-        let error = CodexProvider::with_home(dir.path().to_path_buf())
-            .list_sessions(&workspace)
-            .unwrap_err();
-        assert!(error.to_string().contains("missing required column"));
+        let listing = CodexProvider::with_home(dir.path().to_path_buf())
+            .list_sessions_detailed(&workspace)
+            .unwrap();
+        assert!(listing.incomplete);
+        assert!(listing.sessions.is_empty());
 
         let empty_dir = tempdir().unwrap();
         let empty_workspace = empty_dir.path().join("workspace");
@@ -3192,6 +3212,52 @@ mod tests {
             .list_sessions(&empty_workspace)
             .unwrap();
         assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn codex_partial_schema_keeps_other_database_readable_and_blank_source_uses_header() {
+        for (source, expected_origin) in [
+            ("", SessionOrigin::Auxiliary),
+            ("  ", SessionOrigin::Auxiliary),
+            ("exec", SessionOrigin::Interactive),
+            ("{broken", SessionOrigin::Unknown),
+            ("\"cli\"", SessionOrigin::Interactive),
+        ] {
+            let dir = tempdir().unwrap();
+            let workspace = dir.path().join("workspace");
+            fs::create_dir_all(&workspace).unwrap();
+            let transcript = dir.path().join("session.jsonl");
+            fs::write(&transcript, format!("{}\n{}\n",
+                codex_meta_line("valid", serde_json::json!("subagent"), serde_json::json!({})),
+                serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"kept"}})
+            )).unwrap();
+            write_codex_metadata_database(
+                &dir.path().join("state_1.sqlite"),
+                &[(
+                    "valid",
+                    transcript.as_path(),
+                    workspace.as_path(),
+                    "Valid",
+                    Some(source),
+                    None,
+                    None,
+                    Some("user"),
+                )],
+            );
+            let old = Connection::open(dir.path().join("state_0.sqlite")).unwrap();
+            old.execute_batch("CREATE TABLE threads(id TEXT);").unwrap();
+            let provider = CodexProvider::with_home(dir.path().to_path_buf());
+            let listing = provider.list_sessions_detailed(&workspace).unwrap();
+            assert!(listing.incomplete);
+            assert_eq!(listing.sessions.len(), 1);
+            assert_eq!(listing.sessions[0].origin, expected_origin, "{source:?}");
+            assert_eq!(
+                provider.read_events("valid", None, 50).unwrap().events[0]
+                    .content
+                    .as_deref(),
+                Some("kept")
+            );
+        }
     }
 
     #[test]

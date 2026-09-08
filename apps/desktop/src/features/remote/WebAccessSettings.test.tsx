@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { initializeI18n } from "@/core/i18n";
 import { WebAccessSettings } from "./WebAccessSettings";
@@ -17,7 +17,10 @@ beforeEach(() => {
   request.mockReset();
   request.mockResolvedValue(status);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 it("does not enable service until settings are saved", async () => {
   render(<WebAccessSettings />);
   const toggle = await screen.findByRole("switch", { name: "Enable local Web service" });
@@ -64,4 +67,36 @@ it("shows binding error and invokes revocation without granting extra permission
   expect((await screen.findByRole("alert")).textContent).toContain("This port is in use");
   fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
   await waitFor(() => expect(request).toHaveBeenCalledWith({ operation: "revoke", id: "d" }));
+});
+
+it("does not restore a revoked browser from a poll started during revocation", async () => {
+  let poll!: () => void;
+  vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+    if (delay === 2000) poll = callback as () => void;
+    return 1 as unknown as ReturnType<typeof window.setInterval>;
+  });
+  const oldStatus = {
+    ...status,
+    devices: [{ id: "d", name: "Phone", send: false, approve: false, createdAt: Date.now() }],
+  };
+  request.mockResolvedValueOnce(oldStatus);
+  render(<WebAccessSettings />);
+  await screen.findByText("Phone");
+  await act(async () => {});
+  let finishRevoke!: (value: typeof status) => void;
+  let finishPoll!: (value: typeof oldStatus) => void;
+  request.mockImplementation(
+    ({ operation }) =>
+      new Promise((resolve) => {
+        if (operation === "revoke") finishRevoke = resolve;
+        else finishPoll = resolve;
+      }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+  act(() => poll());
+  expect(request).toHaveBeenCalledTimes(3);
+  await act(async () => finishRevoke(status));
+  expect(screen.queryByText("Phone")).toBeNull();
+  await act(async () => finishPoll?.(oldStatus));
+  expect(screen.queryByText("Phone")).toBeNull();
 });

@@ -113,6 +113,7 @@ struct Inner {
     directory: PathBuf,
     stop: CancellationToken,
     permits: Arc<Semaphore>,
+    read_permits: Arc<Semaphore>,
     mdns: Option<mdns_sd::ServiceDaemon>,
     allow_loopback: bool,
     #[cfg(test)]
@@ -250,6 +251,7 @@ impl RemoteService {
             directory,
             stop: CancellationToken::new(),
             permits: Arc::new(Semaphore::new(16)),
+            read_permits: Arc::new(Semaphore::new(16)),
             mdns,
             allow_loopback: test,
             #[cfg(test)]
@@ -1010,7 +1012,7 @@ impl Inner {
                 }
                 json!({"capabilities":["catalog","events"]})
             }
-            "catalog" => tokio::task::spawn_blocking(move || source.catalog()).await??,
+            "catalog" => self.read_source(move || source.catalog()).await?,
             "events" => {
                 let session = text(p, "session_id")?.to_owned();
                 let cursor = p
@@ -1023,10 +1025,8 @@ impl Inner {
                     .as_u64()
                     .filter(|v| (1..=100).contains(v))
                     .context("limit")? as usize;
-                tokio::task::spawn_blocking(move || {
-                    source.events(&session, cursor.as_deref(), limit)
-                })
-                .await??
+                self.read_source(move || source.events(&session, cursor.as_deref(), limit))
+                    .await?
             }
             _ => bail!("unsupported operation"),
         };
@@ -1043,6 +1043,24 @@ impl Inner {
         );
         state.config.authorized.get_mut(peer).unwrap().last_seen = Some(now());
         Ok(value)
+    }
+
+    async fn read_source(
+        &self,
+        read: impl FnOnce() -> Result<Value> + Send + 'static,
+    ) -> Result<Value> {
+        // Dropping a JoinHandle (timeout/revoke/disconnect) does not cancel a
+        // blocking task. Its budget must live with the work, not the socket.
+        let permit = self
+            .read_permits
+            .clone()
+            .try_acquire_owned()
+            .context("limit")?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            read()
+        })
+        .await?
     }
 }
 
@@ -1114,6 +1132,61 @@ async fn write_frame<S: AsyncWrite + Unpin>(s: &mut S, value: &Value, max: usize
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    #[test]
+    fn cancelled_read_futures_keep_budget_until_blocking_work_finishes() {
+        let pair = Pair::new();
+        pair.host.runtime.block_on(async {
+            let started = Arc::new(AtomicU64::new(0));
+            let mut releases = Vec::new();
+            let mut tasks = Vec::new();
+            for _ in 0..16 {
+                let inner = pair.host.inner.clone();
+                let started = started.clone();
+                let (release, blocked) = std::sync::mpsc::channel();
+                releases.push(release);
+                tasks.push(tokio::spawn(async move {
+                    inner
+                        .read_source(move || {
+                            started.fetch_add(1, Ordering::SeqCst);
+                            blocked.recv().unwrap();
+                            Ok(json!({}))
+                        })
+                        .await
+                }));
+            }
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while started.load(Ordering::SeqCst) != 16 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            // Timeout and revoke drop the same read future. Blocking closures
+            // continue after abort, and must not admit another batch of reads.
+            for task in tasks {
+                task.abort();
+                let _ = task.await;
+            }
+            let extra = pair
+                .host
+                .inner
+                .read_source(|| Ok(json!({"unexpected":true})))
+                .await;
+            for release in releases {
+                release.send(()).unwrap();
+            }
+            assert!(extra.unwrap_err().to_string().contains("limit"));
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while pair.host.inner.read_permits.available_permits() != 16 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(pair.host.inner.read_source(|| Ok(json!({}))).await.is_ok());
+        });
+    }
 
     #[test]
     fn history_errors_cross_the_wire_without_private_details() {

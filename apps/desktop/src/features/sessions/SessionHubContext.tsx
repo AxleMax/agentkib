@@ -1,6 +1,7 @@
 import { useI18n } from "@/core/useI18n";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -40,6 +41,13 @@ function useHub(active: boolean) {
   );
   const refreshCatalog = catalog.refresh;
   const [historyRevision, setHistoryRevision] = useState(0);
+  const refresh = useCallback(async () => {
+    await Promise.all([
+      localEnabled ? refreshCatalog() : Promise.resolve(),
+      ...remote.hosts.map((host) => refreshRemoteCatalog(host.id, true)),
+    ]);
+    setHistoryRevision((revision) => revision + 1);
+  }, [localEnabled, refreshCatalog, remote.hosts]);
   const wasRefreshing = useRef(false);
   useEffect(() => {
     if (wasRefreshing.current && !catalog.refreshing && catalog.ready && enabled) {
@@ -49,10 +57,10 @@ function useHub(active: boolean) {
   }, [catalog.refreshing, catalog.ready, enabled]);
   useEffect(() => {
     if (!active) return;
-    const refresh = () => void refreshCatalog();
-    window.addEventListener(SESSION_REFRESH_EVENT, refresh);
-    return () => window.removeEventListener(SESSION_REFRESH_EVENT, refresh);
-  }, [active, refreshCatalog]);
+    const handleRefresh = () => void refresh();
+    window.addEventListener(SESSION_REFRESH_EVENT, handleRefresh);
+    return () => window.removeEventListener(SESSION_REFRESH_EVENT, handleRefresh);
+  }, [active, refresh]);
   const agent = useSessionViewStore((state) => state.agent);
   const filter = useSessionViewStore((state) => state.filter);
   const host = useSessionViewStore((state) => state.host);
@@ -137,13 +145,7 @@ function useHub(active: boolean) {
     remoteErrors: remote.errors,
     localEnabled,
     historyRevision,
-    refresh: async () => {
-      await Promise.all([
-        localEnabled ? catalog.refresh() : Promise.resolve(),
-        ...remote.hosts.map((host) => refreshRemoteCatalog(host.id, true)),
-      ]);
-      setHistoryRevision((revision) => revision + 1);
-    },
+    refresh,
     workspaces,
     filtered,
     selected,

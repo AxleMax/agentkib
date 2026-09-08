@@ -228,6 +228,27 @@ function mockServer(initial = "approved", availability = "readable") {
   };
 }
 describe("Web access UI", () => {
+  it("keeps live updates and revocation active when the selected session is clicked again", async () => {
+    mockServer();
+    render(<App />);
+    const entry = await screen.findByRole("button", { name: /Test session/ });
+    fireEvent.click(entry);
+    await screen.findByText("Secret history");
+    fireEvent.click(entry);
+    act(() =>
+      FakeEvents.instances.at(-1)!.emit("snapshot", {
+        sessionId: "s",
+        status: "running",
+        revision: 2,
+        sendEnabled: false,
+        approvals: [],
+      }),
+    );
+    expect(screen.getByText("实时状态 · 运行中")).toBeVisible();
+    act(() => FakeEvents.instances.at(-1)!.emit("access-ended", {}));
+    expect(screen.getByText("远程访问已结束")).toBeVisible();
+    expect(screen.queryByText("Secret history")).toBeNull();
+  });
   it("does not open metadata-only entries or request history/live state", async () => {
     const { fetcher } = mockServer("approved", "metadata-only");
     const before = FakeEvents.instances.length;

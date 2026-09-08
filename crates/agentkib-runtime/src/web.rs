@@ -138,7 +138,7 @@ impl Service {
             }
             return Ok(json!({"sessions":source.catalog()?["sessions"],"indexEnabled":true}));
         }
-        source.ensure_available()?;
+        let epoch = source.availability_epoch()?;
         let id = request
             .session_id
             .as_deref()
@@ -276,6 +276,7 @@ impl Service {
                         .into_iter()
                         .map(|approval| safe_approval(approval, controls))
                         .collect();
+                    validate_session_access(&source, epoch, &store, &session, &workspace)?;
                     return Ok(
                         json!({"sessionId":id,"runtimeBootId":self.boot,"status":state.status(),"revision":state.revision(),"turnId":state.active_turn(),"sendEnabled":controls && state.status()==agentkib_codex_bridge::Status::Idle,"approvals":approvals}),
                     );
@@ -286,17 +287,18 @@ impl Service {
                         && request.expected_revision == state.revision(),
                     "stale-or-disabled-control"
                 );
-                source.ensure_available()?;
-                store.workspace_path(&session.workspace_id)?;
+                let authorize =
+                    || validate_session_access(&source, epoch, &store, &session, &workspace);
                 let dispatch = || {
                     dispatched = true;
                     self.unresolved.insert(id.to_owned());
                 };
                 let outcome = if request.operation == "send" {
                     let text = request.text.as_deref().context("missing-text")?;
-                    bridge.send_text_at_revision_with_dispatch(
+                    bridge.send_text_at_revision_with_authorization(
                         text,
                         request.expected_revision,
+                        authorize,
                         dispatch,
                     )
                 } else {
@@ -322,11 +324,12 @@ impl Service {
                         "cancel" => agentkib_codex_bridge::Decision::Cancel,
                         _ => anyhow::bail!("unsupported-decision"),
                     };
-                    bridge.approve_at_revision_with_dispatch(
+                    bridge.approve_at_revision_with_authorization(
                         approval_id,
                         turn,
                         decision,
                         request.expected_revision,
+                        authorize,
                         dispatch,
                     )
                 };
@@ -346,7 +349,7 @@ impl Service {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (workspace, session);
+            let _ = (workspace, session, epoch);
             self.unsupported(&request, "platform-unsupported")
         }
     }
@@ -379,6 +382,29 @@ impl Service {
             json!({"sessionId":request.session_id,"runtimeBootId":self.boot,"status":"unsupported","revision":null,"turnId":null,"sendEnabled":false,"approvals":[],"reason":reason}),
         )
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn validate_session_access(
+    source: &RemoteSessionSource,
+    epoch: u64,
+    store: &Store,
+    session: &agentkib_conversations::ConversationSessionSummary,
+    workspace: &Path,
+) -> anyhow::Result<()> {
+    // Owner discovery/refresh can block while the main runtime handles index or
+    // workspace changes. Recheck after that wait, not only at request admission.
+    source.ensure_enabled(epoch)?;
+    let current = store
+        .get_conversation_session(&session.id)?
+        .context("session-unavailable")?;
+    anyhow::ensure!(
+        current.workspace_id == session.workspace_id
+            && current.agent == session.agent
+            && store.workspace_path(&session.workspace_id)? == workspace,
+        "session-unavailable"
+    );
+    Ok(())
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -542,6 +568,74 @@ fn complete_file_change(change: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_session_access_rejects_index_and_registry_changes() {
+        use agentkib_conversations::{NativeSessionSummary, SessionAvailability, SessionOrigin};
+        for change in ["disable", "epoch", "clear", "exclude"] {
+            let directory = tempfile::tempdir().unwrap();
+            let source = RemoteSessionSource {
+                data_dir: directory.path().into(),
+            };
+            let store = Store::open(&directory.path().join("agentkib.db")).unwrap();
+            let workspace = directory.path().join("project");
+            fs::create_dir(&workspace).unwrap();
+            let workspace = workspace.canonicalize().unwrap();
+            let registered = store.add_workspace(&workspace).unwrap();
+            let session = store
+                .sync_conversation_sessions(
+                    &registered.id,
+                    AgentKind::Codex,
+                    &[NativeSessionSummary {
+                        native_ref: "synthetic".into(),
+                        agent: AgentKind::Codex,
+                        title: None,
+                        origin: SessionOrigin::Unknown,
+                        spawned_by_session_id: None,
+                        forked_from_session_id: None,
+                        created_at: None,
+                        updated_at: None,
+                        message_count: None,
+                        git_branch: None,
+                        archived: false,
+                        sidechain: false,
+                        availability: SessionAvailability::Readable,
+                    }],
+                )
+                .unwrap()
+                .remove(0);
+            let epoch = source.availability_epoch().unwrap();
+            validate_session_access(&source, epoch, &store, &session, &workspace).unwrap();
+            // Model the main runtime changing policy while the Web worker awaits
+            // an owner response. Use another store connection, as production does.
+            let writer = Store::open(&directory.path().join("agentkib.db")).unwrap();
+            let checked_epoch = match change {
+                "disable" => {
+                    fs::write(
+                        directory.path().join("preferences.json"),
+                        r#"{"session_index_enabled":false}"#,
+                    )
+                    .unwrap();
+                    epoch
+                }
+                "epoch" => epoch.wrapping_add(1),
+                "clear" => {
+                    writer.clear_conversation_index(None).unwrap();
+                    epoch
+                }
+                "exclude" => {
+                    writer.exclude_workspace(&registered.id).unwrap();
+                    epoch
+                }
+                _ => unreachable!(),
+            };
+            assert!(
+                validate_session_access(&source, checked_epoch, &store, &session, &workspace)
+                    .is_err(),
+                "{change}"
+            );
+        }
+    }
 
     #[test]
     fn control_preflight_receipt_depends_on_dispatch_not_error_text() {

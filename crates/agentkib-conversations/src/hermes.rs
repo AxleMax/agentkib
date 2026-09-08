@@ -61,30 +61,44 @@ impl HermesProvider {
         })
     }
 
-    fn homes(&self) -> Vec<(String, PathBuf)> {
+    fn homes(&self) -> (Vec<(String, PathBuf)>, bool) {
         let Some(base) = self.base_home() else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         let mut homes = vec![("default".to_owned(), base.clone())];
+        let mut incomplete = false;
         let profiles = base.join("profiles");
-        if let Ok(entries) = fs::read_dir(profiles) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false)
-                    && platform_path::is_safe_scan_entry(&path)
-                {
-                    homes.push((entry.file_name().to_string_lossy().into_owned(), path));
+        match fs::read_dir(profiles) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(_) => {
+                            incomplete = true;
+                            continue;
+                        }
+                    };
+                    let path = entry.path();
+                    match entry.file_type() {
+                        Ok(kind) if kind.is_dir() && platform_path::is_safe_scan_entry(&path) => {
+                            homes.push((entry.file_name().to_string_lossy().into_owned(), path));
+                        }
+                        Err(_) => incomplete = true,
+                        _ => {}
+                    }
                 }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => incomplete = true,
         }
-        homes
+        (homes, incomplete)
     }
 
     fn collect(&self, workspace: Option<&Path>) -> Result<(Vec<Session>, bool)> {
         let mut all = Vec::new();
-        let mut incomplete = false;
+        let (homes, mut incomplete) = self.homes();
         let mut visited_jsonl = 0usize;
-        for (profile, home) in self.homes() {
+        for (profile, home) in homes {
             if !home.is_dir() {
                 continue;
             }
@@ -1115,6 +1129,32 @@ mod tests {
             .unwrap();
         assert_eq!(sessions.len(), 2);
         assert_ne!(sessions[0].native_ref, sessions[1].native_ref);
+    }
+
+    #[test]
+    fn unreadable_profile_enumeration_marks_default_listing_partial() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("project");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir(dir.path().join("sessions")).unwrap();
+        fs::write(
+            dir.path().join("sessions/one.jsonl"),
+            session_line("one", &workspace),
+        )
+        .unwrap();
+        let provider = HermesProvider::with_home(dir.path().to_path_buf());
+        assert!(
+            !provider
+                .list_sessions_detailed(&workspace)
+                .unwrap()
+                .incomplete
+        );
+        // NotADirectory is a deterministic directory-read error, including when
+        // tests run with privileges that would bypass chmod permission denial.
+        fs::write(dir.path().join("profiles"), "not a directory").unwrap();
+        let listing = provider.list_sessions_detailed(&workspace).unwrap();
+        assert_eq!(listing.sessions.len(), 1);
+        assert!(listing.incomplete);
     }
 
     #[test]

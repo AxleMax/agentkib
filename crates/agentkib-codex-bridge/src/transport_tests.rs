@@ -15,6 +15,86 @@ use std::{
 
 const SESSION: &str = "00000000-0000-4000-8000-000000000001";
 
+#[test]
+fn authorization_removed_during_final_refresh_never_dispatches() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    for approval in [false, true] {
+        let (_dir, path, listener) = endpoint();
+        let allowed = Arc::new(AtomicBool::new(true));
+        let owner_allowed = allowed.clone();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            initialize(&mut socket);
+            let mut snapshots = 0;
+            while let Some(message) = read(&mut socket) {
+                match message["method"].as_str().unwrap() {
+                    "thread-owner-discovery" => write(
+                        &mut socket,
+                        json!({
+                        "type":"response","requestId":message["requestId"],
+                        "resultType":"success","handledByClientId":"owner"}),
+                    ),
+                    "thread-stream-following-changed" => {
+                        if message["params"]["following"] == true {
+                            snapshots += 1;
+                            if snapshots == 2 {
+                                owner_allowed.store(false, Ordering::SeqCst);
+                            }
+                            write(
+                                &mut socket,
+                                snapshot(1, if approval { "active" } else { "idle" }),
+                            );
+                        }
+                    }
+                    _ => panic!("authorization was removed before any mutation was sent"),
+                }
+            }
+            assert_eq!(snapshots, 2);
+        });
+        let mut bridge = Bridge::connect(&path, known()).unwrap();
+        bridge.enable_controls().unwrap();
+        bridge.select(SESSION).unwrap();
+        assert!(allowed.load(Ordering::SeqCst));
+        let authorize = || {
+            anyhow::ensure!(allowed.load(Ordering::SeqCst), "access-revoked");
+            Ok(())
+        };
+        let mut dispatched = false;
+        let result = if approval {
+            bridge.approve_at_revision_with_authorization(
+                &json!(42),
+                "turn-1",
+                Decision::Accept,
+                Some(1),
+                authorize,
+                || dispatched = true,
+            )
+        } else {
+            bridge.send_text_at_revision_with_authorization(
+                "synthetic hello",
+                Some(1),
+                authorize,
+                || dispatched = true,
+            )
+        };
+        assert!(result.unwrap_err().to_string().contains("access-revoked"));
+        assert!(!dispatched);
+        assert_eq!(
+            bridge.state().unwrap().status(),
+            if approval {
+                Status::AwaitingApproval
+            } else {
+                Status::Idle
+            }
+        );
+        drop(bridge);
+        server.join().unwrap();
+    }
+}
+
 fn endpoint() -> (tempfile::TempDir, PathBuf, UnixListener) {
     let directory = tempfile::tempdir().unwrap();
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();

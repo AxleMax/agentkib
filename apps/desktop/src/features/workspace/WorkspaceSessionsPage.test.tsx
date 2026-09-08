@@ -230,6 +230,10 @@ describe("WorkspaceSessionsPage", () => {
       />,
     );
     const forkTitle = await screen.findByText("Forked continuation");
+    fireEvent.click(screen.getByRole("button", { name: "Search session titles" }));
+    fireEvent.change(screen.getByPlaceholderText("Search session titles"), {
+      target: { value: "Forked" },
+    });
     const forkButton = forkTitle.closest("button")!;
     expect(forkButton).toHaveAttribute("title", expect.stringContaining("Created by:"));
     expect(forkButton).toHaveAttribute("title", expect.stringContaining("Forked from:"));
@@ -238,6 +242,11 @@ describe("WorkspaceSessionsPage", () => {
       await screen.findByRole("button", { name: /Created by: Creator session/ }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: /Forked from: Cached continuation/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Forked from: Cached continuation/ }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Cached continuation" })).toBeVisible();
+      expect(screen.getByPlaceholderText("Search session titles")).toHaveValue("");
+    });
   });
 
   it("does not expose internal context wrappers as titles", async () => {

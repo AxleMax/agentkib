@@ -114,16 +114,20 @@ impl Connection {
     }
 
     fn write(&mut self, value: &Value) -> Result<()> {
-        self.write_with_dispatch(value, || {})
+        self.write_with_dispatch(value, || Ok(()))
     }
 
-    fn write_with_dispatch(&mut self, value: &Value, dispatch: impl FnOnce()) -> Result<()> {
+    fn write_with_dispatch(
+        &mut self,
+        value: &Value,
+        dispatch: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         ensure!(!self.closed, "IPC disconnected");
         let bytes = serde_json::to_vec(value)?;
         ensure!(bytes.len() <= 64 * 1024, "IPC request exceeds limit");
         // A write error can follow a partial frame. Signal before the first byte,
         // after all local checks that can prove no mutation was attempted.
-        dispatch();
+        dispatch()?;
         let result = self
             .socket
             .write_all(&(bytes.len() as u32).to_le_bytes())
@@ -147,7 +151,7 @@ impl Connection {
         owner: Option<&str>,
         notification: impl FnMut(Value) -> Result<()>,
     ) -> Result<Value> {
-        self.request_with_dispatch(method, params, owner, notification, || {})
+        self.request_with_dispatch(method, params, owner, notification, || Ok(()))
     }
 
     pub(crate) fn request_with_dispatch(
@@ -156,7 +160,7 @@ impl Connection {
         params: Value,
         owner: Option<&str>,
         mut notification: impl FnMut(Value) -> Result<()>,
-        dispatch: impl FnOnce(),
+        dispatch: impl FnOnce() -> Result<()>,
     ) -> Result<Value> {
         let id = Uuid::new_v4().to_string();
         let mut request = json!({"type":"request", "requestId":id, "sourceClientId":self.client_id,

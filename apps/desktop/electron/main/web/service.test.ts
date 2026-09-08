@@ -480,35 +480,64 @@ describe("WebAccessService loopback security boundary", () => {
       ).toBe(200);
     },
   );
-  it.each([
-    { requestId: "wrong" },
-    { runtimeBootId: "wrong" },
-    { controlOutcome: undefined },
-    { accepted: undefined },
-  ])("does not release a fence for an uncorrelated rejection %j", async (override) => {
-    await bootstrap();
-    await pair(true);
-    runtime.mockImplementation(async (params) =>
-      (params as { operation: string }).operation === "send"
-        ? {
-            accepted: false,
-            completed: false,
-            requestId: "first",
-            runtimeBootId: "r",
-            controlOutcome: "not-dispatched",
-            ...override,
-          }
-        : { runtimeBootId: "r", revision: 4, sendEnabled: true },
-    );
-    const body = { sessionId: "s", text: "x", requestId: "first", bootId, expectedRevision: 4 };
-    await http("/api/web/v1/send", { method: "POST", body });
-    expect((await http("/api/web/v1/live?sessionId=s")).json().sendEnabled).toBe(false);
-    expect(
-      (
-        await http("/api/web/v1/send", { method: "POST", body: { ...body, requestId: "fresh" } })
-      ).json(),
-    ).toMatchObject({ controlOutcome: "unknown" });
-  });
+  it.each(
+    ["send", "approve"].flatMap((operation) =>
+      [
+        { requestId: "wrong" },
+        { runtimeBootId: "wrong" },
+        { controlOutcome: undefined },
+        { accepted: undefined },
+        { completed: undefined },
+      ].map((override) => ({ operation, override })),
+    ),
+  )(
+    "does not release a fence for an uncorrelated rejection %j",
+    async ({ operation, override }) => {
+      await bootstrap();
+      await pair(true, true);
+      runtime.mockImplementation(async (params) =>
+        (params as { operation: string }).operation === operation
+          ? {
+              accepted: false,
+              completed: false,
+              requestId: "first",
+              runtimeBootId: "r",
+              controlOutcome: "not-dispatched",
+              ...override,
+            }
+          : {
+              runtimeBootId: "r",
+              revision: 4,
+              sendEnabled: true,
+              approvals: [
+                { requestId: "a", turnId: "t", supported: true, availableDecisions: ["accept"] },
+              ],
+            },
+      );
+      const body = {
+        sessionId: "s",
+        text: "x",
+        requestId: "first",
+        bootId,
+        expectedRevision: 4,
+        approvalId: "a",
+        turnId: "t",
+        decision: "accept",
+      };
+      const result = await http(`/api/web/v1/${operation}`, { method: "POST", body });
+      expect(result.status).toBe(502);
+      expect(result.json()).toMatchObject({ error: "outcome_unknown", controlOutcome: "unknown" });
+      expect((await http("/api/web/v1/live?sessionId=s")).json().sendEnabled).toBe(false);
+      expect(
+        (
+          await http(`/api/web/v1/${operation}`, {
+            method: "POST",
+            body: { ...body, requestId: "fresh" },
+          })
+        ).json(),
+      ).toMatchObject({ controlOutcome: "unknown" });
+    },
+  );
   it("keeps SSE connected across reserved preflight and mutation, while revocation still closes it", async () => {
     await bootstrap();
     const id = await pair(true);
@@ -737,6 +766,7 @@ describe("WebAccessService loopback security boundary", () => {
     await pair(true, true);
     const body = { sessionId: "s", text: "x", requestId: "disabled", bootId, expectedRevision: 4 };
     runtime.mockResolvedValue({
+      accepted: true,
       runtimeBootId: "runtime-one",
       revision: 4,
       sendEnabled: false,

@@ -42,7 +42,7 @@ export function WebAccessSettings() {
           setConfig((old) => old ?? next.config);
         }
       } catch {
-        if (mounted.current) setError(c.unavailable);
+        if (mounted.current && generation === revision.current) setError(c.unavailable);
       } finally {
         inFlight = false;
       }
@@ -67,6 +67,9 @@ export function WebAccessSettings() {
     } catch {
       if (mounted.current) setError(c.unavailable);
     } finally {
+      // Polls may start while the mutation is awaiting its response. They must
+      // not replace that response (for example restoring a revoked browser).
+      revision.current += 1;
       if (mounted.current) setBusy(false);
     }
   }

@@ -1217,7 +1217,10 @@ fn parse_compatible_record(
     // and result status instead of silently reducing a tool-only message to
     // empty text. No inferred turn/phase metadata is attached here.
     if let Some(blocks) = content_value.and_then(Value::as_array) {
-        for (index, block) in blocks.iter().enumerate() {
+        // Records are scanned newest-first and the page is reversed before it
+        // is returned. Walk blocks in reverse too, otherwise multiple tool
+        // blocks from the same message are emitted in the opposite order.
+        for (index, block) in blocks.iter().enumerate().rev() {
             let Some(block_type) = block.get("type").and_then(Value::as_str) else {
                 continue;
             };
@@ -1370,6 +1373,46 @@ mod tests {
             page.events
                 .iter()
                 .all(|event| event.message_phase.is_none())
+        );
+    }
+
+    #[test]
+    fn compatible_content_tool_blocks_keep_source_order() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("compatible-tool-order.jsonl");
+        write_records(
+            &path,
+            &[serde_json::json!({
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "toolCall", "name": "first"},
+                        {"type": "toolResult", "name": "second", "status": "completed"}
+                    ]
+                }
+            })],
+        );
+
+        let page = read_page(&path, None, 50, Format::OpenClaw).unwrap();
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.tool_name.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("first"), Some("second")]
+        );
+
+        let latest = read_page(&path, None, 1, Format::OpenClaw).unwrap();
+        assert_eq!(latest.events[0].tool_name.as_deref(), Some("second"));
+        let older = read_page(&path, latest.next_cursor.as_deref(), 1, Format::OpenClaw).unwrap();
+        assert_eq!(older.events[0].tool_name.as_deref(), Some("first"));
+        assert_eq!(
+            all(&path, Format::OpenClaw, 1)
+                .iter()
+                .map(|event| event.tool_name.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("first"), Some("second")]
         );
     }
 

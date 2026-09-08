@@ -677,6 +677,13 @@ export class WebAccessService {
         }
         this.grant(hash, permission);
         if (boot !== this.bootId) throw new HttpError(409, "stale_boot");
+        if (
+          typeof result !== "object" ||
+          result === null ||
+          !("accepted" in result) ||
+          result.accepted !== true
+        )
+          throw new HttpError(502, "outcome_unknown");
         res.once("finish", () => {
           // Node finish confirms the server wrote the response, not that a
           // browser received it. No automatic resend is safe even after this.

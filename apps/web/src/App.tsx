@@ -341,6 +341,7 @@ export function App() {
     return () => clearTimeout(timer);
   }, [selected, live?.revision, online, fail]);
   async function choose(id: string) {
+    if (selection.current === id) return;
     if (sessions.find((session) => session.id === id)?.availability !== "readable") return;
     generation.current++;
     selection.current = id;

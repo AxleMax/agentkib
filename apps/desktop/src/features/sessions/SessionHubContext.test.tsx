@@ -10,6 +10,7 @@ import type {
   WorkspaceSummary,
 } from "@/core/types";
 import { useAppStore } from "@/stores/app-store";
+import { api } from "@/core/api";
 import { SessionHubProvider, useSessionHub } from "./SessionHubContext";
 import { useSessionViewStore } from "./session-view-store";
 import { SESSION_REFRESH_EVENT } from "./session-refresh";
@@ -96,7 +97,10 @@ describe("SessionHubProvider", () => {
     };
     doubles.catalog.mockReturnValue(catalogState());
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
 
   it("keeps context available but pauses reads and refresh listeners outside the session route", () => {
     const { result } = renderHook(useSessionHub, {
@@ -109,7 +113,7 @@ describe("SessionHubProvider", () => {
     expect(doubles.navigate).not.toHaveBeenCalled();
   });
 
-  it("reads cached remote history even when local indexing is disabled and local workspaces are pending", () => {
+  it("reads and natively refreshes remote history with local indexing disabled and local workspaces pending", async () => {
     useAppStore.getState().setRuntime({ session_index_enabled: false } as RuntimeInfo);
     doubles.workspaceQuery.isPending = true;
     useRemoteStore.setState({
@@ -146,6 +150,16 @@ describe("SessionHubProvider", () => {
     expect(result.current.selected?.remote?.host_id).toBe("host");
     expect(result.current.selectedWorkspace?.remote?.host_name).toBe("Laptop");
     expect(doubles.catalog).toHaveBeenLastCalledWith([workspace], false);
+    const request = vi.spyOn(api, "remoteRequest").mockResolvedValue({
+      workspaces: [workspace],
+      sessions: [{ ...session, title: "Updated remotely" }],
+    });
+    const revision = result.current.historyRevision;
+    await act(async () => window.dispatchEvent(new Event(SESSION_REFRESH_EVENT)));
+    expect(request).toHaveBeenCalledExactlyOnceWith({ operation: "catalog", id: "host" });
+    expect(doubles.catalog.mock.results[0].value.refresh).not.toHaveBeenCalled();
+    expect(result.current.selected?.title).toBe("Updated remotely");
+    expect(result.current.historyRevision).toBe(revision + 1);
     act(() => useSessionViewStore.getState().setHost("local"));
     expect(result.current.selected).toBeUndefined();
     act(() =>

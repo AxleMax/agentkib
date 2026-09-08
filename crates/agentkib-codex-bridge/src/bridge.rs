@@ -181,6 +181,18 @@ impl Bridge {
         revision: Option<u64>,
         dispatch: impl FnOnce(),
     ) -> Result<()> {
+        self.send_text_at_revision_with_authorization(text, revision, || Ok(()), dispatch)
+    }
+
+    /// Rechecks host authorization after owner refresh, immediately before writing.
+    /// A rejected authorization does not invoke `dispatch` or send request bytes.
+    pub fn send_text_at_revision_with_authorization(
+        &mut self,
+        text: &str,
+        revision: Option<u64>,
+        authorize: impl FnOnce() -> Result<()>,
+        dispatch: impl FnOnce(),
+    ) -> Result<()> {
         crate::validate_send_text(text)?;
         self.ready()?;
         let _operation = OperationGuard::acquire(
@@ -201,8 +213,8 @@ impl Bridge {
             "session is not idle; sending is disabled"
         );
         let id = state.conversation.clone();
-        self.mutate_with_dispatch("thread-follower-start-turn", json!({"conversationId":id,
-            "turnStart":{"request":{"threadId":id,"input":[{"type":"text","text":text,"text_elements":[]}]}}}), dispatch).map(|_| ())
+        self.mutate_with_authorization("thread-follower-start-turn", json!({"conversationId":id,
+            "turnStart":{"request":{"threadId":id,"input":[{"type":"text","text":text,"text_elements":[]}]}}}), authorize, dispatch).map(|_| ())
     }
 
     /// Interrupts the selected turn only. Even a matching owner receipt does not
@@ -263,6 +275,26 @@ impl Bridge {
         expected_turn_id: &str,
         decision: Decision,
         revision: Option<u64>,
+        dispatch: impl FnOnce(),
+    ) -> Result<()> {
+        self.approve_at_revision_with_authorization(
+            request_id,
+            expected_turn_id,
+            decision,
+            revision,
+            || Ok(()),
+            dispatch,
+        )
+    }
+
+    /// Rechecks host authorization after the final approval/owner checks.
+    pub fn approve_at_revision_with_authorization(
+        &mut self,
+        request_id: &Value,
+        expected_turn_id: &str,
+        decision: Decision,
+        revision: Option<u64>,
+        authorize: impl FnOnce() -> Result<()>,
         dispatch: impl FnOnce(),
     ) -> Result<()> {
         self.ready()?;
@@ -326,9 +358,10 @@ impl Bridge {
             "item/fileChange/requestApproval" => "thread-follower-file-approval-decision",
             _ => anyhow::bail!("please handle this request in the original client"),
         };
-        self.mutate_with_dispatch(
+        self.mutate_with_authorization(
             method,
             json!({"conversationId":state.conversation,"requestId":request_id,"decision":decision}),
+            authorize,
             dispatch,
         )
         .map(|_| ())
@@ -361,6 +394,16 @@ impl Bridge {
         params: Value,
         dispatch: impl FnOnce(),
     ) -> Result<Value> {
+        self.mutate_with_authorization(method, params, || Ok(()), dispatch)
+    }
+
+    fn mutate_with_authorization(
+        &mut self,
+        method: &str,
+        params: Value,
+        authorize: impl FnOnce() -> Result<()>,
+        dispatch: impl FnOnce(),
+    ) -> Result<Value> {
         let state = self.selected.as_mut().context("no selected session")?;
         let owner = state.owner.clone();
         // Invalidating first prevents a second submission even if the acknowledgement is lost.
@@ -381,8 +424,10 @@ impl Bridge {
                 }
             },
             || {
+                authorize()?;
                 dispatched = true;
                 dispatch();
+                Ok(())
             },
         );
         if !dispatched {

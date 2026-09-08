@@ -28,6 +28,9 @@ integration must dispatch it on a dedicated worker, not the main RPC loop.
 Requests are length-prefixed JSON, at most 16 KiB. Responses are at most 4 MiB;
 oversized responses return `limit`. Events accept up to 100 items and 1,024-byte
 cursors. Connections have ten-second timeouts and inbound concurrency is 16.
+Blocking source reads have a separate 16-task limit. Their permits remain held
+until the work returns, even when timeout or revocation has closed the connection;
+additional reads fail with `limit` instead of accumulating detached work.
 Heartbeats are bounded-parallel with one in flight per host and retry backoff.
 
 The data directory's `remote/identity.json` and `remote/devices.json` are atomic,
