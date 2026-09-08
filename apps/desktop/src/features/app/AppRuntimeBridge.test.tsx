@@ -138,23 +138,60 @@ describe("AppRuntimeBridge", () => {
     expect(window.localStorage.getItem("agentkib.project")).toBe("/missing/legacy-workspace");
   });
 
-  it("shows an in-window retry action after a terminal Runtime failure", async () => {
-    let statusListener: ((status: DesktopRuntimeStatus) => void) | undefined;
-    const retry = vi.fn().mockResolvedValue(undefined);
-    const desktop = window.agentkibDesktop!;
-    desktop.events.onRuntimeStatus = vi.fn((listener) => {
-      statusListener = listener;
-      return () => undefined;
-    });
-    desktop.runtime.status = vi.fn().mockResolvedValue({
-      state: "failed",
-      restartCount: 3,
-      error: "fixture startup failure",
-    });
-    desktop.runtime.retry = retry;
+  it.each([undefined, "new workspace error"])(
+    "clears only its own startup error after Runtime recovery (new message: %s)",
+    async (newMessage) => {
+      let statusListener: ((status: DesktopRuntimeStatus) => void) | undefined;
+      const retry = vi.fn().mockResolvedValue(undefined);
+      const desktop = window.agentkibDesktop!;
+      desktop.events.onRuntimeStatus = vi.fn((listener) => {
+        statusListener = listener;
+        return () => undefined;
+      });
+      desktop.runtime.status = vi.fn().mockResolvedValue({
+        state: "failed",
+        restartCount: 3,
+        error: "fixture startup failure",
+      });
+      desktop.runtime.retry = retry;
+      runtimeInfo.mockRejectedValue(new Error("fixture startup failure"));
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <AppDialogProvider>
+            <AppRuntimeBridge />
+          </AppDialogProvider>
+        </QueryClientProvider>,
+      );
+
+      expect((await screen.findByRole("alert")).textContent).toContain("本地 Runtime 启动失败");
+      await waitFor(() =>
+        expect(useWorkspaceStore.getState().message).toContain("fixture startup failure"),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "重试" }));
+      await waitFor(() => expect(retry).toHaveBeenCalledOnce());
+
+      runtimeInfo.mockResolvedValue({
+        effective_theme: "light",
+        effective_locale: "zh-CN",
+        accent_theme_preference: "vtron",
+      });
+      if (newMessage) useWorkspaceStore.getState().setMessage(newMessage);
+      await act(async () => statusListener?.({ state: "ready", restartCount: 0 }));
+      await waitFor(() => expect(runtimeInfo).toHaveBeenCalledTimes(2));
+      expect(useAppStore.getState().runtime).toMatchObject({ effective_locale: "zh-CN" });
+      expect(useWorkspaceStore.getState().message).toBe(newMessage ?? "");
+      expect(screen.queryByRole("alert")).toBeNull();
+    },
+  );
+
+  it("clears the old startup error when focus successfully synchronizes Runtime", async () => {
+    window.agentkibDesktop!.runtime.status = vi
+      .fn()
+      .mockResolvedValue({ state: "ready", restartCount: 0 });
     runtimeInfo.mockRejectedValue(new Error("fixture startup failure"));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
     render(
       <QueryClientProvider client={queryClient}>
         <AppDialogProvider>
@@ -162,19 +199,20 @@ describe("AppRuntimeBridge", () => {
         </AppDialogProvider>
       </QueryClientProvider>,
     );
-
-    expect((await screen.findByRole("alert")).textContent).toContain("本地 Runtime 启动失败");
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
-    await waitFor(() => expect(retry).toHaveBeenCalledOnce());
-
+    await waitFor(() =>
+      expect(useWorkspaceStore.getState().message).toContain("fixture startup failure"),
+    );
+    // A failed refresh must keep the diagnostic until the Runtime actually recovers.
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(runtimeInfo).toHaveBeenCalledTimes(2));
+    expect(useWorkspaceStore.getState().message).toContain("fixture startup failure");
     runtimeInfo.mockResolvedValue({
       effective_theme: "light",
       effective_locale: "zh-CN",
       accent_theme_preference: "vtron",
     });
-    statusListener?.({ state: "ready", restartCount: 0 });
-    await waitFor(() => expect(runtimeInfo).toHaveBeenCalledTimes(2));
-    expect(useAppStore.getState().runtime).toMatchObject({ effective_locale: "zh-CN" });
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(useWorkspaceStore.getState().message).toBe(""));
   });
 
   it("migrates a legacy cached accent when Runtime has no preference", async () => {

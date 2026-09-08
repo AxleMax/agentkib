@@ -192,6 +192,10 @@ export class DesktopRuntimeHost extends EventEmitter {
     });
     this.#child = child;
 
+    // Writable write callbacks do not consume the stream's subsequent error event.
+    // Keep this listener on the old stream too: a late EPIPE after exit is expected.
+    child.stdin.on("error", (error: Error) => this.#handleProcessFailure(child, error));
+
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => process.stderr.write(`[agentkib-runtime] ${chunk}`));
 
@@ -225,16 +229,25 @@ export class DesktopRuntimeHost extends EventEmitter {
       this.emit("ready", handshake);
     } catch (error) {
       const runtimeError = toError(error);
-      if (this.#child === child) {
-        this.#child = undefined;
-        this.#lines?.close();
-        this.#lines = undefined;
-        this.#rejectPending(runtimeError);
-        if (child.exitCode === null) child.kill();
-        this.#scheduleRestart(runtimeError);
-      }
+      this.#handleProcessFailure(child, runtimeError);
       throw runtimeError;
     }
+  }
+
+  #handleProcessFailure(child: ChildProcessWithoutNullStreams, error: Error): void {
+    if (this.#child !== child) return;
+    const wasReady = this.#state === "ready";
+    this.#child = undefined;
+    this.#lines?.close();
+    this.#lines = undefined;
+    this.#handshake = undefined;
+    if (wasReady) this.#readiness = deferred<RuntimeHandshakeResult>();
+    this.#rejectPending(error);
+    // Consumers must invalidate runtime-backed services immediately, even when
+    // the OS process has not delivered its exit event yet.
+    this.emit("exit", { code: child.exitCode, signal: null, expected: this.#state === "stopping" });
+    if (child.exitCode === null) child.kill();
+    this.#scheduleRestart(error);
   }
 
   #requestNow<TResult>(method: string, params: unknown): Promise<TResult> {
@@ -249,11 +262,19 @@ export class DesktopRuntimeHost extends EventEmitter {
         resolve: resolve as (value: unknown) => void,
         reject,
       });
-      child.stdin.write(`${payload}\n`, (error) => {
-        if (!error) return;
+      try {
+        child.stdin.write(`${payload}\n`, (error) => {
+          if (!error) return;
+          this.#pending.delete(id);
+          reject(error);
+          this.#handleProcessFailure(child, error);
+        });
+      } catch (error) {
         this.#pending.delete(id);
-        reject(error);
-      });
+        const runtimeError = toError(error);
+        reject(runtimeError);
+        this.#handleProcessFailure(child, runtimeError);
+      }
     });
   }
 

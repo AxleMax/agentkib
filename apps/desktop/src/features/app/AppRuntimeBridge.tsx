@@ -1,5 +1,5 @@
 import { useI18n } from "@/core/useI18n";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,13 @@ export function AppRuntimeBridge() {
   const previousRuntimeState = useRef<DesktopRuntimeStatus["state"] | undefined>(undefined);
   const [runtimeStatus, setRuntimeStatus] = useState<DesktopRuntimeStatus>();
   const [retrying, setRetrying] = useState(false);
+  const runtimeErrorMessage = useRef<string | undefined>(undefined);
+  const clearRuntimeError = useCallback(() => {
+    const previous = runtimeErrorMessage.current;
+    runtimeErrorMessage.current = undefined;
+    // A recovered Runtime must not dismiss a newer workspace/action error.
+    if (previous !== undefined) setMessage((current) => (current === previous ? "" : current));
+  }, [setMessage]);
 
   useQuotaQueryEvents();
   useHomeQueryEvents();
@@ -44,10 +51,17 @@ export function AppRuntimeBridge() {
     let disposed = false;
     let initialSyncPending = true;
     const desktop = desktopApi();
+    const reportRuntimeError = (error: unknown) => {
+      if (disposed) return;
+      const message = localizeMessage(error);
+      runtimeErrorMessage.current = message;
+      setMessage(message);
+    };
     const synchronizeRuntime = async () => {
       const widthRevision = useSidebarWidthStore.getState().revision;
       let nextRuntime = await api.runtime();
       if (disposed) return;
+      clearRuntimeError();
       if (nextRuntime.accent_theme_preference == null) {
         try {
           nextRuntime = await api.setAccentThemePreference(accentThemePreference());
@@ -81,9 +95,7 @@ export function AppRuntimeBridge() {
       if (status.state === "ready" && previous && previous !== "ready" && !initialSyncPending) {
         void synchronizeRuntime()
           .then(() => queryClient.invalidateQueries())
-          .catch((error: unknown) => {
-            if (!disposed) setMessage(localizeMessage(error));
-          });
+          .catch(reportRuntimeError);
       }
     };
     const unsubscribers = [
@@ -106,7 +118,7 @@ export function AppRuntimeBridge() {
         }
         await synchronizeRuntime();
       } catch (error) {
-        if (!disposed) setMessage(localizeMessage(error));
+        reportRuntimeError(error);
       } finally {
         initialSyncPending = false;
       }
@@ -115,7 +127,14 @@ export function AppRuntimeBridge() {
       disposed = true;
       unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-  }, [queryClient, setMenuCommand, setMessage, setNavigationRequest, setRuntime]);
+  }, [
+    clearRuntimeError,
+    queryClient,
+    setMenuCommand,
+    setMessage,
+    setNavigationRequest,
+    setRuntime,
+  ]);
 
   useEffect(() => {
     const refreshRuntime = () => {
@@ -123,6 +142,7 @@ export function AppRuntimeBridge() {
       void api
         .runtime()
         .then(async (runtime) => {
+          clearRuntimeError();
           let nextRuntime =
             runtime.accent_theme_preference == null
               ? await api.setAccentThemePreference(accentThemePreference())
@@ -141,7 +161,7 @@ export function AppRuntimeBridge() {
     };
     window.addEventListener("focus", refreshRuntime);
     return () => window.removeEventListener("focus", refreshRuntime);
-  }, [setRuntime]);
+  }, [clearRuntimeError, setRuntime]);
 
   const hasUnsavedDraft = Boolean(
     workspaceStore.manifest &&
@@ -199,7 +219,11 @@ export function AppRuntimeBridge() {
           setRetrying(true);
           void desktopApi()
             .runtime.retry()
-            .catch((error: unknown) => setMessage(localizeMessage(error)))
+            .catch((error: unknown) => {
+              const message = localizeMessage(error);
+              runtimeErrorMessage.current = message;
+              setMessage(message);
+            })
             .finally(() => setRetrying(false));
         }}
       >
