@@ -1572,13 +1572,18 @@ mod tests {
         });
     }
     fn interrupted_stream(action: &str) {
+        interrupted_stream_after(action, Duration::ZERO);
+    }
+    fn interrupted_stream_after(action: &str, change_delay: Duration) {
         let p = Pair::new();
         p.approve();
         p.source.large.store(true, Ordering::SeqCst);
         let reading = AtomicBool::new(false);
+        let changed = AtomicBool::new(false);
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 wait(|| reading.load(Ordering::SeqCst));
+                std::thread::sleep(change_delay);
                 if action == "revoke" {
                     p.host
                         .request(json!({"operation":"revoke","id":p.client.inner.identity.id}))
@@ -1588,6 +1593,7 @@ mod tests {
                 } else {
                     p.source.epoch.fetch_add(2, Ordering::SeqCst);
                 }
+                changed.store(true, Ordering::SeqCst);
             });
             p.client.runtime.block_on(async {
                 let socket = tokio::net::TcpSocket::new_v4().unwrap();
@@ -1610,14 +1616,25 @@ mod tests {
                 let size = stream.read_u32().await.unwrap();
                 assert!(size > 3 * 1024 * 1024);
                 reading.store(true, Ordering::SeqCst);
+                // Revocation persists the grant change before cancelling the stream.
+                // Measure cancellation only after that operation has completed; a
+                // fixed sleep races filesystem latency on loaded CI runners.
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while !changed.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .expect("authorization change must complete");
+                // Keep the reader blocked for two availability polling intervals.
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 let mut buffer = vec![0; size as usize];
                 let result =
                     tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut buffer))
                         .await;
                 assert!(
-                    result.is_ok_and(|v| v.is_err()),
-                    "authorization changes must close the partial response immediately"
+                    matches!(&result, Ok(Err(_))),
+                    "authorization changes must close the partial response immediately: {result:?}"
                 );
             });
         });
@@ -1625,6 +1642,10 @@ mod tests {
     #[test]
     fn revocation_interrupts_a_slow_reading_connection_mid_response() {
         interrupted_stream("revoke");
+    }
+    #[test]
+    fn slow_revocation_completion_does_not_consume_the_stream_close_deadline() {
+        interrupted_stream_after("revoke", Duration::from_millis(2300));
     }
     #[test]
     fn tls_opened_before_approval_rebinds_the_new_grant_for_stream_revocation() {
@@ -1645,6 +1666,7 @@ mod tests {
             .clone();
         let approved = AtomicBool::new(false);
         let reading = AtomicBool::new(false);
+        let revoked = AtomicBool::new(false);
         let (socket, ready) = p.client.runtime.block_on(async {
             let socket = tokio::net::TcpSocket::new_v4().unwrap();
             socket.set_recv_buffer_size(1024).unwrap();
@@ -1678,6 +1700,7 @@ mod tests {
                 p.host
                     .request(json!({"operation":"revoke","id":p.client.inner.identity.id}))
                     .unwrap();
+                revoked.store(true, Ordering::SeqCst);
             });
             p.client.runtime.block_on(async {
                 let tcp = socket.connect(p.address.parse().unwrap()).await.unwrap();
@@ -1701,6 +1724,13 @@ mod tests {
                 let size = stream.read_u32().await.unwrap();
                 assert!(size > 3 * 1024 * 1024);
                 reading.store(true, Ordering::SeqCst);
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while !revoked.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .expect("revocation must complete");
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 let mut buffer = vec![0; size as usize];
                 assert!(
