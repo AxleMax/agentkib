@@ -64,6 +64,29 @@ pub enum ConversationEventKind {
     ToolSummary,
 }
 
+/// Optional phase metadata emitted for assistant messages by some Codex models.
+///
+/// A missing or unknown phase remains `None`; callers must retain the legacy
+/// behaviour for providers and records that do not expose this classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessagePhase {
+    Commentary,
+    FinalAnswer,
+}
+
+fn deserialize_message_phase<'de, D>(deserializer: D) -> Result<Option<MessagePhase>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(match value.as_ref().and_then(Value::as_str) {
+        Some("commentary") => Some(MessagePhase::Commentary),
+        Some("final_answer") => Some(MessagePhase::FinalAnswer),
+        _ => None,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeSessionSummary {
     #[serde(skip)]
@@ -122,6 +145,14 @@ pub struct ConversationIndexStatus {
 pub struct ConversationEvent {
     pub id: String,
     pub kind: ConversationEventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_message_phase",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub message_phase: Option<MessagePhase>,
     pub timestamp: Option<DateTime<Utc>>,
     pub content: Option<String>,
     pub tool_name: Option<String>,
@@ -888,6 +919,10 @@ fn key_words(key: &str) -> Vec<String> {
 pub trait ConversationProvider {
     fn agent(&self) -> AgentKind;
     fn list_sessions(&self, workspace: &Path) -> Result<Vec<NativeSessionSummary>>;
+    /// Resolve through provider metadata, never interpret an opaque reference as a file path.
+    fn verified_control_id(&self, _native_ref: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
     fn read_events(
         &self,
         native_ref: &str,
@@ -1122,6 +1157,15 @@ impl ConversationProvider for CodexProvider {
         AgentKind::Codex
     }
 
+    fn verified_control_id(&self, native_ref: &str) -> Result<Option<String>> {
+        let session = self
+            .native_sessions(None)?
+            .into_iter()
+            .find(|session| session.native_ref == native_ref)
+            .context("Codex session is no longer available")?;
+        verified_codex_control_id(&session.transcript, native_ref).map(Some)
+    }
+
     fn list_sessions(&self, workspace: &Path) -> Result<Vec<NativeSessionSummary>> {
         Ok(self
             .native_sessions(Some(workspace))?
@@ -1185,6 +1229,25 @@ impl ConversationProvider for CodexProvider {
             .context("Codex session is no longer available")?;
         read_codex_document(source, &session.transcript, home)
     }
+}
+
+fn verified_codex_control_id(path: &Path, native_ref: &str) -> Result<String> {
+    let mut line = String::new();
+    BufReader::new(File::open(path)?.take(64 * 1024)).read_line(&mut line)?;
+    let value: Value = serde_json::from_str(&line)?;
+    anyhow::ensure!(
+        value["type"] == "session_meta",
+        "unverified-session-identity"
+    );
+    let id = value["payload"]["id"]
+        .as_str()
+        .context("missing-native-id")?;
+    let id = uuid::Uuid::parse_str(id)?;
+    anyhow::ensure!(
+        id == uuid::Uuid::parse_str(native_ref)?,
+        "session-identity-mismatch"
+    );
+    Ok(id.to_string())
 }
 
 struct CodexNativeSession {
@@ -2273,6 +2336,8 @@ fn message_event(
         event: ConversationEvent {
             id: format!("event-{line}"),
             kind,
+            turn_id: None,
+            message_phase: None,
             timestamp,
             content: Some(content),
             tool_name: None,
@@ -2305,6 +2370,8 @@ fn upsert_tool(
         event: ConversationEvent {
             id: event_id,
             kind: ConversationEventKind::ToolSummary,
+            turn_id: None,
+            message_phase: None,
             timestamp,
             content: None,
             tool_name: Some(sanitize_tool_name(name)),
@@ -2638,6 +2705,46 @@ mod tests {
             "payload": payload,
         })
         .to_string()
+    }
+
+    #[test]
+    fn codex_control_identity_resolves_opaque_reference_and_checks_transcript() {
+        let dir = tempdir().unwrap();
+        let id = "01a07b7a-68a8-7113-832f-36d1ddd5594f";
+        let transcript = dir.path().join("session.jsonl");
+        write_codex_database(
+            &dir.path().join("state_1.sqlite"),
+            &[(id, &transcript, dir.path(), "Test", false)],
+        );
+        let provider = CodexProvider::with_home(dir.path().to_path_buf());
+        fs::write(&transcript, codex_meta_line(id, Value::Null, Value::Null)).unwrap();
+        assert_eq!(
+            provider.verified_control_id(id).unwrap().as_deref(),
+            Some(id)
+        );
+        assert!(provider.verified_control_id("missing").is_err());
+        fs::write(
+            &transcript,
+            codex_meta_line(
+                "00000000-0000-0000-0000-000000000001",
+                Value::Null,
+                Value::Null,
+            ),
+        )
+        .unwrap();
+        assert!(provider.verified_control_id(id).is_err());
+        fs::write(
+            &transcript,
+            format!(
+                "{}{}",
+                " ".repeat(64 * 1024),
+                codex_meta_line(id, Value::Null, Value::Null)
+            ),
+        )
+        .unwrap();
+        assert!(provider.verified_control_id(id).is_err());
+        fs::write(&transcript, "{\"type\":\"message\"}").unwrap();
+        assert!(provider.verified_control_id(id).is_err());
     }
 
     #[test]
@@ -3497,6 +3604,8 @@ mod tests {
         ConversationEvent {
             id: "event".into(),
             kind,
+            turn_id: None,
+            message_phase: None,
             timestamp: None,
             content: Some(content.into()),
             tool_name: None,
@@ -3618,6 +3727,8 @@ mod tests {
             compact_summary: Some("Continue from /Users/example/project".into()),
             messages: vec![ConversationEvent {
                 attachment_count: 1,
+                turn_id: None,
+                message_phase: None,
                 ..handoff_message(
                     ConversationEventKind::UserMessage,
                     "Authorization: Bearer private\nAuthorization=Bearer opaque-value\nAPI_KEY=private\nToken budget: 8000\nuse sk-secret-value",

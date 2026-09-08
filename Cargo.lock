@@ -243,6 +243,7 @@ name = "agentkib-runtime"
 version = "0.8.0"
 dependencies = [
  "agentkib-adapters",
+ "agentkib-codex-bridge",
  "agentkib-conversations",
  "agentkib-core",
  "agentkib-discovery",

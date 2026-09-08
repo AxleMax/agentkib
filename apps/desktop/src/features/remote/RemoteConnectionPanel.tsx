@@ -29,6 +29,7 @@ import {
 import { useI18n } from "@/core/useI18n";
 import { useRemoteStore } from "./remote-store";
 import { RemoteErrorDetails } from "./RemoteErrorDetails";
+import { WebAccessSettings } from "./WebAccessSettings";
 
 function useRemoteStatus() {
   const store = useRemoteStore();
@@ -305,6 +306,7 @@ export function RemoteConnectionSettings() {
     snapshot.pairing_expires_at * 1000 > now;
   return (
     <SettingsPage variant="management">
+      <WebAccessSettings />
       <RemoteFeedback />
       <SettingsSection title={tr("remote.access")} target="remote-access">
         <SettingsNotice>{tr("remote.readonly")}</SettingsNotice>

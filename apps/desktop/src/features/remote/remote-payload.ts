@@ -57,6 +57,19 @@ const events = z.object({
         kind: z.enum(["user-message", "agent-message", "tool-summary"]),
         timestamp: optionalText,
         content: optionalText,
+        turn_id: z
+          .string()
+          .trim()
+          .min(1)
+          .max(256)
+          .nullish()
+          .transform((value) => value ?? undefined),
+        message_phase: z
+          .unknown()
+          .optional()
+          .transform((value) =>
+            value === "commentary" || value === "final_answer" ? value : undefined,
+          ),
         tool_name: optionalText,
         tool_status: optionalText,
         duration_ms: z.number().nonnegative().nullish(),

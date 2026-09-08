@@ -11,6 +11,33 @@ const session = {
   availability: "readable",
 };
 describe("remote payload validation", () => {
+  it("preserves whitelisted turn metadata and degrades old or unknown phases", () => {
+    const event = {
+      id: "e",
+      kind: "agent-message",
+      content: "unchanged",
+      attachment_count: 0,
+      truncated: false,
+    };
+    for (const phase of ["commentary", "final_answer", "future-phase", undefined, null, {}]) {
+      const parsed = parseRemoteEvents({
+        events: [
+          { ...event, turn_id: "turn", message_phase: phase, remote: { host_id: "forged" } },
+        ],
+        warnings: [],
+      }).events[0];
+      expect(parsed.turn_id).toBe("turn");
+      expect(parsed.message_phase).toBe(
+        phase === "commentary" || phase === "final_answer" ? phase : undefined,
+      );
+      expect(parsed.content).toBe("unchanged");
+      expect(parsed).not.toHaveProperty("remote");
+    }
+    expect(parseRemoteEvents({ events: [event], warnings: [] }).events[0].turn_id).toBeUndefined();
+    expect(() =>
+      parseRemoteEvents({ events: [{ ...event, turn_id: "t".repeat(257) }], warnings: [] }),
+    ).toThrow("REMOTE_INVALID_RESPONSE");
+  });
   it("accepts OpenCode and removes self-referential source relationships", () => {
     const result = parseRemoteCatalog({
       workspaces: [workspace],

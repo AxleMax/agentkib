@@ -1,0 +1,238 @@
+import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { desktopApi } from "@/core/desktop";
+import { useI18n } from "@/core/useI18n";
+import {
+  SettingsSection,
+  SettingsRow,
+  SettingsCopy,
+  SettingsNotice,
+} from "@/features/settings/components/SettingsLayout";
+import type {
+  WebAdminRequest,
+  WebAdminStatus,
+  WebConfig,
+} from "../../../electron/main/web/service";
+import { webSettingsCopy } from "./web-settings-copy";
+
+export function WebAccessSettings() {
+  const { locale, formatDateTime } = useI18n();
+  const c = webSettingsCopy[locale];
+  const [status, setStatus] = useState<WebAdminStatus>();
+  const [config, setConfig] = useState<WebConfig>();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [grants, setGrants] = useState<Record<string, { send: boolean; approve: boolean }>>({});
+  const mounted = useRef(false);
+  const revision = useRef(0);
+  useEffect(() => {
+    mounted.current = true;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight) return;
+      const generation = revision.current;
+      inFlight = true;
+      try {
+        const next = await desktopApi().web.request({ operation: "status" });
+        if (mounted.current && generation === revision.current) {
+          setStatus(next);
+          setConfig((old) => old ?? next.config);
+        }
+      } catch {
+        if (mounted.current) setError(c.unavailable);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2000);
+    return () => {
+      mounted.current = false;
+      window.clearInterval(timer);
+    };
+  }, [c.unavailable]);
+  async function run(input: WebAdminRequest) {
+    revision.current += 1;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await desktopApi().web.request(input);
+      if (mounted.current) {
+        setStatus(next);
+        if (input.operation === "configure") setConfig(next.config);
+      }
+    } catch {
+      if (mounted.current) setError(c.unavailable);
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }
+  return (
+    <SettingsSection title={c.title}>
+      <SettingsNotice>{c.scope}</SettingsNotice>
+      {status?.acceptanceSessionId && (
+        <SettingsNotice>
+          {c.acceptance} <code>{status.acceptanceSessionId}</code>
+        </SettingsNotice>
+      )}
+      {error && <p role="alert">{error}</p>}
+      {status?.error && (
+        <p role="alert">{status.error === "port_in_use" ? c.portError : c.unavailable}</p>
+      )}
+      {!config ? (
+        <p>{c.loading}</p>
+      ) : (
+        <>
+          <SettingsRow>
+            <SettingsCopy>
+              <strong>{c.enabled}</strong>
+              <small>{status?.running ? `${c.running} · ${status.localUrl}` : c.stopped}</small>
+            </SettingsCopy>
+            <Switch
+              aria-label={c.enabled}
+              checked={config.enabled}
+              disabled={busy}
+              onCheckedChange={(enabled) => setConfig({ ...config, enabled })}
+            />
+          </SettingsRow>
+          <SettingsRow>
+            <label htmlFor="web-port">{c.port}</label>
+            <Input
+              id="web-port"
+              type="number"
+              min={1024}
+              max={65535}
+              value={config.port}
+              disabled={busy}
+              onChange={(e) => setConfig({ ...config, port: Number(e.target.value) })}
+            />
+          </SettingsRow>
+          <SettingsRow>
+            <label htmlFor="web-origin">{c.origin}</label>
+            <Input
+              id="web-origin"
+              type="url"
+              placeholder="https://agent.example.com"
+              value={config.externalOrigin}
+              disabled={busy}
+              onChange={(e) => setConfig({ ...config, externalOrigin: e.target.value })}
+            />
+          </SettingsRow>
+          <SettingsRow>
+            <SettingsCopy>
+              <strong>{c.experimental}</strong>
+              <small>{status?.experimentalAvailable ? c.warning : c.unverified}</small>
+            </SettingsCopy>
+            <Switch
+              aria-label={c.experimental}
+              checked={config.experimentalEnabled}
+              disabled={busy || !status?.experimentalAvailable}
+              onCheckedChange={(experimentalEnabled) =>
+                setConfig({ ...config, experimentalEnabled })
+              }
+            />
+          </SettingsRow>
+          <div className="flex flex-wrap justify-end gap-2 border-b px-5 py-3">
+            <Button
+              disabled={
+                busy || !Number.isInteger(config.port) || config.port < 1024 || config.port > 65535
+              }
+              onClick={() => void run({ operation: "configure", ...config })}
+            >
+              {c.save}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={busy || !status?.running}
+              onClick={() => void run({ operation: "generate-code" })}
+            >
+              {c.generate}
+            </Button>
+          </div>
+        </>
+      )}
+      {status?.code && status.code.expiresAt > Date.now() && (
+        <SettingsNotice>
+          <strong className="font-mono text-xl tracking-widest">{status.code.value}</strong>
+          <p>
+            {c.expires} {formatDateTime(new Date(status.code.expiresAt))}
+          </p>
+        </SettingsNotice>
+      )}
+      <h3 className="px-5 pt-4 text-sm font-medium">{c.pending}</h3>
+      {!status?.pending.length && (
+        <p className="px-5 py-3 text-sm text-muted-foreground">{c.empty}</p>
+      )}
+      {status?.pending.map((pending) => {
+        const grant = grants[pending.id] ?? { send: false, approve: false };
+        return (
+          <div key={pending.id} className="mx-5 my-3 space-y-3 rounded-lg border p-4 text-sm">
+            <strong>{pending.name}</strong>
+            <p>
+              {c.verify}: <span className="font-mono">{pending.verification}</span>
+            </p>
+            <p>
+              {c.read} · {c.scope}
+            </p>
+            {(["send", "approve"] as const).map((permission) => (
+              <label key={permission} className="mr-4 inline-flex items-center gap-2">
+                <Checkbox
+                  disabled={busy}
+                  checked={grant[permission]}
+                  onCheckedChange={(checked) =>
+                    setGrants((old) => ({
+                      ...old,
+                      [pending.id]: { ...grant, [permission]: checked },
+                    }))
+                  }
+                />
+                {c[permission]}
+              </label>
+            ))}
+            <div className="flex gap-2">
+              <Button
+                disabled={busy}
+                onClick={() => void run({ operation: "approve", id: pending.id, ...grant })}
+              >
+                {c.accept}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => void run({ operation: "reject", id: pending.id })}
+              >
+                {c.reject}
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      <h3 className="px-5 pt-4 text-sm font-medium">{c.devices}</h3>
+      {!status?.devices.length && (
+        <p className="px-5 py-3 text-sm text-muted-foreground">{c.empty}</p>
+      )}
+      {status?.devices.map((device) => (
+        <SettingsRow key={device.id}>
+          <SettingsCopy>
+            <strong>{device.name}</strong>
+            <small>
+              {[c.read, device.send && c.send, device.approve && c.approve]
+                .filter(Boolean)
+                .join(" · ")}
+            </small>
+          </SettingsCopy>
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => void run({ operation: "revoke", id: device.id })}
+          >
+            {c.revoke}
+          </Button>
+        </SettingsRow>
+      ))}
+    </SettingsSection>
+  );
+}

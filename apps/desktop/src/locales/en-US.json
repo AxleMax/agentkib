@@ -1,4 +1,11 @@
 {
+  "sessions.historyReadonly": "Read-only history",
+  "sessions.historyDetails": "Session details",
+  "sessions.process": "Execution process",
+  "sessions.toolCalls": "Tool calls: {{count}}",
+  "sessions.processFailed": "{{count}} failed",
+  "sessions.recordTime": "Record time",
+  "sessions.partialTurn": "Incomplete turn · available records shown",
   "remote.error.pairing": "The pairing code is invalid, expired, or already used. Generate a new code on the host and try again.",
   "remote.error.offline": "Cannot reach the host. Check its address, local network connection, and sharing settings.",
   "remote.error.disconnected": "The connection is closed. Reconnect to the host.",

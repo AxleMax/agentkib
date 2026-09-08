@@ -231,6 +231,9 @@ const desktopApi = Object.freeze({
   remote: Object.freeze({
     request: (request: unknown) => ipcRenderer.invoke("agentkib:remote:request", request),
   }),
+  web: Object.freeze({
+    request: (request: unknown) => ipcRenderer.invoke("agentkib:web:request", request),
+  }),
   settings: Object.freeze({
     setCloseBehavior: (value: unknown) =>
       ipcRenderer.invoke("agentkib:settings:set-close-behavior", value),

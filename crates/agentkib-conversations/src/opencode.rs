@@ -148,6 +148,8 @@ impl ConversationProvider for OpenCodeProvider {
                 events.push(ConversationEvent {
                     id: message.info.id,
                     kind,
+                    turn_id: None,
+                    message_phase: None,
                     timestamp,
                     content: (!content.trim().is_empty()).then_some(content),
                     tool_name: None,
@@ -182,6 +184,8 @@ impl ConversationProvider for OpenCodeProvider {
                 messages.push(ConversationEvent {
                     id: message.info.id,
                     kind,
+                    turn_id: None,
+                    message_phase: None,
                     timestamp,
                     content: (!content.trim().is_empty()).then_some(content),
                     tool_name: None,

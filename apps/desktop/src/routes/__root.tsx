@@ -35,17 +35,7 @@ import type { WorkspaceSummary } from "@/core/types";
 import { useAppDialogs } from "@/components/AppDialogProvider";
 import { SessionHubProvider } from "@/features/sessions/SessionHubContext";
 import { useSessionViewStore } from "@/features/sessions/session-view-store";
-
-function SessionWindowToolbar() {
-  const { tr } = useI18n();
-  return (
-    <div className="app-toolbar-content">
-      <div className="app-toolbar-breadcrumb" aria-label={tr("common.breadcrumb")}>
-        <span>{tr("sessions.nav")}</span>
-      </div>
-    </div>
-  );
-}
+import { SessionWindowToolbar } from "@/features/sessions/SessionWindowToolbar";
 
 function RootLayout() {
   const {

@@ -1,4 +1,11 @@
 {
+  "sessions.historyReadonly": "履歴・読み取り専用",
+  "sessions.historyDetails": "会話の詳細",
+  "sessions.process": "実行プロセス",
+  "sessions.toolCalls": "ツール呼び出し {{count}} 件",
+  "sessions.processFailed": "失敗 {{count}} 件",
+  "sessions.recordTime": "記録日時",
+  "sessions.partialTurn": "不完全なターン · 読み込み済みの記録を表示",
   "remote.error.pairing": "ペアリングコードが無効、期限切れ、または使用済みです。ホストで新しいコードを生成して再試行してください。",
   "remote.error.offline": "ホストに接続できません。アドレス、ローカルネットワーク接続、共有設定を確認してください。",
   "remote.error.disconnected": "接続が切断されました。ホストに再接続してください。",

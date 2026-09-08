@@ -984,6 +984,7 @@ export type SessionAvailability = "readable" | "metadata-only";
 export type SessionOrigin = "interactive" | "auxiliary" | "unknown";
 export type SessionIndexFreshness = "fresh" | "stale" | "unavailable";
 export type ConversationEventKind = "user-message" | "agent-message" | "tool-summary";
+export type MessagePhase = "commentary" | "final_answer";
 export interface ConversationSessionSummary {
   remote?: RemoteRecordSource;
   id: string;
@@ -1014,6 +1015,8 @@ export interface ConversationIndexStatus {
 export interface ConversationEvent {
   id: string;
   kind: ConversationEventKind;
+  turn_id?: string;
+  message_phase?: MessagePhase;
   timestamp?: string;
   content?: string;
   tool_name?: string;

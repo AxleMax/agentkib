@@ -12,6 +12,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 mod obsidian;
+mod web;
 
 use agentkib_conversations::{
     ContinuationCapabilities, ContinuationCapability, ContinuationCapabilityStatus, HandoffFormat,
@@ -122,6 +123,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut storage_scan: Option<StorageScan> = None;
     let mut agent_tool_workers = AgentToolWorkers::default();
     let remote_worker = RemoteWorker::new(events_tx.clone());
+    let web_worker = web::Worker::new(events_tx.clone());
 
     while let Ok(event) = events_rx.recv() {
         match event {
@@ -197,6 +199,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
 
+                if request.method == agentkib_protocol::WEB_REQUEST_METHOD {
+                    if let Some(response) = web_worker.submit(request) {
+                        write_response(&mut stdout, response)?;
+                    }
+                    continue;
+                }
                 if request.method == agentkib_protocol::REMOTE_REQUEST_METHOD {
                     if let Some(response) = remote_worker.submit(request) {
                         write_response(&mut stdout, response)?;
@@ -5051,6 +5059,10 @@ fn handle_handshake(request: RpcRequest) -> (RpcResponse, bool) {
             version: env!("CARGO_PKG_VERSION").to_owned(),
         },
         pid: std::process::id(),
+        capabilities: vec![
+            "web-v1".into(),
+            "experimental-codex-bridge-version-gated".into(),
+        ],
     };
 
     (

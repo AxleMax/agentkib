@@ -1,9 +1,7 @@
 import { useI18n } from "@/core/useI18n";
-import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
-  ArrowUpRight,
+  ChevronRight,
   CircleAlert,
   Clock,
   Database,
@@ -13,6 +11,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AgentIcon } from "@/features/agents/AgentIcon";
 import { RemoteErrorDetails } from "@/features/remote/RemoteErrorDetails";
 import { displaySessionTitle } from "@/features/workspace/session-title";
@@ -29,7 +28,7 @@ import {
   sessionSourceDetails,
 } from "./session-labels";
 import { useSessionHistory } from "./useSessionHistory";
-import { ConversationEventRow } from "./ConversationEventRow";
+import { ConversationTranscript } from "./ConversationTranscript";
 import { HistoryError, HistoryWarning } from "./HistoryFeedback";
 
 function Notice({ children, error = false }: { children: React.ReactNode; error?: boolean }) {
@@ -47,16 +46,71 @@ function Notice({ children, error = false }: { children: React.ReactNode; error?
 export function SessionHubPage() {
   const { localizeMessage, tr, formatDateTime } = useI18n();
   const hub = useSessionHub();
-  const navigate = useNavigate();
   const history = useSessionHistory(hub.selected, hub.enabled, hub.historyRevision);
   const resetFilters = useSessionViewStore((state) => state.resetFilters);
   const [enabling, setEnabling] = useState(false);
   const [enableError, setEnableError] = useState("");
   const enableLock = useRef(false);
   const historyRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  const sessionKey = JSON.stringify([
+    hub.selected?.remote?.host_id,
+    hub.selected?.workspace_id,
+    hub.selected?.id,
+  ]);
+  const scrollAnchor = useRef<{
+    key: string;
+    candidates: { id: string; top: number }[];
+    height: number;
+    scroll: number;
+  } | null>(null);
+  useLayoutEffect(() => {
+    scrollAnchor.current = null;
     if (historyRef.current) historyRef.current.scrollTop = 0;
-  }, [hub.selected?.id]);
+  }, [sessionKey]);
+  useLayoutEffect(() => {
+    const anchor = scrollAnchor.current;
+    const container = historyRef.current;
+    if (!anchor || !container || history.loadingEarlier) return;
+    scrollAnchor.current = null;
+    if (anchor.key !== sessionKey) return;
+    const elements = Array.from(container.querySelectorAll<HTMLElement>("[data-event-id]"));
+    // Completing a previously partial turn can hide the first anchor inside a
+    // process disclosure. Prefer the next surviving record (usually the final).
+    for (const candidate of anchor.candidates) {
+      const element = elements.find(
+        (item) =>
+          item.dataset.eventId === candidate.id &&
+          item.getClientRects().length > 0 &&
+          !item.closest("[hidden]"),
+      );
+      if (element) {
+        container.scrollTop += element.getBoundingClientRect().top - candidate.top;
+        return;
+      }
+    }
+    container.scrollTop = anchor.scroll + container.scrollHeight - anchor.height;
+  }, [history.events, history.loadingEarlier, sessionKey]);
+  const loadEarlier = () => {
+    const container = historyRef.current;
+    if (container) {
+      const top = container.getBoundingClientRect().top;
+      const candidates = Array.from(container.querySelectorAll<HTMLElement>("[data-event-id]"))
+        .filter(
+          (item) =>
+            item.getClientRects().length > 0 &&
+            !item.closest("[hidden]") &&
+            item.getBoundingClientRect().bottom > top,
+        )
+        .map((item) => ({ id: item.dataset.eventId!, top: item.getBoundingClientRect().top }));
+      scrollAnchor.current = {
+        key: sessionKey,
+        candidates,
+        height: container.scrollHeight,
+        scroll: container.scrollTop,
+      };
+    }
+    void history.loadEarlier();
+  };
 
   const enable = async () => {
     if (enableLock.current) return;
@@ -123,55 +177,15 @@ export function SessionHubPage() {
 
   return (
     <div className="session-hub-page">
-      {selected && (
-        <header className="session-hub-header">
-          <div className="session-hub-heading">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={tr("sessions.backOverview")}
-              onClick={() => hub.select()}
-            >
-              <ArrowLeft size={18} />
-            </Button>
-            <AgentIcon agent={selected.agent} />
-            <div>
-              <h1>{displaySessionTitle(selected.title, tr)}</h1>
-              <p>
-                {`${selected.remote?.host_name ?? tr("sessions.local")} · ${workspace?.name ?? ""} · ${sessionAgentNames[selected.agent]}`}
-              </p>
-            </div>
-          </div>
-          <div className="session-header-actions">
-            {workspace && !selected.remote && selected.availability === "readable" && (
-              <Button
-                variant="outline"
-                onClick={() =>
-                  void navigate({
-                    to: "/workspace/$workspaceId/sessions",
-                    params: { workspaceId: workspace.id },
-                    search: { sessionId: selected.id },
-                  })
-                }
-              >
-                <ArrowUpRight size={16} />
-                {tr("sessions.continueWorkspace")}
-              </Button>
-            )}
-            <Button variant="outline" disabled={hub.refreshing} onClick={() => void hub.refresh()}>
-              <RefreshCw size={16} className={hub.refreshing ? "animate-spin" : ""} />
-              {tr("sessions.refresh")}
-            </Button>
-          </div>
-        </header>
-      )}
       <div className="session-hub-body" ref={historyRef}>
         {hub.remoteHosts?.map(
           (host) =>
             (host.status !== "online" || hub.remoteErrors?.[host.id]) && (
               <Notice key={host.id} error={!!hub.remoteErrors?.[host.id]}>
                 {host.name} · {tr(`remote.state.${host.status}`)}
-                {hub.remoteErrors?.[host.id] && <RemoteErrorDetails error={hub.remoteErrors[host.id]} />}
+                {hub.remoteErrors?.[host.id] && (
+                  <RemoteErrorDetails error={hub.remoteErrors[host.id]} />
+                )}
               </Notice>
             ),
         )}
@@ -190,57 +204,73 @@ export function SessionHubPage() {
         )}
         {selected ? (
           <>
-            <div className="session-history-meta">
+            <div className="session-reading-context">
               <span>
-                <FileText size={15} />
-                {sessionRecordLabel(selected, tr)}
+                {selected.remote?.host_name ?? tr("sessions.local")} · {workspace?.name} ·{" "}
+                {sessionAgentNames[selected.agent]}
               </span>
-              {selected?.origin === "auxiliary" && !selectedSources.length && (
-                <span>{tr("conversations.auxiliary")}</span>
-              )}
-              {selectedSources.map((source) =>
-                source.session ? (
-                  <Button
-                    key={`${source.kind}:${source.id}`}
-                    variant="link"
-                    size="sm"
-                    className="h-auto gap-1 p-0 text-xs"
-                    title={source.label}
-                    aria-label={source.label}
-                    onClick={() => {
-                      useSessionViewStore.getState().revealSession(source.session!);
-                      hub.select(source.session!.id);
-                    }}
-                  >
-                    {source.kind === "forked" && <GitBranch size={13} />}
-                    {source.label}
-                  </Button>
-                ) : (
-                  <span key={`${source.kind}:${source.id}`} title={source.label}>
-                    {source.label}
-                  </span>
-                ),
-              )}
-              <span>
-                <Clock size={15} />
-                {selected.updated_at
-                  ? formatDateTime(selected.updated_at)
-                  : tr("conversations.unknownTime")}
-              </span>
-              {selected.git_branch && <span>{selected.git_branch}</span>}
+              <span>{tr("sessions.historyReadonly")}</span>
             </div>
-            <Notice>
-              {tr(selected.remote ? "remote.sessionsReadonly" : "sessions.historyOnly")}
-              {selected.availability === "readable" && (
-                <p>{tr("history.latestWindow", { count: DEFAULT_SESSION_PAGE_SIZE })}</p>
-              )}
-              {selected.remote && (
-                <p>
-                  {tr(selected.remote.online ? "remote.state.online" : "remote.state.offline")} ·{" "}
-                  {tr("remote.catalogSynced")} {formatDateTime(selected.remote.last_synced_at)}
-                </p>
-              )}
-            </Notice>
+            <Collapsible className="session-history-details" key={sessionKey}>
+              <CollapsibleTrigger className="session-details-trigger">
+                <ChevronRight size={13} />
+                {tr("sessions.historyDetails")}
+              </CollapsibleTrigger>
+              <CollapsibleContent className="session-history-details-content" keepMounted>
+                {workspace?.path && <p className="session-detail-path">{workspace.path}</p>}
+                <div className="session-history-meta">
+                  <span>
+                    <FileText size={15} />
+                    {sessionRecordLabel(selected, tr)}
+                  </span>
+                  {selected?.origin === "auxiliary" && !selectedSources.length && (
+                    <span>{tr("conversations.auxiliary")}</span>
+                  )}
+                  {selectedSources.map((source) =>
+                    source.session ? (
+                      <Button
+                        key={`${source.kind}:${source.id}`}
+                        variant="link"
+                        size="sm"
+                        className="h-auto gap-1 p-0 text-xs"
+                        title={source.label}
+                        aria-label={source.label}
+                        onClick={() => {
+                          useSessionViewStore.getState().revealSession(source.session!);
+                          hub.select(source.session!.id);
+                        }}
+                      >
+                        {source.kind === "forked" && <GitBranch size={13} />}
+                        {source.label}
+                      </Button>
+                    ) : (
+                      <span key={`${source.kind}:${source.id}`} title={source.label}>
+                        {source.label}
+                      </span>
+                    ),
+                  )}
+                  <span>
+                    <Clock size={15} />
+                    {selected.updated_at
+                      ? formatDateTime(selected.updated_at)
+                      : tr("conversations.unknownTime")}
+                  </span>
+                  {selected.git_branch && <span>{selected.git_branch}</span>}
+                </div>
+                <div className="session-reading-description">
+                  {tr(selected.remote ? "remote.sessionsReadonly" : "sessions.historyOnly")}
+                  {selected.availability === "readable" && (
+                    <p>{tr("history.latestWindow", { count: DEFAULT_SESSION_PAGE_SIZE })}</p>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+            {selected.remote && (
+              <p className="session-remote-status">
+                {tr(selected.remote.online ? "remote.state.online" : "remote.state.offline")} ·{" "}
+                {tr("remote.catalogSynced")} {formatDateTime(selected.remote.last_synced_at)}
+              </p>
+            )}
             {history.error && (
               <HistoryError error={history.rawError} onRetry={() => void history.retry()} />
             )}
@@ -265,7 +295,7 @@ export function SessionHubPage() {
                     variant="outline"
                     className="self-center"
                     disabled={history.loadingEarlier}
-                    onClick={() => void history.loadEarlier()}
+                    onClick={loadEarlier}
                   >
                     {tr(
                       history.loadingEarlier ? "sessions.loadingHistory" : "sessions.loadEarlier",
@@ -279,9 +309,11 @@ export function SessionHubPage() {
                     )}
                   </p>
                 )}
-                {history.events.map((event) => (
-                  <ConversationEventRow key={event.id} event={event} variant="hub" />
-                ))}
+                <ConversationTranscript
+                  events={history.events}
+                  sessionKey={sessionKey}
+                  incomplete={history.warnings.length > 0}
+                />
               </div>
             )}
           </>

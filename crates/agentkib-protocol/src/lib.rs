@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 14;
+pub const WEB_REQUEST_METHOD: &str = "web.request";
 pub const REMOTE_REQUEST_METHOD: &str = "remote.request";
 pub const HANDSHAKE_METHOD: &str = "agentkib.handshake";
 pub const SHUTDOWN_METHOD: &str = "agentkib.shutdown";
@@ -191,6 +192,7 @@ pub struct HandshakeResult {
     pub protocol_version: u32,
     pub runtime: RuntimePeer,
     pub pid: u32,
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -267,6 +269,7 @@ export const RUNTIME_METHODS = {{
   setAccentThemePreference: "{SET_ACCENT_THEME_PREFERENCE_METHOD}",
   setSidebarWidthPreference: "{SET_SIDEBAR_WIDTH_PREFERENCE_METHOD}",
   remoteRequest: "{REMOTE_REQUEST_METHOD}",
+  webRequest: "{WEB_REQUEST_METHOD}",
   setAppIconPreference: "{SET_APP_ICON_PREFERENCE_METHOD}",
   planChanges: "{PLAN_CHANGES_METHOD}",
   applyChanges: "{APPLY_CHANGES_METHOD}",
@@ -345,6 +348,7 @@ export interface RuntimeHandshakeResult {{
   protocolVersion: typeof PROTOCOL_VERSION;
   runtime: RuntimePeer;
   pid: number;
+  capabilities: string[];
 }}
 
 export interface RuntimeRpcError {{

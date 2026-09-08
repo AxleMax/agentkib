@@ -8,6 +8,42 @@ const OTHER_CONVERSATION: &str = "00000000-0000-4000-8000-000000000002";
 const OWNER: &str = "11111111-1111-4111-8111-111111111111";
 const OTHER_OWNER: &str = "22222222-2222-4222-8222-222222222222";
 
+#[test]
+fn refresh_accepts_only_exact_same_revision_snapshot() {
+    let mut state = session();
+    let snapshot = conversation_snapshot("idle", json!([]), json!([]));
+    apply_snapshot(&mut state, 7, snapshot.clone()).unwrap();
+    apply_snapshot(&mut state, 7, snapshot.clone()).unwrap();
+    assert_eq!(state.revision(), Some(7));
+    assert_eq!(state.snapshot_count, 2);
+    // A refresh must not clear a mutation's unconfirmed outcome.
+    state.status = Status::OutcomeUnknown;
+    apply_snapshot(&mut state, 7, snapshot.clone()).unwrap();
+    assert_eq!(state.status(), Status::OutcomeUnknown);
+    let mut changed = snapshot;
+    changed["threadRuntimeStatus"]["type"] = json!("active");
+    assert!(apply_snapshot(&mut state, 7, changed).is_err());
+    assert_eq!(state.status(), Status::Unsupported);
+    assert!(state.snapshot().is_none());
+}
+
+#[test]
+fn same_revision_patch_is_not_a_refresh_confirmation() {
+    let mut state = session();
+    apply_snapshot(
+        &mut state,
+        7,
+        conversation_snapshot("idle", json!([]), json!([])),
+    )
+    .unwrap();
+    assert!(
+        state
+            .notification(patches_message(OWNER, 7, 7, json!([])))
+            .is_err()
+    );
+    assert!(state.revision().is_none());
+}
+
 fn session() -> SessionState {
     SessionState::new(CONVERSATION.to_owned(), OWNER.to_owned())
 }
@@ -251,7 +287,8 @@ fn status_tracks_idle_running_and_approval_states() {
         conversation_snapshot("active", json!([]), json!([])),
     )
     .expect("active snapshot");
-    assert_eq!(state.status(), Status::Running);
+    // Runtime activity alone does not identify a safe turn control target.
+    assert_eq!(state.status(), Status::OutcomeUnknown);
 
     let in_progress_turn = json!([{"turnId": "turn-1", "status": "inProgress"}]);
     apply_snapshot(
@@ -380,9 +417,25 @@ fn conflicting_live_overlay_never_selects_a_turn_for_control() {
         let mut snapshot = canonical_snapshot();
         snapshot["turns"] = json!([turn]);
         apply_snapshot(&mut state, 1, snapshot).unwrap();
-        assert_eq!(state.status(), Status::Running);
+        assert_eq!(state.status(), Status::OutcomeUnknown);
         assert_eq!(state.active_turn(), None);
         assert!(state.approvals().is_empty());
+    }
+}
+
+#[test]
+fn unresolved_history_placeholder_stays_unknown_until_owner_resolves_it() {
+    for id in [Value::Null, json!("")] {
+        let mut state = session();
+        let mut snapshot = canonical_snapshot();
+        snapshot["turnHistory"]["history"]["entitiesByKey"]["turn-key"]["turnId"] = id;
+        apply_snapshot(&mut state, 1, snapshot).unwrap();
+        assert_eq!(state.status(), Status::OutcomeUnknown);
+        assert_eq!(state.active_turn(), None);
+        assert!(state.approvals().is_empty());
+        // Keep the stream usable: an authoritative replacement can recover.
+        apply_snapshot(&mut state, 2, idle_snapshot()).unwrap();
+        assert_eq!(state.status(), Status::Idle);
     }
 }
 

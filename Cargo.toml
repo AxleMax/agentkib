@@ -28,6 +28,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+agentkib-codex-bridge = { path = "crates/agentkib-codex-bridge" }
 agentkib-protocol = { path = "crates/agentkib-protocol" }
 agentkib-platform = { path = "crates/agentkib-platform" }
 agentkib-core = { path = "crates/agentkib-core" }

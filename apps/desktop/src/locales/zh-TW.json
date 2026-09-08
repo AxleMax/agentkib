@@ -1,4 +1,11 @@
 {
+  "sessions.historyReadonly": "歷史唯讀",
+  "sessions.historyDetails": "對話詳情",
+  "sessions.process": "執行過程",
+  "sessions.toolCalls": "{{count}} 次工具呼叫",
+  "sessions.processFailed": "{{count}} 項失敗",
+  "sessions.recordTime": "記錄時間",
+  "sessions.partialTurn": "輪次不完整 · 顯示已載入記錄",
   "remote.error.pairing": "配對碼無效、已過期或已使用。請在主機上產生新配對碼後重試。",
   "remote.error.offline": "無法連線至主機。請檢查主機位址、區域網路連線及共享設定。",
   "remote.error.disconnected": "連線已中斷，請重新連線至主機。",

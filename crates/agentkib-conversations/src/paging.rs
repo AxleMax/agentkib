@@ -34,6 +34,7 @@ struct Snapshot {
 struct ToolResult {
     status: Option<String>,
     duration: Option<u64>,
+    turn_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -60,6 +61,9 @@ struct State {
     visible_turns: BTreeSet<String>,
     association_order: VecDeque<(u8, String)>,
     association_warning: bool,
+    candidate_turn_id: Option<String>,
+    // Index into the current response only; reset whenever a cursor is read.
+    turn_range_start: usize,
     sequence: u64,
 }
 
@@ -123,6 +127,7 @@ impl State {
                     std::mem::size_of::<ConversationEvent>()
                         + event.content.as_ref().map_or(0, String::capacity)
                         + event.id.capacity()
+                        + event.turn_id.as_ref().map_or(0, String::capacity)
                         + event.tool_name.as_ref().map_or(0, String::capacity)
                         + event.tool_status.as_ref().map_or(0, String::capacity)
                 })
@@ -130,9 +135,15 @@ impl State {
             + self
                 .mirrors
                 .values()
-                .map(|queue| 256 + queue.len() * 384)
+                .map(|queue| 256 + queue.len() * 448)
                 .sum::<usize>()
             + (self.tools.len() + self.finished_tools.len() + self.visible_turns.len()) * 256
+            + self
+                .tools
+                .values()
+                .map(|result| result.turn_id.as_ref().map_or(0, String::capacity))
+                .sum::<usize>()
+            + self.candidate_turn_id.as_ref().map_or(0, String::capacity)
             + self.association_order.len() * 128
     }
     fn new(path: &Path, file: &mut File, format: Format) -> Result<Self> {
@@ -157,6 +168,8 @@ impl State {
             visible_turns: BTreeSet::new(),
             association_order: VecDeque::new(),
             association_warning: false,
+            candidate_turn_id: None,
+            turn_range_start: 0,
             sequence: 0,
         })
     }
@@ -321,6 +334,7 @@ pub(super) fn read_page(
         State::new(path, &mut file, format)?
     };
     state.validate(path, &mut file, format)?;
+    state.turn_range_start = 0;
     let mut events = Vec::<ConversationEvent>::new();
     let mut warnings = BTreeSet::new();
     let mut reader = ReverseReader::new(&mut file);
@@ -348,6 +362,9 @@ pub(super) fn read_page(
             Record::End => break,
             Record::Oversized => {
                 state.trailing = false;
+                state.candidate_turn_id = None;
+                state.turn_range_start = events.len();
+                state.association_warning = true;
                 warnings.insert("TRANSCRIPT_OVERSIZED_LINES".to_string());
             }
             Record::Line(offset, bytes) => {
@@ -363,6 +380,9 @@ pub(super) fn read_page(
                 match serde_json::from_slice::<Value>(&bytes) {
                     Ok(value) => parse_record(&mut state, offset, &value, &mut events),
                     Err(_) => {
+                        state.candidate_turn_id = None;
+                        state.turn_range_start = events.len();
+                        state.association_warning = true;
                         warnings.insert("TRANSCRIPT_DAMAGED_LINES".to_string());
                     }
                 }
@@ -423,6 +443,115 @@ fn hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
+fn normalized_turn(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 256)
+        .map(str::to_owned)
+}
+
+fn parse_phase(value: Option<&Value>) -> Option<MessagePhase> {
+    match value.and_then(Value::as_str) {
+        Some("commentary") => Some(MessagePhase::Commentary),
+        Some("final_answer") => Some(MessagePhase::FinalAnswer),
+        _ => None,
+    }
+}
+
+fn turn_from_payload(payload: &Value) -> Option<String> {
+    normalized_turn(
+        payload
+            .get("turn_id")
+            .or_else(|| payload.pointer("/internal_chat_message_metadata_passthrough/turn_id"))
+            .and_then(Value::as_str),
+    )
+}
+
+fn phase_from_payload(payload: &Value) -> Option<MessagePhase> {
+    parse_phase(
+        payload
+            .get("phase")
+            .or_else(|| payload.get("message_phase")),
+    )
+}
+
+fn merge_turn_ids(
+    state: &mut State,
+    left: Option<String>,
+    right: Option<String>,
+) -> Option<String> {
+    match (left, right) {
+        (Some(left), Some(right)) if left != right => {
+            state.association_warning = true;
+            None
+        }
+        (Some(value), _) | (_, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn timestamp_compatible(left: Option<DateTime<Utc>>, right: Option<DateTime<Utc>>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            left.timestamp_millis().abs_diff(right.timestamp_millis()) <= 1_000
+        }
+        _ => true,
+    }
+}
+
+fn mirror_metadata_compatible(
+    mirror: &Mirror,
+    turn: Option<&str>,
+    timestamp: Option<DateTime<Utc>>,
+) -> bool {
+    if let (Some(left), Some(right)) = (turn, mirror.turn.as_deref())
+        && left != right
+    {
+        return false;
+    }
+    // A phase disagreement is deliberately still a mirror candidate when the
+    // turn/content identity agrees. The merge then clears the phase instead
+    // of silently choosing one source's classification.
+    // Explicitly matching turn metadata is sufficient. When one side lacks
+    // metadata, a nearby write timestamp is only a mirror hint; it never
+    // supplies a turn or phase on its own.
+    if turn.is_some() && mirror.turn.is_some() {
+        true
+    } else {
+        timestamp_compatible(timestamp, mirror.timestamp)
+    }
+}
+
+fn merge_event_metadata(
+    event: &mut ConversationEvent,
+    turn: Option<String>,
+    phase: Option<MessagePhase>,
+    attachments: u64,
+) -> bool {
+    let (event_turn, turn_conflict) = match (event.turn_id.take(), turn) {
+        (Some(left), Some(right)) if left != right => (None, true),
+        (Some(value), _) | (_, Some(value)) => (Some(value), false),
+        (None, None) => (None, false),
+    };
+    event.turn_id = event_turn;
+    let phase_conflict = match (event.message_phase, phase) {
+        (Some(left), Some(right)) if left != right => {
+            // A conflicting explicit classification is not recoverable from a
+            // mirror. Clear it and keep it unknown; later records must not
+            // silently refill an event whose source metadata disagreed.
+            event.message_phase = None;
+            true
+        }
+        (None, Some(value)) => {
+            event.message_phase = Some(value);
+            false
+        }
+        _ => false,
+    };
+    event.attachment_count = event.attachment_count.max(attachments);
+    turn_conflict || phase_conflict
+}
+
 #[allow(clippy::too_many_arguments)]
 fn message(
     state: &mut State,
@@ -432,85 +561,146 @@ fn message(
     content: &str,
     attachments: u64,
     primary: bool,
-    turn: Option<&str>,
+    turn: Option<String>,
+    phase: Option<MessagePhase>,
     page: &mut [ConversationEvent],
 ) {
-    let event = message_event(offset as usize, kind, timestamp, content, attachments).event;
+    let mut event = message_event(offset as usize, kind, timestamp, content, attachments).event;
+    // Inferred metadata must not change established mirror selection or IDs.
+    event.turn_id = turn.clone();
+    event.message_phase = (kind == ConversationEventKind::AgentMessage)
+        .then_some(phase)
+        .flatten();
     if state.format == Format::Codex {
         // Record timestamps are write times, not message IDs. Prefer explicit turn identity;
-        // older logs use nearby opposite-format occurrences with a small timestamp tolerance.
+        // older logs use nearby opposite-format occurrences only as a mirror hint.
         let key = hash(&message_key(kind, content));
-        let turn = turn.map(hash);
-        let mirrors = state.mirrors.entry(key.clone()).or_default();
-        let candidates = mirrors
-            .iter()
-            .enumerate()
-            .filter(|(_, mirror)| {
-                mirror.primary != primary
-                    && state.sequence.saturating_sub(mirror.sequence) <= 64
-                    && match (&turn, &mirror.turn) {
-                        (Some(turn), Some(other)) => turn == other,
-                        _ => match (timestamp, mirror.timestamp) {
-                            (Some(left), Some(right)) => {
-                                left.timestamp_millis().abs_diff(right.timestamp_millis()) <= 1000
-                            }
-                            _ => true,
-                        },
-                    }
-            })
-            .collect::<Vec<_>>();
-        if candidates.len() > 1 {
+        let (matching_index, ambiguous) = {
+            let mirrors = state.mirrors.entry(key.clone()).or_default();
+            let candidates = mirrors
+                .iter()
+                .enumerate()
+                .filter(|(_, mirror)| {
+                    mirror.primary != primary
+                        && state.sequence.saturating_sub(mirror.sequence) <= 64
+                        && mirror_metadata_compatible(mirror, turn.as_deref(), timestamp)
+                })
+                .collect::<Vec<_>>();
+            if candidates.len() > 1 {
+                // Several opposite-format records are equally plausible mirrors.
+                // Keep the established event sequence/identity, but do not
+                // claim that either candidate's metadata is authoritative.
+                (
+                    candidates
+                        .iter()
+                        .min_by_key(|(_, mirror)| {
+                            (
+                                match (&turn, &mirror.turn) {
+                                    (Some(left), Some(right)) if left == right => 0,
+                                    _ => 1,
+                                },
+                                match (timestamp, mirror.timestamp) {
+                                    (Some(left), Some(right)) => {
+                                        left.timestamp_millis().abs_diff(right.timestamp_millis())
+                                    }
+                                    _ => u64::MAX,
+                                },
+                                state.sequence.saturating_sub(mirror.sequence),
+                            )
+                        })
+                        .map(|(index, _)| *index),
+                    true,
+                )
+            } else {
+                (
+                    candidates
+                        .iter()
+                        .min_by_key(|(_, mirror)| {
+                            (
+                                match (&turn, &mirror.turn) {
+                                    (Some(left), Some(right)) if left == right => 0,
+                                    _ => 1,
+                                },
+                                match (timestamp, mirror.timestamp) {
+                                    (Some(left), Some(right)) => {
+                                        left.timestamp_millis().abs_diff(right.timestamp_millis())
+                                    }
+                                    _ => u64::MAX,
+                                },
+                                state.sequence.saturating_sub(mirror.sequence),
+                            )
+                        })
+                        .map(|(index, _)| *index),
+                    false,
+                )
+            }
+        };
+        if ambiguous {
             state.association_warning = true;
         }
-        let matching = candidates
-            .iter()
-            .min_by_key(|(_, mirror)| {
-                (
-                    match (&turn, &mirror.turn) {
-                        (Some(left), Some(right)) if left == right => 0,
-                        _ => 1,
-                    },
-                    match (timestamp, mirror.timestamp) {
-                        (Some(left), Some(right)) => {
-                            left.timestamp_millis().abs_diff(right.timestamp_millis())
-                        }
-                        _ => u64::MAX,
-                    },
-                    state.sequence.saturating_sub(mirror.sequence),
-                )
-            })
-            .map(|(index, _)| *index);
-        if let Some(index) = matching {
-            let counterpart = mirrors.remove(index).expect("mirror exists");
-            if primary
-                && let Some(existing) = page
+        if let Some(index) = matching_index {
+            let counterpart = state
+                .mirrors
+                .get_mut(&key)
+                .and_then(|mirrors| mirrors.remove(index))
+                .expect("mirror exists");
+            let metadata_conflict = if ambiguous {
+                if let Some(existing) = page
                     .iter_mut()
                     .chain(state.pending.iter_mut())
-                    .find(|event| event.id == counterpart.event_id)
+                    .find(|existing| existing.id == counterpart.event_id)
+                {
+                    existing.turn_id = None;
+                    existing.message_phase = None;
+                    false
+                } else {
+                    true
+                }
+            } else if let Some(existing) = page
+                .iter_mut()
+                .chain(state.pending.iter_mut())
+                .find(|existing| existing.id == counterpart.event_id)
             {
-                existing.attachment_count = attachments;
-            } else if primary && attachments > 0 {
-                // The mirrored event may already have been delivered by an earlier page.
-                // Keep its stable identity rather than replaying a second message.
+                merge_event_metadata(
+                    existing,
+                    event.turn_id.clone(),
+                    event.message_phase,
+                    attachments,
+                )
+            } else {
+                // The mirrored event may already have been delivered by an
+                // earlier page. Keep its stable identity rather than replaying
+                // a second message, but report that metadata could not be
+                // merged into the delivered event.
+                event.turn_id.is_some()
+                    || event.message_phase.is_some()
+                    || (primary && attachments > 0)
+            };
+            if metadata_conflict {
                 state.association_warning = true;
             }
-            if mirrors.is_empty() {
+            if state.mirrors.get(&key).is_some_and(VecDeque::is_empty) {
                 state.mirrors.remove(&key);
             }
             return;
         }
-        mirrors.push_back(Mirror {
-            primary,
-            event_id: event.id.clone(),
-            timestamp,
-            turn,
-            sequence: state.sequence,
-        });
+        state
+            .mirrors
+            .entry(key.clone())
+            .or_default()
+            .push_back(Mirror {
+                primary,
+                event_id: event.id.clone(),
+                timestamp,
+                turn,
+                sequence: state.sequence,
+            });
         state.remember(0, key);
     }
     state.pending.push_back(event);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tool(
     state: &mut State,
     offset: u64,
@@ -519,6 +709,7 @@ fn tool(
     name: &str,
     timestamp: Option<DateTime<Utc>>,
     default_status: Option<&str>,
+    turn: Option<String>,
 ) {
     let key = hash(id);
     if !id.is_empty() && !state.finished_tools.insert(key.clone()) {
@@ -526,9 +717,18 @@ fn tool(
     }
     state.remember(2, key.clone());
     let result = state.tools.remove(&key);
+    let result_turn = result.as_ref().and_then(|value| value.turn_id.clone());
+    let turn_conflict = turn
+        .as_ref()
+        .zip(result_turn.as_ref())
+        .is_some_and(|(left, right)| left != right);
+    let turn = merge_turn_ids(state, turn, result_turn);
+    let turn = (!turn_conflict).then_some(turn).flatten();
     state.pending.push_back(ConversationEvent {
         id: format!("tool-{offset}-{index}"),
         kind: ConversationEventKind::ToolSummary,
+        turn_id: turn,
+        message_phase: None,
         timestamp,
         content: None,
         tool_name: Some(sanitize_tool_name(name)),
@@ -542,13 +742,26 @@ fn tool(
     });
 }
 
-fn result(state: &mut State, id: &str, status: Option<&str>, duration: Option<u64>) {
+fn result(
+    state: &mut State,
+    id: &str,
+    status: Option<&str>,
+    duration: Option<u64>,
+    turn: Option<String>,
+) {
     if id.is_empty() {
         return;
     }
-    let entry = state.tools.entry(hash(id)).or_insert(ToolResult {
+    let key = hash(id);
+    let previous_turn = state
+        .tools
+        .get(&key)
+        .and_then(|entry| entry.turn_id.clone());
+    let merged_turn = merge_turn_ids(state, previous_turn, turn);
+    let entry = state.tools.entry(key).or_insert(ToolResult {
         status: None,
         duration: None,
+        turn_id: None,
     });
     // Reverse reading: the first result encountered is the latest state.
     if entry.status.is_none() {
@@ -557,7 +770,96 @@ fn result(state: &mut State, id: &str, status: Option<&str>, duration: Option<u6
     if entry.duration.is_none() {
         entry.duration = duration;
     }
+    entry.turn_id = merged_turn;
     state.remember(1, hash(id));
+}
+
+fn note_turn_boundary(
+    state: &mut State,
+    boundary: &str,
+    turn: Option<String>,
+    page: &mut [ConversationEvent],
+) {
+    let Some(turn) = turn else {
+        state.candidate_turn_id = None;
+        state.turn_range_start = page.len();
+        return;
+    };
+    match boundary {
+        // A completion marker is after the turn in file order. While reading
+        // backwards it is only a candidate: using it immediately would let a
+        // damaged/truncated suffix borrow the ID across an older turn.
+        "complete" => {
+            state.candidate_turn_id = Some(turn);
+            state.turn_range_start = page.len();
+        }
+        // A turn context is an explicit boundary before the records it
+        // describes, and validates the completion candidate when present.
+        "context" => {
+            if state
+                .candidate_turn_id
+                .as_ref()
+                .is_some_and(|candidate| candidate != &turn)
+            {
+                state.association_warning = true;
+                state.candidate_turn_id = None;
+            } else {
+                apply_turn_to_events(state, page, &turn);
+                state.candidate_turn_id = Some(turn);
+            }
+            // A context only identifies its following records. Earlier user
+            // messages need their own explicit ID or a matching start marker.
+            state.turn_range_start = page.len();
+        }
+        // A start marker is before the turn in file order. Once reached while
+        // walking backwards, older records must not inherit this turn.
+        "start" => {
+            let matches_candidate = state
+                .candidate_turn_id
+                .as_ref()
+                .is_none_or(|candidate| candidate == &turn);
+            if !matches_candidate {
+                state.association_warning = true;
+            } else {
+                apply_turn_to_events(state, page, &turn);
+            }
+            state.candidate_turn_id = None;
+            state.turn_range_start = page.len();
+        }
+        _ => {}
+    }
+}
+
+fn apply_turn_to_events(state: &mut State, page: &mut [ConversationEvent], turn: &str) {
+    // Never cross a completion/start marker or a damaged-line gap, and never
+    // rewrite records already delivered by an earlier cursor response.
+    if state.association_warning {
+        return;
+    }
+    let start = state.turn_range_start.min(page.len());
+    let conflict = page[start..]
+        .iter()
+        .chain(state.pending.iter())
+        .any(|event| event.turn_id.as_deref().is_some_and(|id| id != turn));
+    if conflict {
+        state.association_warning = true;
+        return;
+    }
+    for event in &mut page[start..] {
+        if event.turn_id.is_none() {
+            event.turn_id = Some(turn.to_owned());
+        }
+    }
+    for event in &mut state.pending {
+        if event.turn_id.is_none() {
+            event.turn_id = Some(turn.to_owned());
+        }
+    }
+}
+
+fn record_turn(value: &Value, payload: &Value) -> Option<String> {
+    turn_from_payload(payload)
+        .or_else(|| normalized_turn(value.get("turn_id").and_then(Value::as_str)))
 }
 
 fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [ConversationEvent]) {
@@ -589,6 +891,7 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
                             },
                         ),
                         None,
+                        None,
                     ),
                     Some("tool_use") => tool(
                         state,
@@ -598,6 +901,7 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
                         block.get("name").and_then(Value::as_str).unwrap_or("tool"),
                         timestamp,
                         Some("started"),
+                        None,
                     ),
                     _ => {}
                 }
@@ -624,6 +928,7 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
                 claude_attachment_count(content),
                 true,
                 None,
+                None,
                 page,
             );
         }
@@ -631,10 +936,24 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
     }
     let payload = value.get("payload").unwrap_or(&Value::Null);
     let id = payload.get("call_id").and_then(Value::as_str).unwrap_or("");
-    let turn = payload
-        .get("turn_id")
-        .or_else(|| payload.pointer("/internal_chat_message_metadata_passthrough/turn_id"))
-        .and_then(Value::as_str);
+    let turn = record_turn(value, payload);
+    if value.get("type").and_then(Value::as_str) == Some("turn_context") {
+        note_turn_boundary(state, "context", turn, page);
+        return;
+    }
+    if value.get("type").and_then(Value::as_str) == Some("event_msg") {
+        match payload.get("type").and_then(Value::as_str) {
+            Some("task_complete") => {
+                note_turn_boundary(state, "complete", turn, page);
+                return;
+            }
+            Some("task_started") => {
+                note_turn_boundary(state, "start", turn, page);
+                return;
+            }
+            _ => {}
+        }
+    }
     match (
         value.get("type").and_then(Value::as_str),
         payload.get("type").and_then(Value::as_str),
@@ -654,6 +973,7 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
                     attachment_count(value),
                     true,
                     turn,
+                    phase_from_payload(payload),
                     page,
                 );
             }
@@ -710,6 +1030,9 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
                 }),
                 false,
                 turn,
+                (role == Some("assistant"))
+                    .then(|| phase_from_payload(payload))
+                    .flatten(),
                 page,
             );
         }
@@ -724,9 +1047,10 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
                 .unwrap_or("tool"),
             timestamp,
             payload.get("status").and_then(Value::as_str),
+            turn,
         ),
         (Some("response_item"), Some("function_call_output" | "custom_tool_call_output")) => {
-            result(state, id, Some("completed"), None)
+            result(state, id, Some("completed"), None, turn)
         }
         (Some("event_msg"), Some(kind @ ("exec_command_end" | "patch_apply_end"))) => {
             let status = payload.get("status").and_then(Value::as_str).or_else(|| {
@@ -739,7 +1063,7 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
                 .get("duration")
                 .and_then(Value::as_f64)
                 .map(|duration| (duration * 1000.0).max(0.0) as u64);
-            result(state, id, status, duration);
+            result(state, id, status, duration, turn.clone());
             tool(
                 state,
                 offset,
@@ -752,6 +1076,7 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
                 },
                 timestamp,
                 status,
+                turn,
             );
         }
         (Some("response_item"), Some("web_search_call")) => tool(
@@ -762,6 +1087,7 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
             "web_search",
             timestamp,
             payload.get("status").and_then(Value::as_str),
+            turn,
         ),
         _ => {}
     }
@@ -776,6 +1102,246 @@ mod tests {
     fn primary(text: &str) -> Value {
         serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":text}})
     }
+    fn assistant(text: &str, phase: &str) -> Value {
+        serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant","phase":phase,"content":[{"type":"output_text","text":text}]}})
+    }
+    fn turn_records(id: &str) -> Vec<Value> {
+        vec![
+            serde_json::json!({"type":"event_msg","payload":{"type":"task_started","turn_id":id}}),
+            primary(&format!("user-{id}")),
+            serde_json::json!({"type":"turn_context","payload":{"turn_id":id}}),
+            assistant(&format!("comment-{id}"), "commentary"),
+            serde_json::json!({"type":"response_item","payload":{"type":"function_call","call_id":format!("call-{id}"),"name":"exec"}}),
+            serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":format!("call-{id}"),"output":"ok"}}),
+            assistant(&format!("final-{id}"), "final_answer"),
+            serde_json::json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":id}}),
+        ]
+    }
+
+    #[test]
+    fn reliable_boundaries_classify_only_their_own_turn_in_a_page() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("turns.jsonl");
+        let mut records = vec![assistant("old unclassified", "unknown")];
+        records.extend(turn_records("one"));
+        records.extend(turn_records("two"));
+        records.push(assistant("new unclassified", "unknown"));
+        write_records(&path, &records);
+        let page = read_page(&path, None, 50, Format::Codex).unwrap();
+        assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+        assert_eq!(page.events.len(), 10);
+        assert!(page.events[0].turn_id.is_none());
+        assert!(page.events[9].turn_id.is_none());
+        for (index, event) in page.events[1..9].iter().enumerate() {
+            assert_eq!(
+                event.turn_id.as_deref(),
+                Some(if index < 4 { "one" } else { "two" })
+            );
+            assert_eq!(
+                event.message_phase,
+                match index % 4 {
+                    1 => Some(MessagePhase::Commentary),
+                    3 => Some(MessagePhase::FinalAnswer),
+                    _ => None,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn page_cut_does_not_scan_for_or_rewrite_an_unseen_turn_start() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pages.jsonl");
+        write_records(&path, &turn_records("one"));
+        let latest = read_page(&path, None, 1, Format::Codex).unwrap();
+        assert!(latest.events[0].turn_id.is_none());
+        assert_eq!(
+            latest.events[0].message_phase,
+            Some(MessagePhase::FinalAnswer)
+        );
+        let older = read_page(&path, latest.next_cursor.as_deref(), 50, Format::Codex).unwrap();
+        assert!(
+            older
+                .events
+                .iter()
+                .all(|e| e.turn_id.as_deref() == Some("one"))
+        );
+        assert!(latest.events[0].turn_id.is_none());
+    }
+
+    #[test]
+    fn context_never_labels_earlier_messages_without_a_start_marker() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("no-start.jsonl");
+        write_records(
+            &path,
+            &[
+                primary("older user"),
+                assistant("older final", "final_answer"),
+                primary("newer user"),
+                serde_json::json!({"type":"turn_context","payload":{"turn_id":"new"}}),
+                assistant("newer final", "final_answer"),
+            ],
+        );
+        let page = read_page(&path, None, 50, Format::Codex).unwrap();
+        assert!(page.events[..3].iter().all(|e| e.turn_id.is_none()));
+        assert_eq!(page.events[3].turn_id.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn explicit_metadata_and_tool_result_association_work_without_boundaries() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("explicit.jsonl");
+        let mut user = primary("user");
+        user["turn_id"] = serde_json::json!("explicit");
+        let mut final_reply = assistant("answer", "final_answer");
+        final_reply["payload"]["turn_id"] = serde_json::json!("explicit");
+        write_records(
+            &path,
+            &[
+                user,
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call","call_id":"tool","name":"exec"}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"tool","turn_id":"explicit"}}),
+                final_reply,
+                assistant("unknown phase", "future_phase"),
+            ],
+        );
+        let page = read_page(&path, None, 50, Format::Codex).unwrap();
+        assert!(
+            page.events[..3]
+                .iter()
+                .all(|e| e.turn_id.as_deref() == Some("explicit"))
+        );
+        assert!(page.events[3].turn_id.is_none());
+        assert!(page.events[3].message_phase.is_none());
+    }
+
+    #[test]
+    fn mirrors_preserve_existing_identity_and_merge_or_clear_phase() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mirrors.jsonl");
+        let response = assistant("answer", "final_answer");
+        let mirror = serde_json::json!({"type":"event_msg","payload":{"type":"agent_message","message":"answer"}});
+        for records in [
+            vec![response.clone(), mirror.clone()],
+            vec![mirror.clone(), response.clone()],
+        ] {
+            write_records(&path, &records);
+            let mut legacy = records.clone();
+            for record in &mut legacy {
+                record["payload"].as_object_mut().unwrap().remove("phase");
+            }
+            let legacy_path = dir.path().join("legacy.jsonl");
+            // IDs are offsets, so calculate the expected newest record's offset from the same file.
+            let expected_offset = records[0].to_string().len() + 1;
+            let page = read_page(&path, None, 50, Format::Codex).unwrap();
+            assert_eq!(page.events.len(), 1);
+            assert_eq!(
+                page.events[0].message_phase,
+                Some(MessagePhase::FinalAnswer)
+            );
+            assert_eq!(page.events[0].content.as_deref(), Some("answer"));
+            assert_eq!(
+                page.events[0].id,
+                message_event(
+                    expected_offset,
+                    ConversationEventKind::AgentMessage,
+                    None,
+                    "answer",
+                    0
+                )
+                .event
+                .id
+            );
+            write_records(&legacy_path, &legacy);
+            assert_eq!(
+                read_page(&legacy_path, None, 50, Format::Codex)
+                    .unwrap()
+                    .events
+                    .len(),
+                1
+            );
+        }
+        let mut conflict = mirror;
+        conflict["payload"]["phase"] = serde_json::json!("commentary");
+        write_records(&path, &[response, conflict]);
+        let page = read_page(&path, None, 50, Format::Codex).unwrap();
+        assert_eq!(page.events.len(), 1);
+        assert!(page.events[0].message_phase.is_none());
+        assert!(
+            page.warnings
+                .iter()
+                .any(|w| w == "TRANSCRIPT_ASSOCIATION_WINDOW")
+        );
+    }
+
+    #[test]
+    fn damaged_and_budget_limited_turns_do_not_gain_inferred_metadata() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("gaps.jsonl");
+        let mut file = File::create(&path).unwrap();
+        let records = turn_records("one");
+        for (index, record) in records.iter().enumerate() {
+            writeln!(file, "{record}").unwrap();
+            if index == 2 {
+                writeln!(file, "broken-json").unwrap();
+            }
+        }
+        let page = read_page(&path, None, 50, Format::Codex).unwrap();
+        assert!(page.events.iter().all(|e| e.turn_id.is_none()));
+        assert!(
+            page.warnings
+                .iter()
+                .any(|w| w == "TRANSCRIPT_DAMAGED_LINES")
+        );
+        let mut file = File::create(&path).unwrap();
+        writeln!(file, "{}", records[0]).unwrap();
+        for _ in 0..SCAN_LINES + 1 {
+            writeln!(file, "{{}}").unwrap();
+        }
+        writeln!(file, "{}", records[6]).unwrap();
+        writeln!(file, "{}", records[7]).unwrap();
+        let page = read_page(&path, None, 50, Format::Codex).unwrap();
+        assert!(page.events[0].turn_id.is_none());
+        assert!(page.warnings.iter().any(|w| w == "TRANSCRIPT_SCAN_BUDGET"));
+    }
+
+    #[test]
+    fn wire_optional_and_unknown_phases_degrade_without_rejecting_history() {
+        let base = serde_json::json!({"id":"old","kind":"agent-message","content":"body","attachment_count":0,"truncated":false});
+        for phase in [
+            Value::Null,
+            serde_json::json!("new_phase"),
+            serde_json::json!(42),
+        ] {
+            let mut value = base.clone();
+            value["message_phase"] = phase;
+            let event: ConversationEvent = serde_json::from_value(value).unwrap();
+            assert!(event.message_phase.is_none());
+            assert!(event.turn_id.is_none());
+        }
+        let event: ConversationEvent = serde_json::from_value(base).unwrap();
+        assert!(event.message_phase.is_none());
+        assert!(
+            serde_json::to_value(event)
+                .unwrap()
+                .get("turn_id")
+                .is_none()
+        );
+    }
+    #[test]
+    fn legacy_mirror_across_pages_does_not_add_a_metadata_warning() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy-page-mirror.jsonl");
+        let mirror = serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"same"}]}});
+        write_records(&path, &[primary("same"), primary("between"), mirror]);
+        let latest = read_page(&path, None, 1, Format::Codex).unwrap();
+        let older = read_page(&path, latest.next_cursor.as_deref(), 50, Format::Codex).unwrap();
+        assert!(older.warnings.is_empty());
+        assert_eq!(older.events.len(), 1);
+        assert_eq!(older.events[0].content.as_deref(), Some("between"));
+    }
+
     fn write_records(path: &Path, records: &[Value]) {
         let mut file = File::create(path).unwrap();
         for record in records {

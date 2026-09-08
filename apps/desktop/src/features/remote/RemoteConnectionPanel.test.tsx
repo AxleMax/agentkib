@@ -17,6 +17,7 @@ const status: RemoteStatus = {
   pairing_expires_at: null,
 };
 const run = vi.fn();
+vi.mock("./WebAccessSettings", () => ({ WebAccessSettings: () => null }));
 beforeAll(() => initializeI18n("en-US"));
 beforeEach(() => {
   run.mockReset();
@@ -35,7 +36,9 @@ afterEach(cleanup);
 
 describe("remote connections UI", () => {
   it("shows friendly feedback for a real wrapped IPC error in the quick panel", () => {
-    const failure = new Error("Error invoking remote method 'agentkib:remote:request': REMOTE_PAIRING_INVALID");
+    const failure = new Error(
+      "Error invoking remote method 'agentkib:remote:request': REMOTE_PAIRING_INVALID",
+    );
     useRemoteStore.setState({ error: failure, operationError: true });
     render(<RemoteConnectionPanel open onOpenChange={vi.fn()} onSettings={vi.fn()} />);
     expect(screen.getByRole("alert").textContent).toContain(tr("remote.error.pairing"));
@@ -98,7 +101,9 @@ describe("remote connections UI", () => {
     });
     render(<RemoteConnectionSettings />);
     fireEvent.click(screen.getByRole("button", { name: "Digits match — approve" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(tr("remote.error.request")));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(tr("remote.error.request")),
+    );
     expect(run).toHaveBeenCalledTimes(1);
     expect(useRemoteStore.getState().snapshot?.authorized).toEqual([]);
     expect(useRemoteStore.getState().snapshot?.pending).toEqual([pending]);

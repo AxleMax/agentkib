@@ -1,0 +1,83 @@
+# Web v1 分层验收记录
+
+日期：2026-09-08。设计基准：`designs/agentkib-codex-flow-redesign-v14.pen`，保留原稿。
+
+## 验收清单（执行中）
+
+| 范围 | 要验证的行为 | 证据/状态 |
+| --- | --- | --- |
+| 桌面管理 | 默认关闭、端口/HTTPS设置、错误、八位码、确认/拒绝、独立权限、撤销 | 待集成测试 |
+| 配对 | 未授权不可读、等待数字一致、过期/错误/拒绝、重试入口 | HTTP 单测；浏览器待验 |
+| 阅读 | 目录、空/未选中、长正文与代码、工具详情、分页位置、索引禁用清空 | Web 测试待验 |
+| 控制 | idle才发送、审批精确信息、请求回执不等于完成、无停止按钮 | 隔离测试；真实待验 |
+| 安全 | Host/Origin/CSRF、路径、输入、撤销竞态、断线/重启、重复/并发 | HTTP/Rust 专项测试 |
+| 外观 | 390×844、768×1024、1360×860、1440×920；深浅主题、键盘焦点 | 待浏览器截图 |
+| 自部署 | 打包静态资源、本机启动、配对/阅读/撤销，不使用开发服务器 | 待打包验收 |
+| 真机 | 手机软键盘、Safari/Android 浏览器、外部 HTTPS | 未验证；桌面缩放不能替代 |
+
+探索性异常场景：授权后正在读取时撤销；请求尚未完成时 runtime 重启；两个浏览器提交同一/不同请求（仅模拟 owner）。不向真实 Codex 并发发送。
+
+本文件不把测试计划记作通过。最终结果随执行追加。
+
+## 已执行结果
+
+- `cargo test --workspace`：592 项通过（含 bridge 37、runtime 48）；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all --check` 通过。
+- `pnpm test`：桌面 79 文件 / 529 项通过，Web 当时 17 项通过；Web 后续补 cwd / build-info 后专项 18 项通过。桌面设置局部修改后再次执行对应测试与组件约束测试通过。
+- `pnpm typecheck`：桌面与 Web 通过。协议生成输出与 `electron/generated/runtime-protocol.ts` 的 `cmp` 一致，协议版本 14。
+- `pnpm build`：正式 Rust runtime、Web 静态资源、桌面 renderer、Electron main/preload 均成功。
+- `electron-builder --dir --publish never`：成功生成 macOS arm64 未签名 `.app`，不发布。不是 Windows/Linux 或签名/公证安装验收。
+- 打包应用使用独立 `/tmp/agentkib-web-package-S9NcOH` 用户数据启动；可见 `app://bundle/index.html`，设置里默认服务关闭，启用后显示 `http://127.0.0.1:1421`，浏览器从该端口加载完整配对页。关闭服务后端口拒绝连接，退出测试 `.app` 后进程退出；没有退出 Codex。
+- 此次桌面管理视觉检查发现保存按钮过宽、待授权列表缺少间距，已调整并重新构建。
+- 最终 `.app` 再次启动实看：上述布局修正可见，实验开关 disabled，显示“本构建尚未通过 Web 实验控制真实验收”。Web 资源目录与 `apps/web/dist` 逐文件一致；MIT 文件与根 LICENSE 一致。`build-info.json` 标注 version 0.8.0、源码 revision 与 dirty:true，未冒充正式发布。复核后关闭隔离应用及测试浏览器。
+- HTTP 测试 16 项包含在桌面总数中：配对/权限、Host/Origin/CSRF、静态路径和符号链接、过期/失败限额、HTTPS/local cookie 隔离、SSE 撤销、超时锁保留、重启/撤销竞态、发布验收开关默认禁用。
+- 全 workspace 回归暴露跨进程锁释放缺陷：fork 继承描述符可能延迟仅靠 close 的解锁。修为显式 LOCK_UN 后关闭文件，并补确定性回归，不通过放宽断言处理。
+- 审批安全复核加严：命令要求完整 command/cwd，文件逐项要求绝对路径、已知 kind、完整 diff；额外权限、未知字段或截断信息保持不支持。
+
+## 浏览器（合成数据，非真实 owner）
+
+真实 Chromium 桌面浏览器加载构建后的静态资源；四种 viewport、每种深浅主题均截图检查。截图位于 `output/playwright/web-v1/`。主代理复核了移动配对、移动阅读和 1440 宽屏阅读截图。
+
+- 390×844、768×1024、1360×860、1440×920：阅读列、目录、输入区无页面横向溢出；长代码在自身区域滚动。
+- 配对 → 等待授权 → 阅读；工具详情点击展开、Escape 关闭且焦点回触发按钮。
+- 执行过程支持 Enter 折叠；分页锚点 top 从 253 变为 253.09375（偏差小于 0.1px）。
+- 语言、主题、审批回执均在合成 API 场景验证；模拟结果不能代替真实 owner 验收。
+- 前端详细交互证据见 `apps/web/QA.md`；合成审批使用数字 ID 42，验证 cwd 可见、拒绝回执与空闲状态，不执行任何命令。
+
+## 未通过 / 待验证的门槛
+
+1. 打包应用中的本机真实历史配对、读取、撤销闭环已通过，详见下方追加记录；外部 HTTPS / 手机端不在此结论内。
+2. Web → runtime → 官方 owner 的串行发送已在下方隔离验收通过；Web 审批决定尚未通过。`verifiedExperimental` 默认 false，正式配置不能开启实验控制；既有 host/device grant 也无法绕过。本轮没有真实并发测试、没有停止测试。
+3. 实际 iOS/Android 手机、软键盘、Safari/Firefox、外部 HTTPS 反向代理或隧道、Windows/Linux 安装包未验证。
+4. 没有完整 HTTP → 实际 Rust runtime → mock owner 的单一端到端测试；当前 HTTP/mock-runtime 与 Rust/mock-owner 是分层测试。
+5. 全仓 `pnpm format:check` 仍报告 4 个既有无关文件：`activity-presentation.ts`、`RemoteErrorDetails.tsx`、`RemoteErrorDetails.test.tsx`、`styles.css`。本轮相关文件与新增 Web/packages 的格式检查通过；未为清除历史问题改写无关文件。
+
+结论：首版代码与分层自动化验证已落地，未达到计划的全量真实验收门槛。实验控制保持禁用。未 commit、PR、发布；保留原设计稿与已有改动。
+
+## 追加：指定测试会话的打包版真实只读验收
+
+用户确认直接使用既有“处理测试对话”。临时浏览器名为“本机验收-测试对话”，只授予历史读取；未授予发送、审批权限。没有新增对话、提交消息、执行历史中的命令或重复并发/停止实验。
+
+- 打包 `.app` 内置 1421 服务完成八位码配对，两端校验数字一致，桌面确认后目录可见。未配对的目录请求返回 401。
+- 实测发现并修复两处集成缺陷：runtime 原先连只读请求也全局拒绝并发，页面同时加载历史/live/SSE 会失败；现在最多 32 个只读请求串行处理，控制仍需空闲且不排队。另一个问题是把 Codex 原生 UUID 当成文件路径，现由 provider 解析实际记录，预算内核验 UUID 与索引一致，无法核验则降级只读。
+- 新增队列上限/控制拒绝回归，以及 provider UUID 映射、缺失、身份不一致、预算超限、非元数据记录回归。runtime 49 项、相关 provider 测试、Clippy 通过；修复后再次 `cargo test --workspace`、格式与 diff 检查通过。
+- 复测期间发现快捷键退出没有真正结束旧包进程，因此不以快捷键调用作为重启证据。通过精确 PID 终止隔离验收包并确认退出，再启动最终未签名包；新进程加载后配对授权保留，无需重新配对。没有退出 Codex。
+- 最终包中打开同一测试会话：真实历史成功，实时状态为空闲、浏览器仅可读取；展开执行过程和工具详情正常，Escape 关闭详情；加载更早记录后可见 `AK-BRIDGE-001 收到`，读取错误消失。历史内旧审批/停止结果仅作为阅读内容，不算本轮控制验收。
+- 在真实会话已打开且 SSE 已订阅时，桌面撤销临时浏览器，Web 立即显示“远程访问已结束”，目录、会话、审批内容不可见；刷新仍保持访问结束，桌面授权列表为空。
+- 关闭本机 Web 服务后端口不再响应。无协调服务器或开发服务器参与此闭环。
+
+真实发送/审批尚未通过 Web 验收，发布验收开关仍为 false；不能将本轮只读通过等同于实验控制通过。
+
+## 追加：2026-09-08 本地隔离控制验收
+
+- 增加仅由进程环境显式开启的验收入口：必须使用系统临时目录下 `agentkib-web-acceptance-*` 的独立 electron/runtime 数据目录、指定 64 位索引 ID，且不允许外部 HTTPS origin。不是浏览器可开启的设置，不改变正式 `verifiedExperimental=false`。桌面明确显示隔离验收及会话 ID；HTTP 拒绝其他会话的控制，仍核验配对、独立发送/审批授权、CSRF、owner 和 revision。
+- 使用同一个官方 UUID `01a07b7a-68a8-7113-832f-36d1ddd5594f`（处理测试对话）。隔离用户数据会产生不同的盐化索引 ID，因此从实际目录核对映射，不复用原用户数据的索引 ID。
+- 首次发送 `AK-WEB-SEND-023` 返回 HTTP 409；立即暂停控制，未重发。只读历史未出现该标记；三次 idle 查询却依次为 revision 181/182/183。根因是 refresh 使用 select 反复取消/建立订阅，官方 owner 首次添加 follower 会发布递增版本快照。
+- 核对本机已安装官方 ASAR 的 `handleThreadStreamFollowingChanged`：重复确认已有 follower 会发送当前 revision 的快照。因此修为保留原 stream，在 discovery 回调接收通知并校验 owner 不变，再确认已有订阅、等待完整快照。仅接受同版本且完整 JSON 相等的重复快照；相同版本的变更/patch、回退、baseRevision 缺口仍失效。同版本快照不能清除 OutcomeUnknown。协议无因果 nonce，不声称该刷新消除官方客户端竞争。
+- 修复后重建正式 release runtime 并装入未签名 macOS arm64 `.app`；没有使用开发服务器。三次真实只读查询均为 idle/revision 417。
+- UI 串行发送 `AK-WEB-SEND-024`：HTTP 200、accepted:true、completed:false；随后真实历史恰好出现一条 user-message 和一条 final_answer `AK-WEB-SEND-024 收到。`，共享同一 turn_id。页面回复可见一次，live 回到 idle/revision 439，无工具调用、无重复提交。
+- UI 串行提交 `AK-WEB-APPROVAL-025`，正常申请 `/tmp` 下 `/usr/bin/true` 的审批；发送回执 HTTP 200。live 到 awaiting-approval，命令/cwd 可见，但 safe_approval 投影为 supported:false / availableDecisions:[]。未通过 Web 提交决定、未放宽白名单、未执行替代命令。具体不支持字段仍需诊断，不能仅凭命令可见推断可安全批准。
+- 用户在官方客户端拒绝后，只读确认 pending=0、idle；最终回复为“AK-WEB-APPROVAL-025：审批被用户拒绝，命令未执行，未重试。”这证明状态/结果同步，不代表 Web 审批决定通过。
+- 自动化：bridge 41 项（新增稳定刷新、同版本冲突、owner 切换、discovery 期间 patch 等回归）；`cargo test --workspace` 598 项通过；相关 bridge/runtime Clippy、cargo fmt、git diff 检查通过；Web HTTP/验收配置/桌面设置 3 文件 21 项通过。新增模拟用例初版错误构造 active 但无 active turn，触发预期的 OutcomeUnknown；修正 fixture 后全部通过，未放宽状态判定。
+- 收尾：撤销“本机串行控制验收”浏览器，关闭实验控制及本机 Web 服务。正式控制仍关闭，无 commit/PR/发布。
+
+剩余门槛：Web 审批请求元数据兼容及真实决定验收；mutation 超时后 bridge 重建是否会清除未知结果保护仍需独立回归；HTTPS/真实手机及其他平台仍未验收。不可将本次串行发送通过写成 Web 全量通过。

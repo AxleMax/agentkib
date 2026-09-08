@@ -1,4 +1,5 @@
 import type { RuntimeHandshakeResult } from "../generated/runtime-protocol";
+import type { WebAdminRequest, WebAdminStatus } from "../main/web/service";
 import type { RemoteRequest, RemoteResponse } from "../../src/core/remote-types";
 import type {
   AgentKind,
@@ -91,6 +92,7 @@ export interface DesktopRuntimeStatus {
 }
 
 export interface DesktopApi {
+  web: { request(input: WebAdminRequest): Promise<WebAdminStatus> };
   platform: NodeJS.Platform;
   events: {
     onQuitRequested(listener: () => void): DesktopEventUnsubscribe;

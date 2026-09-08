@@ -1,5 +1,5 @@
 //! Experimental, opt-in follower of an existing Codex client. Never starts Codex.
-//! No dependency from the desktop Runtime: this is a local compatibility probe only.
+//! Used by the opt-in runtime Web facade and the local compatibility probe.
 
 #[cfg(target_os = "macos")]
 mod transport;

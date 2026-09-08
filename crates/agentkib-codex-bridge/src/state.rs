@@ -39,6 +39,7 @@ pub struct SessionState {
     pub(crate) snapshot: Option<Value>,
     pub(crate) status: Status,
     valid_stream: bool,
+    pub(crate) snapshot_count: u64,
 }
 
 impl SessionState {
@@ -50,6 +51,7 @@ impl SessionState {
             snapshot: None,
             status: Status::WaitingForSnapshot,
             valid_stream: true,
+            snapshot_count: 0,
         }
     }
     pub fn status(&self) -> Status {
@@ -74,7 +76,9 @@ impl SessionState {
 
     pub fn active_turn(&self) -> Option<&str> {
         let turns = conversation_turns(self.snapshot.as_ref()?).ok()?;
-        let active = turns.iter().find(|t| t["status"] == "inProgress")?["turnId"].as_str()?;
+        let active = turns.iter().find(|t| t["status"] == "inProgress")?["turnId"]
+            .as_str()
+            .filter(|id| !id.is_empty())?;
         // Do not guess when canonical history and live overlays disagree.
         if turns.iter().any(|t| {
             (t["status"] == "inProgress" && t["turnId"] != active)
@@ -176,6 +180,18 @@ impl SessionState {
         let revision = change["revision"]
             .as_u64()
             .context("missing stream revision")?;
+        // The verified owner answers an existing follower's refresh with a full
+        // snapshot at its current revision. Only an exact repeat is legitimate;
+        // equal-revision patches or changed content remain protocol errors.
+        if self.revision == Some(revision) {
+            ensure!(
+                change["type"] == "snapshot"
+                    && self.snapshot.as_ref() == Some(&change["conversationState"]),
+                "conflicting stream revision"
+            );
+            self.snapshot_count += 1;
+            return Ok(());
+        }
         ensure!(
             self.revision.is_none_or(|old| revision > old),
             "stale stream revision"
@@ -232,7 +248,18 @@ impl SessionState {
             self.status = Status::OutcomeUnknown;
         }
         self.revision = Some(revision);
+        if change["type"] == "snapshot" {
+            self.snapshot_count += 1;
+        }
         self.snapshot = Some(snapshot.take());
+        // Concurrent submissions can leave an in-progress history placeholder
+        // without a confirmed turn ID. Do not report it as a controllable run,
+        // nor discard it to manufacture idle; later owner updates may resolve it.
+        if matches!(self.status, Status::Running | Status::AwaitingApproval)
+            && self.active_turn().is_none()
+        {
+            self.status = Status::OutcomeUnknown;
+        }
         Ok(())
     }
 }

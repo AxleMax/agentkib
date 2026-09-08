@@ -66,6 +66,15 @@ fn owner(
     status: &'static str,
     expected_method: Option<&'static str>,
 ) -> thread::JoinHandle<()> {
+    owner_with_refresh(listener, status, expected_method, false)
+}
+
+fn owner_with_refresh(
+    listener: UnixListener,
+    status: &'static str,
+    expected_method: Option<&'static str>,
+    stable_refresh: bool,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         initialize(&mut socket);
@@ -83,7 +92,9 @@ fn owner(
                 "thread-stream-following-changed" => {
                     assert_eq!(message["targetClientIds"], json!(["owner"]));
                     if message["params"]["following"] == true {
-                        revision += 1;
+                        if revision == 0 || !stable_refresh {
+                            revision += 1;
+                        }
                         write(&mut socket, snapshot(revision, status));
                     }
                 }
@@ -100,14 +111,19 @@ fn owner(
                         );
                     }
                     if method == "thread-follower-interrupt-turn" {
-                        assert_eq!(message["params"]["expectedTurnId"], "turn-1");
+                        assert_eq!(message["version"], 4);
+                        assert_eq!(
+                            message["params"],
+                            json!({"conversationId":SESSION,
+                            "mode":"user-stop","expectedTurnId":"turn-1"})
+                        );
                     }
                     if method == "thread-follower-command-approval-decision" {
                         assert_eq!(message["params"]["decision"], "accept");
                     }
                     write(
                         &mut socket,
-                        json!({"type":"response","requestId":message["requestId"],"resultType":"success","method":method,"handledByClientId":"owner","result":{"ok":true}}),
+                        json!({"type":"response","requestId":message["requestId"],"resultType":"success","method":method,"handledByClientId":"owner","result":{"ok":true,"interruptedTurnId":"turn-1"}}),
                     );
                 }
                 _ => panic!("unexpected operation"),
@@ -195,6 +211,113 @@ fn unknown_versions_never_enable_controls() {
     server.join().unwrap();
 }
 #[test]
+fn revision_changes_under_operation_lock_prevent_web_send() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner(listener, "idle", None);
+    let mut bridge = Bridge::connect(&path, known()).unwrap();
+    bridge.enable_controls().unwrap();
+    bridge.select(SESSION).unwrap();
+    let revision = bridge.state().unwrap().revision();
+    assert!(
+        bridge
+            .send_text_at_revision("synthetic hello", revision)
+            .unwrap_err()
+            .to_string()
+            .contains("revision changed")
+    );
+    drop(bridge);
+    server.join().unwrap();
+}
+
+#[test]
+fn unchanged_owner_refresh_keeps_revision_and_allows_one_guarded_send() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner_with_refresh(listener, "idle", Some("thread-follower-start-turn"), true);
+    let mut bridge = Bridge::connect(&path, known()).unwrap();
+    bridge.enable_controls().unwrap();
+    bridge.select(SESSION).unwrap();
+    let revision = bridge.state().unwrap().revision();
+    for _ in 0..3 {
+        bridge.refresh().unwrap();
+        assert_eq!(bridge.state().unwrap().revision(), revision);
+    }
+    bridge
+        .send_text_at_revision("synthetic hello", revision)
+        .unwrap();
+    bridge.refresh().unwrap();
+    assert_eq!(bridge.state().unwrap().status(), Status::OutcomeUnknown);
+    assert!(bridge.send_text_at_revision("duplicate", revision).is_err());
+    drop(bridge);
+    server.join().unwrap();
+}
+
+#[test]
+fn refresh_observes_owner_change_and_discovery_time_patches_before_send() {
+    for change_owner in [true, false] {
+        let (_dir, path, listener) = endpoint();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            initialize(&mut socket);
+            let mut discoveries = 0;
+            while let Some(message) = read(&mut socket) {
+                match message["method"].as_str().unwrap_or_default() {
+                    "thread-owner-discovery" => {
+                        discoveries += 1;
+                        if discoveries == 2 && !change_owner {
+                            write(
+                                &mut socket,
+                                json!({"type":"broadcast","sourceClientId":"owner",
+                                "version":11,"method":"thread-stream-state-changed","params":{
+                                "hostId":"local","conversationId":SESSION,"change":{
+                                "type":"patches","baseRevision":1,"revision":2,"patches":[{
+                                "op":"replace","path":["threadRuntimeStatus","type"],"value":"active"}, {
+                                "op":"replace","path":["turns",0,"status"],"value":"inProgress"}]}}}),
+                            );
+                        }
+                        write(
+                            &mut socket,
+                            json!({"type":"response","requestId":message["requestId"],
+                            "resultType":"success","handledByClientId":if discoveries>1 && change_owner {"other-owner"} else {"owner"},
+                            "result":{}}),
+                        );
+                    }
+                    "thread-stream-following-changed" => {
+                        if message["params"]["following"] == true {
+                            let mut value = snapshot(if discoveries > 1 { 2 } else { 1 }, "idle");
+                            if discoveries > 1 {
+                                value["params"]["change"]["conversationState"]["threadRuntimeStatus"]
+                                    ["type"] = json!("active");
+                                value["params"]["change"]["conversationState"]["turns"][0]["status"] =
+                                    json!("inProgress");
+                            }
+                            write(&mut socket, value);
+                        }
+                    }
+                    _ => panic!("changed owner/state must not receive a mutation"),
+                }
+            }
+        });
+        let mut bridge = Bridge::connect(&path, known()).unwrap();
+        bridge.enable_controls().unwrap();
+        bridge.select(SESSION).unwrap();
+        let revision = bridge.state().unwrap().revision();
+        let error = bridge
+            .send_text_at_revision("synthetic hello", revision)
+            .unwrap_err();
+        if change_owner {
+            assert!(error.to_string().contains("owner changed"));
+            assert_eq!(bridge.state().unwrap().status(), Status::Unsupported);
+            assert!(bridge.state().unwrap().revision().is_none());
+        } else {
+            assert!(error.to_string().contains("revision changed"));
+            assert_eq!(bridge.state().unwrap().status(), Status::Running);
+        }
+        drop(bridge);
+        server.join().unwrap();
+    }
+}
+
+#[test]
 fn send_is_targeted_and_cannot_be_repeated_without_sync() {
     let (_dir, path, listener) = endpoint();
     let server = owner(listener, "idle", Some("thread-follower-start-turn"));
@@ -227,6 +350,21 @@ fn stop_binds_the_current_turn() {
     b.enable_controls().unwrap();
     b.select(SESSION).unwrap();
     b.stop("turn-1").unwrap();
+    assert_eq!(b.state().unwrap().status(), Status::OutcomeUnknown);
+    assert!(b.stop("turn-1").is_err());
+    drop(b);
+    server.join().unwrap();
+}
+
+#[test]
+fn idle_session_rejects_stop_without_sending() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner(listener, "idle", None);
+    let mut b = Bridge::connect(&path, known()).unwrap();
+    b.enable_controls().unwrap();
+    b.select(SESSION).unwrap();
+    assert!(b.stop("turn-1").is_err());
+    assert!(b.stop("").is_err());
     drop(b);
     server.join().unwrap();
 }
@@ -245,6 +383,95 @@ fn approvals_bind_pending_request_and_turn() {
     assert!(b.approve(&json!(42), "old-turn", Decision::Accept).is_err());
     b.approve(&json!(42), "turn-1", Decision::Accept).unwrap();
     assert!(b.approve(&json!(42), "turn-1", Decision::Accept).is_err());
+    drop(b);
+    server.join().unwrap();
+}
+
+fn restricted_approval_owner(
+    listener: UnixListener,
+    remove_on_refresh: bool,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        initialize(&mut socket);
+        let mut revision = 0;
+        let mut mutations = 0;
+        while let Some(message) = read(&mut socket) {
+            match message["method"].as_str().unwrap_or_default() {
+                "thread-owner-discovery" => write(
+                    &mut socket,
+                    json!({"type":"response","requestId":message["requestId"],"resultType":"success","handledByClientId":"owner","result":{"supportsUntrustedAppInput":true}}),
+                ),
+                "thread-stream-following-changed" => {
+                    assert_eq!(message["targetClientIds"], json!(["owner"]));
+                    if message["params"]["following"] == true {
+                        revision += 1;
+                        let mut state = snapshot(revision, "active");
+                        let requests =
+                            &mut state["params"]["change"]["conversationState"]["requests"];
+                        if remove_on_refresh && revision > 1 {
+                            *requests = json!([]);
+                        } else {
+                            requests[0]["params"]["availableDecisions"] =
+                                json!(["accept", "cancel"]);
+                        }
+                        write(&mut socket, state);
+                    }
+                }
+                "thread-follower-command-approval-decision" => {
+                    assert!(!remove_on_refresh, "stale approval must send no mutation");
+                    mutations += 1;
+                    assert_eq!(mutations, 1, "unoffered decline must send no mutation");
+                    assert_eq!(message["targetClientId"], "owner");
+                    assert_eq!(
+                        message["params"],
+                        json!({"conversationId":SESSION,"requestId":42,"decision":"cancel"})
+                    );
+                    write(
+                        &mut socket,
+                        json!({"type":"response","requestId":message["requestId"],"resultType":"success","method":"thread-follower-command-approval-decision","handledByClientId":"owner","result":{"ok":true}}),
+                    );
+                }
+                _ => panic!("unexpected operation: {}", message["method"]),
+            }
+        }
+        assert_eq!(mutations, usize::from(!remove_on_refresh));
+        assert_eq!(revision, if remove_on_refresh { 2 } else { 3 });
+    })
+}
+
+#[test]
+fn approval_rejects_unoffered_decline_and_sends_exact_cancel() {
+    let (_dir, path, listener) = endpoint();
+    let server = restricted_approval_owner(listener, false);
+    let mut b = Bridge::connect(&path, known()).unwrap();
+    b.enable_controls().unwrap();
+    b.select(SESSION).unwrap();
+    let error = b
+        .approve(&json!(42), "turn-1", Decision::Decline)
+        .unwrap_err();
+    assert!(error.to_string().contains("decision not offered by owner"));
+    assert_eq!(b.state().unwrap().status(), Status::AwaitingApproval);
+    b.approve(&json!(42), "turn-1", Decision::Cancel).unwrap();
+    assert_eq!(b.state().unwrap().status(), Status::OutcomeUnknown);
+    drop(b);
+    server.join().unwrap();
+}
+
+#[test]
+fn approval_removed_during_refresh_sends_no_mutation() {
+    let (_dir, path, listener) = endpoint();
+    let server = restricted_approval_owner(listener, true);
+    let mut b = Bridge::connect(&path, known()).unwrap();
+    b.enable_controls().unwrap();
+    b.select(SESSION).unwrap();
+    assert_eq!(b.state().unwrap().approvals().len(), 1);
+    let error = b
+        .approve(&json!(42), "turn-1", Decision::Accept)
+        .unwrap_err();
+    assert!(error.to_string().contains("approval no longer pending"));
+    assert!(b.state().unwrap().approvals().is_empty());
+    assert_eq!(b.state().unwrap().status(), Status::Running);
     drop(b);
     server.join().unwrap();
 }

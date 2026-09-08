@@ -1,4 +1,11 @@
 {
+  "sessions.historyReadonly": "历史只读",
+  "sessions.historyDetails": "会话详情",
+  "sessions.process": "执行过程",
+  "sessions.toolCalls": "{{count}} 次工具调用",
+  "sessions.processFailed": "{{count}} 项失败",
+  "sessions.recordTime": "记录时间",
+  "sessions.partialTurn": "轮次不完整 · 展示已加载记录",
   "remote.error.pairing": "配对码无效、已过期或已使用。请在主机上生成新配对码后重试。",
   "remote.error.offline": "无法连接主机。请检查主机地址、局域网连接及共享设置。",
   "remote.error.disconnected": "连接已断开，请重新连接主机。",

@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
                     "probe --socket /absolute/ipc.sock [--session UUID --desktop-asar PATH --extension-package PATH --allow-control]"
                 );
                 println!(
-                    "Without --session: initialization only, then disconnect. With --session: status, sync, approvals, send TEXT, stop TURN_ID, approve JSON, quit."
+                    "Without --session: initialization only, then disconnect. With --session: status, sync, diagnostics, approvals, send TEXT, stop TURN_ID, approve JSON, quit."
                 );
                 println!(
                     "approve JSON: {{\"requestId\":42,\"turnId\":\"...\",\"decision\":\"accept|decline|cancel\"}}"
@@ -137,6 +137,32 @@ fn main() -> anyhow::Result<()> {
                         last = None;
                     } else if line == "sync" {
                         bridge.refresh()?;
+                    } else if line == "diagnostics" {
+                        let snapshot = bridge
+                            .state()
+                            .and_then(|s| s.snapshot())
+                            .context("no snapshot")?;
+                        // Explicit metadata-only diagnostics: never print messages, tool inputs or credentials.
+                        let summarize =
+                            |turn: &Value| json!({"turnId":turn["turnId"],"status":turn["status"]});
+                        let live: Vec<_> = snapshot["turns"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(summarize)
+                            .collect();
+                        let active_history: Vec<_> =
+                            snapshot["turnHistory"]["history"]["entitiesByKey"]
+                                .as_object()
+                                .into_iter()
+                                .flat_map(|m| m.values())
+                                .filter(|t| t["status"] == "inProgress")
+                                .map(summarize)
+                                .collect();
+                        println!(
+                            "{}",
+                            json!({"runtimeStatus":snapshot["threadRuntimeStatus"]["type"],"liveTurns":live,"activeHistory":active_history,"unconfirmedCount":snapshot["unconfirmedTurnSubmissions"].as_array().map(Vec::len)})
+                        );
                     } else if line == "approvals" {
                         let approvals = bridge.state().context("no session")?.approvals();
                         // Explicitly requested view only; never continuously log conversation content.
@@ -144,18 +170,24 @@ fn main() -> anyhow::Result<()> {
                             println!(
                                 "{}",
                                 json!({"requestId":approval.request_id,"turnId":approval.turn_id,"method":approval.method,
-                                "command":approval.details.get("command"),"reason":approval.details.get("reason"),"changes":approval.details.get("changes"),"itemId":approval.details.get("itemId")})
+                                "command":approval.details.get("command"),"reason":approval.details.get("reason"),"changes":approval.details.get("changes"),"itemId":approval.details.get("itemId"),
+                                "availableDecisions":approval.details.get("availableDecisions"),
+                                "networkApprovalContext":approval.details.get("networkApprovalContext"),
+                                "additionalPermissions":approval.details.get("additionalPermissions"),
+                                "grantRoot":approval.details.get("grantRoot")})
                             );
                         }
                         println!(
-                            "If the command or file changes are not fully visible, decline or handle the request in the original client."
+                            "Use only decisions offered by the owner and supported by this probe. If details are incomplete, permissions are unsupported, or available decisions are unclear, handle the request in the original client. Cancel interrupts the turn; it is not a substitute for decline."
                         );
                     } else if let Some(text) = line.strip_prefix("send ") {
                         bridge.send_text(text)?;
                         receipt();
                     } else if let Some(turn) = line.strip_prefix("stop ") {
                         bridge.stop(turn)?;
-                        receipt();
+                        println!(
+                            "Owner confirmed the selected turn interruption. Tool subprocess termination is NOT guaranteed. Use sync; idle is not proof that commands have exited."
+                        );
                     } else if let Some(data) = line.strip_prefix("approve ") {
                         let value: Value = serde_json::from_str(data)?;
                         let turn = value["turnId"].as_str().context("missing turnId")?;
