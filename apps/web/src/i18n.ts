@@ -55,6 +55,7 @@ const zh = {
   controlInfo: "仅在明确空闲时发送，不排队；不提供中断能力。",
   accepted: "请求已接收，不代表执行完成。",
   uncertain: "结果未确认。不会自动重发，请刷新状态后核对官方客户端。",
+  notDispatched: "本次操作未执行。请刷新状态后重试，不会自动重发。",
   approval: "等待审批",
   accept: "允许一次",
   decline: "拒绝",
@@ -147,6 +148,8 @@ const en: Words = {
   accepted: "Request acknowledged; execution is not necessarily complete.",
   uncertain:
     "Outcome unconfirmed. Nothing will be retried automatically. Refresh and check the official client.",
+  notDispatched:
+    "This operation was not executed. Refresh the state before retrying. No automatic retry.",
   approval: "Approval required",
   accept: "Allow once",
   decline: "Decline",
@@ -233,6 +236,7 @@ const tw: Words = {
   controlInfo: "僅在明確閒置時傳送，不排隊；不提供中斷能力。",
   accepted: "請求已接收，不代表執行完成。",
   uncertain: "結果未確認。不會自動重送，請重新整理狀態後核對官方客戶端。",
+  notDispatched: "本次操作未執行。請重新整理狀態後重試，不會自動重送。",
   approval: "等待審批",
   accept: "允許一次",
   decline: "拒絕",
@@ -321,6 +325,8 @@ const ja: Words = {
   controlInfo: "待機状態が確認されたときのみ送信できます。キューや中断は利用できません。",
   accepted: "リクエストを受け付けました。実行完了を意味しません。",
   uncertain: "結果は未確認です。自動再送はしません。更新して公式クライアントを確認してください。",
+  notDispatched:
+    "今回の操作は実行されませんでした。状態を更新してから再試行してください。自動再送はしません。",
   approval: "承認待ち",
   accept: "今回のみ許可",
   decline: "拒否",

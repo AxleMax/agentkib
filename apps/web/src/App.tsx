@@ -88,10 +88,11 @@ export function App() {
     [page, setPage] = useState<ConversationEventPage>(),
     [live, setLive] = useState<Live>(),
     [online, setOnline] = useState(false),
+    [controlReady, setControlReady] = useState(false),
     [indexEnabled, setIndexEnabled] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(false),
-    [notice, setNotice] = useState<"accepted" | "uncertain">(),
+    [notice, setNotice] = useState<"accepted" | "uncertain" | "notDispatched">(),
     [code, setCode] = useState(""),
     [name, setName] = useState(""),
     [search, setSearch] = useState(""),
@@ -102,6 +103,11 @@ export function App() {
     accessRef = useRef<Access | undefined>(undefined),
     scroll = useRef<HTMLElement>(null),
     mutating = useRef(false);
+  const refreshRequired = useRef(false);
+  const manualRefreshRequired = useRef(false);
+  const readinessEpoch = useRef(0);
+  const uncertainOutcome = useRef(false);
+  const accessEpoch = useRef(0);
   useEffect(() => {
     document.documentElement.lang = locale;
     document.documentElement.dataset.theme = theme;
@@ -109,6 +115,7 @@ export function App() {
   }, [locale, theme, accent]);
   const clear = useCallback(() => {
     generation.current++;
+    readinessEpoch.current++;
     selection.current = "";
     setSelected("");
     setSessions([]);
@@ -119,9 +126,15 @@ export function App() {
     setSearch("");
     setNotice(undefined);
     setOnline(false);
+    setControlReady(false);
+    refreshRequired.current = false;
+    manualRefreshRequired.current = false;
+    uncertainOutcome.current = false;
   }, []);
   const fail = useCallback(
-    (e: unknown) => {
+    (e: unknown, g = generation.current) => {
+      if (g !== generation.current) return;
+      readinessEpoch.current++;
       if (e instanceof ApiError && e.code === "access_ended") {
         clear();
         const ended: Access = {
@@ -132,7 +145,13 @@ export function App() {
         };
         accessRef.current = ended;
         setAccess(ended);
+      } else if (e instanceof ApiError && e.code === "operation_busy") {
+        // Reservation contention says nothing about connectivity. Keep readable
+        // history, but require fresh access and live state before another control.
+        refreshRequired.current = true;
+        setControlReady(false);
       } else if (!(e instanceof DOMException && e.name === "AbortError")) {
+        setControlReady(false);
         setError(true);
         setOnline(false);
       }
@@ -141,8 +160,9 @@ export function App() {
   );
   const syncAccess = useCallback(async () => {
     const g = generation.current;
+    const epoch = ++accessEpoch.current;
     const next = await client.access();
-    if (g !== generation.current) return;
+    if (g !== generation.current || epoch !== accessEpoch.current) return;
     const old = accessRef.current;
     if (
       old?.status === "approved" &&
@@ -155,34 +175,49 @@ export function App() {
     setAccess(next);
     return next;
   }, [clear]);
-  const refresh = useCallback(async () => {
-    setError(false);
-    setOnline(false);
-    try {
-      const next = await syncAccess();
-      if (next?.status !== "approved") return;
-      const g = generation.current;
-      const catalog = await client.catalog();
-      if (g !== generation.current) return;
-      if (!catalog.indexEnabled) {
-        clear();
-        setIndexEnabled(false);
-        return;
+  const refresh = useCallback(
+    async (manual = false) => {
+      let g = generation.current;
+      const epoch = ++readinessEpoch.current;
+      // A newer access request can supersede this one. Keep the full refresh
+      // pending so polling can finish it, including an explicit manual retry.
+      refreshRequired.current = true;
+      if (manual) manualRefreshRequired.current = true;
+      setError(false);
+      setControlReady(false);
+      try {
+        const next = await syncAccess();
+        if (next?.status !== "approved") return;
+        g = generation.current;
+        const catalog = await client.catalog();
+        if (g !== generation.current) return;
+        if (!catalog.indexEnabled) {
+          clear();
+          setIndexEnabled(false);
+          return;
+        }
+        setIndexEnabled(true);
+        setSessions(catalog.sessions);
+        const id = selection.current;
+        if (id) {
+          const [history, state] = await Promise.all([client.events(id), client.live(id)]);
+          if (g !== generation.current || selection.current !== id) return;
+          setPage(history);
+          setLive(state);
+        }
+        setOnline(true);
+        if (epoch === readinessEpoch.current) {
+          if (manualRefreshRequired.current) uncertainOutcome.current = false;
+          setControlReady(!uncertainOutcome.current);
+          refreshRequired.current = false;
+          manualRefreshRequired.current = false;
+        }
+      } catch (e) {
+        fail(e, g);
       }
-      setIndexEnabled(true);
-      setSessions(catalog.sessions);
-      const id = selection.current;
-      if (id) {
-        const [history, state] = await Promise.all([client.events(id), client.live(id)]);
-        if (g !== generation.current || selection.current !== id) return;
-        setPage(history);
-        setLive(state);
-      }
-      setOnline(true);
-    } catch (e) {
-      fail(e);
-    }
-  }, [syncAccess, fail, clear]);
+    },
+    [syncAccess, fail, clear],
+  );
   useEffect(() => {
     void refresh();
     let polling = false;
@@ -190,9 +225,15 @@ export function App() {
     async function refreshAccessOnly() {
       if (polling) return;
       polling = true;
+      let g = generation.current;
       try {
         const before = accessRef.current?.status;
         const next = await syncAccess();
+        g = generation.current;
+        if (next?.status === "approved" && refreshRequired.current) {
+          await refresh();
+          return;
+        }
         if (next?.status === "approved" && before !== "approved") void refresh();
         else if (next?.status === "approved") {
           const g = generation.current;
@@ -207,7 +248,7 @@ export function App() {
           }
         }
       } catch (e) {
-        fail(e);
+        fail(e, g);
       } finally {
         polling = false;
       }
@@ -235,12 +276,13 @@ export function App() {
       }
     });
     stream.addEventListener("unavailable", () => {
-      if (!closed) {
+      if (!closed && g === generation.current) {
         clear();
         setError(true);
       }
     });
     stream.addEventListener("access-ended", () => {
+      if (closed || g !== generation.current) return;
       clear();
       accessRef.current = {
         status: "ended",
@@ -261,12 +303,12 @@ export function App() {
             setOnline(true);
           }
         } catch (e) {
-          fail(e);
+          if (!closed) fail(e, g);
         }
       })();
     };
     stream.onerror = () => {
-      if (!closed) setOnline(false);
+      if (!closed && g === generation.current) setOnline(false);
     };
     return () => {
       closed = true;
@@ -294,7 +336,7 @@ export function App() {
               : latest;
           });
         })
-        .catch(fail);
+        .catch((e) => fail(e, g));
     }, 500);
     return () => clearTimeout(timer);
   }, [selected, live?.revision, online, fail]);
@@ -308,6 +350,7 @@ export function App() {
     setMessage("");
     setNotice(undefined);
     setOnline(false);
+    setControlReady(false);
     setError(false);
     const g = generation.current;
     try {
@@ -316,9 +359,10 @@ export function App() {
       setPage(history);
       setLive(state);
       setOnline(true);
+      setControlReady(!refreshRequired.current && !uncertainOutcome.current);
       scroll.current?.scrollTo?.({ top: 0 });
     } catch (e) {
-      fail(e);
+      fail(e, g);
     }
   }
   async function post(path: string, body: unknown) {
@@ -326,11 +370,13 @@ export function App() {
     mutating.current = true;
     setBusy(true);
     setError(false);
+    const g = generation.current;
     try {
       await client.request(path, body);
+      if (g !== generation.current) return;
       await refresh();
     } catch (e) {
-      fail(e);
+      fail(e, g);
     } finally {
       mutating.current = false;
       setBusy(false);
@@ -373,13 +419,13 @@ export function App() {
         }
       });
     } catch (e) {
-      fail(e);
+      fail(e, g);
     } finally {
       setBusy(false);
     }
   }
   async function control(kind: "send" | "approve", approval?: Approval, decision?: Decision) {
-    if (mutating.current || !access || !live || !online) return;
+    if (mutating.current || !access || !live || !online || !controlReady) return;
     const text = message.trim();
     if (kind === "send" && !isValidMessage(message)) return;
     // A stable request ID does not mean the command/scope shown in an open
@@ -393,6 +439,8 @@ export function App() {
     mutating.current = true;
     setBusy(true);
     setNotice(undefined);
+    readinessEpoch.current++;
+    manualRefreshRequired.current = false;
     const g = generation.current,
       id = selected;
     try {
@@ -412,9 +460,24 @@ export function App() {
       await refresh();
     } catch (e) {
       if (g === generation.current) {
-        setNotice("uncertain");
-        setOnline(false);
-        fail(e);
+        if (e instanceof ApiError && e.code === "access_ended") {
+          fail(e, g);
+        } else {
+          setControlReady(false);
+          refreshRequired.current = true;
+          if (e instanceof ApiError && e.controlOutcome === "not-dispatched") {
+            setNotice("notDispatched");
+            await refresh();
+          } else {
+            // A refresh clicked while this request was pending cannot acknowledge
+            // an uncertain outcome that has only just arrived.
+            manualRefreshRequired.current = false;
+            uncertainOutcome.current = true;
+            setNotice("uncertain");
+            setOnline(false);
+            fail(e, g);
+          }
+        }
       }
     } finally {
       mutating.current = false;
@@ -423,6 +486,7 @@ export function App() {
   }
   const current = sessions.find((s) => s.id === selected);
   const canSend =
+    controlReady &&
     online &&
     !busy &&
     !!access?.experimentalEnabled &&
@@ -459,7 +523,7 @@ export function App() {
       </header>
       {error && (
         <div role="alert" className="banner danger">
-          {t.error} <button onClick={() => void refresh()}>{t.retry}</button>
+          {t.error} <button onClick={() => void refresh(true)}>{t.retry}</button>
         </div>
       )}
       {!access ? (
@@ -537,7 +601,7 @@ export function App() {
           <aside className="catalog">
             <header>
               <h1>{t.sessions}</h1>
-              <button aria-label={t.refresh} onClick={() => void refresh()}>
+              <button aria-label={t.refresh} onClick={() => void refresh(true)}>
                 <RefreshCw size={18} />
               </button>
             </header>
@@ -609,7 +673,7 @@ export function App() {
                   <button aria-label={t.details} onClick={() => setModal("metadata")}>
                     <Settings2 size={18} />
                   </button>
-                  <button aria-label={t.refresh} onClick={() => void refresh()}>
+                  <button aria-label={t.refresh} onClick={() => void refresh(true)}>
                     <RefreshCw size={18} />
                   </button>
                 </header>
@@ -775,6 +839,7 @@ export function App() {
           {modal.supported &&
           access?.experimentalEnabled &&
           access.device?.approve &&
+          controlReady &&
           online &&
           live?.approvals.some((a) => JSON.stringify(a) === JSON.stringify(modal)) ? (
             <div className="decision-actions">

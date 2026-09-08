@@ -88,22 +88,28 @@ impl GrokBuildProvider {
                     continue;
                 }
                 match parse_summary(&root, archived, entry.path()) {
-                    Ok(Some(session)) => {
-                        if workspace.is_none_or(|workspace| {
-                            session
-                                .cwd
-                                .as_deref()
-                                .is_some_and(|cwd| belongs_to_workspace(cwd, workspace))
-                        }) {
-                            output.push(session);
-                        }
-                    }
+                    Ok(Some(session)) => output.push(session),
                     Ok(None) | Err(_) => incomplete = true,
                 }
             }
         }
+        // Choose the same locator for listing and reading, before filtering by
+        // workspace. Sort only the bounded candidates, not a whole directory.
+        output.sort_by(|left, right| {
+            left.archived
+                .cmp(&right.archived)
+                .then_with(|| left.transcript.cmp(&right.transcript))
+        });
         let mut seen = BTreeSet::new();
         output.retain(|session| seen.insert(session.native_ref.clone()));
+        output.retain(|session| {
+            workspace.is_none_or(|workspace| {
+                session
+                    .cwd
+                    .as_deref()
+                    .is_some_and(|cwd| belongs_to_workspace(cwd, workspace))
+            })
+        });
         output.sort_by(|left, right| {
             right
                 .updated_at
@@ -198,7 +204,11 @@ fn summary(session: Session) -> NativeSessionSummary {
 fn parse_summary(root: &Path, archived: bool, path: &Path) -> Result<Option<Session>> {
     let value: Value = serde_json::from_slice(&read_bounded(path, MAX_METADATA_BYTES)?)
         .with_context(|| format!("Invalid Grok summary {}", path.display()))?;
-    let Some(id) = value.pointer("/info/id").and_then(Value::as_str) else {
+    let Some(id) = value
+        .pointer("/info/id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+    else {
         return Ok(None);
     };
     let cwd = value
@@ -229,16 +239,9 @@ fn parse_summary(root: &Path, archived: bool, path: &Path) -> Result<Option<Sess
         .context("Grok summary has no session directory")?;
     let transcript = session_dir.join("chat_history.jsonl");
     let home = root.parent().unwrap_or(root);
-    let relative = path.strip_prefix(home).unwrap_or(path).to_string_lossy();
-    let native_ref = stable_native_ref(
-        "grok-build",
-        &[
-            home.to_string_lossy().as_ref(),
-            if archived { "archived" } else { "active" },
-            id,
-            &relative,
-        ],
-    );
+    // The home scopes the native ID to its profile. Archiving or moving the
+    // transcript must only change its locator, never its indexed identity.
+    let native_ref = stable_native_ref("grok-build", &[home.to_string_lossy().as_ref(), id]);
     Ok(Some(Session {
         native_ref,
         transcript,
@@ -255,6 +258,176 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    fn write_session(home: &Path, relative: &str, workspace: &Path, id: Value) -> PathBuf {
+        fs::create_dir_all(workspace).unwrap();
+        let session = home.join(relative);
+        fs::create_dir_all(&session).unwrap();
+        fs::write(
+            session.join("summary.json"),
+            serde_json::json!({"info": {"id": id, "cwd": workspace}}).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            session.join("chat_history.jsonl"),
+            "{\"type\":\"user\",\"content\":\"hello\"}\n",
+        )
+        .unwrap();
+        session
+    }
+
+    #[test]
+    fn identity_survives_archiving_and_restoring_to_a_different_directory() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("project");
+        let active = write_session(dir.path(), "sessions/project/s1", &workspace, "id1".into());
+        let provider = GrokBuildProvider::with_home(dir.path().to_path_buf());
+        let native_ref = provider.list_sessions(&workspace).unwrap()[0]
+            .native_ref
+            .clone();
+        let archive = dir.path().join("archived_sessions/renamed");
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        fs::rename(&active, &archive).unwrap();
+        let archived = provider.list_sessions(&workspace).unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].native_ref, native_ref);
+        assert!(archived[0].archived);
+        assert_eq!(
+            provider
+                .read_events(&native_ref, None, 10)
+                .unwrap()
+                .events
+                .len(),
+            1
+        );
+        fs::rename(archive, dir.path().join("sessions/restored")).unwrap();
+        let restored = provider.list_sessions(&workspace).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].native_ref, native_ref);
+        assert!(!restored[0].archived);
+        assert_eq!(
+            provider
+                .read_events(&native_ref, None, 10)
+                .unwrap()
+                .events
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn duplicated_native_id_prefers_active_copy_and_resolves_archive_after_removal() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("project");
+        let active = write_session(dir.path(), "sessions/a", &workspace, "same".into());
+        let archived = write_session(dir.path(), "archived_sessions/b", &workspace, "same".into());
+        let provider = GrokBuildProvider::with_home(dir.path().to_path_buf());
+        let listing = provider.list_sessions_detailed(&workspace).unwrap();
+        assert!(!listing.incomplete);
+        assert_eq!(listing.sessions.len(), 1);
+        let native_ref = &listing.sessions[0].native_ref;
+        assert!(!listing.sessions[0].archived);
+        assert_eq!(
+            provider.resolve(native_ref).unwrap().transcript,
+            active.join("chat_history.jsonl")
+        );
+        fs::remove_dir_all(active).unwrap();
+        assert_eq!(
+            provider.resolve(native_ref).unwrap().transcript,
+            archived.join("chat_history.jsonl")
+        );
+        assert_eq!(
+            provider
+                .read_events(native_ref, None, 10)
+                .unwrap()
+                .events
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn duplicate_id_across_workspaces_uses_one_locator_for_listing_and_reading() {
+        let dir = tempdir().unwrap();
+        let workspace_a = dir.path().join("project-a");
+        let workspace_b = dir.path().join("project-b");
+        let active = write_session(dir.path(), "sessions/a", &workspace_a, "same".into());
+        let archived = write_session(
+            dir.path(),
+            "archived_sessions/b",
+            &workspace_b,
+            "same".into(),
+        );
+        fs::write(
+            archived.join("chat_history.jsonl"),
+            "{\"type\":\"user\",\"content\":\"archived B\"}\n",
+        )
+        .unwrap();
+        let provider = GrokBuildProvider::with_home(dir.path().to_path_buf());
+        let a = provider.list_sessions(&workspace_a).unwrap();
+        assert_eq!(a.len(), 1);
+        assert!(provider.list_sessions(&workspace_b).unwrap().is_empty());
+        assert_eq!(
+            provider.resolve(&a[0].native_ref).unwrap().transcript,
+            active.join("chat_history.jsonl")
+        );
+        fs::remove_dir_all(active).unwrap();
+        let b = provider.list_sessions(&workspace_b).unwrap();
+        assert_eq!(b.len(), 1);
+        assert_eq!(a[0].native_ref, b[0].native_ref);
+        assert!(provider.list_sessions(&workspace_a).unwrap().is_empty());
+        assert_eq!(
+            provider.resolve(&b[0].native_ref).unwrap().transcript,
+            archived.join("chat_history.jsonl")
+        );
+    }
+
+    #[test]
+    fn identity_distinguishes_native_ids_and_profiles() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("project");
+        let first_home = dir.path().join("profile-a");
+        let second_home = dir.path().join("profile-b");
+        write_session(&first_home, "sessions/same-name", &workspace, "id1".into());
+        write_session(
+            &first_home,
+            "archived_sessions/same-name",
+            &workspace,
+            "id2".into(),
+        );
+        write_session(&second_home, "sessions/same-name", &workspace, "id1".into());
+        let first = GrokBuildProvider::with_home(first_home)
+            .list_sessions(&workspace)
+            .unwrap();
+        let second = GrokBuildProvider::with_home(second_home)
+            .list_sessions(&workspace)
+            .unwrap();
+        assert_eq!(first.len(), 2);
+        assert_ne!(first[0].native_ref, first[1].native_ref);
+        assert!(
+            first
+                .iter()
+                .all(|session| session.native_ref != second[0].native_ref)
+        );
+    }
+
+    #[test]
+    fn missing_or_blank_native_id_is_not_guessed_from_directory() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("project");
+        for (name, id) in [
+            ("missing", Value::Null),
+            ("empty", "".into()),
+            ("blank", "  ".into()),
+        ] {
+            write_session(dir.path(), &format!("sessions/{name}"), &workspace, id);
+        }
+        let listing = GrokBuildProvider::with_home(dir.path().to_path_buf())
+            .list_sessions_detailed(&workspace)
+            .unwrap();
+        assert!(listing.sessions.is_empty());
+        assert!(listing.incomplete);
+    }
 
     #[test]
     fn reads_active_and_archived_transcripts() {

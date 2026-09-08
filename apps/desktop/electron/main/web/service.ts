@@ -286,10 +286,17 @@ export class WebAccessService {
   private async start() {
     this.error = undefined;
     const server = createServer((req, res) => {
-      void this.handle(req, res).catch((error) => {
+      const control = { request: false, dispatched: false, priorUncertain: false };
+      void this.handle(req, res, control).catch((error) => {
         if (!res.headersSent)
           this.json(res, error instanceof HttpError ? error.status : 500, {
             error: error instanceof HttpError ? error.message : "request_failed",
+            ...(control.request && {
+              // Error codes alone cannot distinguish a preflight rejection from
+              // a grant/boot recheck after dispatch, or a previous request.
+              controlOutcome:
+                control.dispatched || control.priorUncertain ? "unknown" : "not-dispatched",
+            }),
           });
         else res.end();
       });
@@ -428,7 +435,11 @@ export class WebAccessService {
       clearTimeout(timer!);
     }
   }
-  private async handle(req: IncomingMessage, res: ServerResponse) {
+  private async handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+    control: { request: boolean; dispatched: boolean; priorUncertain: boolean },
+  ) {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader(
@@ -452,6 +463,7 @@ export class WebAccessService {
     res.setHeader("Cache-Control", "no-store");
     const path = url.pathname.replace(/^\/api\/web\/v1/, "");
     if (!url.pathname.startsWith("/api/web/v1/")) throw new HttpError(404, "not_found");
+    control.request = req.method === "POST" && (path === "/send" || path === "/approve");
     const cookieName = external ? "ak_web_secure" : "ak_web_local";
     let raw = req.headers.cookie
       ?.split(";")
@@ -543,9 +555,15 @@ export class WebAccessService {
       const sessionId = this.field(body.sessionId);
       if (!this.controlsEnabled(sessionId)) throw new HttpError(403, "session_control_not_allowed");
       const requestId = this.field(body.requestId, 128);
-      if (this.requests.has(requestId)) throw new HttpError(409, "duplicate_request");
+      if (this.requests.has(requestId)) {
+        control.priorUncertain = true;
+        throw new HttpError(409, "duplicate_request");
+      }
       if (this.active.has(sessionId)) throw new HttpError(409, "operation_busy");
-      if (this.unconfirmed.has(sessionId)) throw new HttpError(409, "outcome_unknown");
+      if (this.unconfirmed.has(sessionId)) {
+        control.priorUncertain = true;
+        throw new HttpError(409, "outcome_unknown");
+      }
       if (this.requests.size >= 10_000) throw new HttpError(429, "request_capacity");
       if (!Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0)
         throw new HttpError(400, "invalid_revision");
@@ -625,6 +643,7 @@ export class WebAccessService {
         }
         params.runtimeBootId = snapshot.runtimeBootId;
         dispatched = true;
+        control.dispatched = true;
         this.unconfirmed.add(sessionId);
         const pending = Promise.resolve()
           .then(() => this.options.runtimeRequest(params))
@@ -690,8 +709,14 @@ export class WebAccessService {
             res.end();
             return;
           }
-        } catch {
-          if (!res.writableEnded) res.write("event: unavailable\ndata: {}\n\n");
+        } catch (error) {
+          // Admission reserves runtime capacity for control. A skipped read is
+          // not a stream outage; keep polling and keep revocation checks active.
+          if (
+            !(error instanceof HttpError && error.message === "operation_busy") &&
+            !res.writableEnded
+          )
+            res.write("event: unavailable\ndata: {}\n\n");
         }
         if (this.streams.has(res)) timer = setTimeout(() => void poll(), 2000);
       };

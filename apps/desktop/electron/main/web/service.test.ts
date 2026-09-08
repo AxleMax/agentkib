@@ -394,6 +394,101 @@ describe("WebAccessService loopback security boundary", () => {
         .status,
     ).toBe(200);
   });
+  it("marks only definitive pre-dispatch control rejections as not dispatched", async () => {
+    await bootstrap();
+    await pair(true);
+    const body = { sessionId: "s", text: "x", requestId: "stale", bootId, expectedRevision: 3 };
+    const stale = await http("/api/web/v1/send", { method: "POST", body });
+    expect(stale.json()).toMatchObject({ error: "stale_state", controlOutcome: "not-dispatched" });
+    expect(runtime).toHaveBeenCalledTimes(1);
+    runtime.mockRejectedValueOnce(new Error("preflight failed"));
+    expect(
+      (
+        await http("/api/web/v1/send", {
+          method: "POST",
+          body: { ...body, requestId: "preflight" },
+        })
+      ).json(),
+    ).toMatchObject({ error: "request_failed", controlOutcome: "not-dispatched" });
+    runtime.mockImplementation(async (params) => {
+      if ((params as { operation: string }).operation === "send") throw new Error("receipt lost");
+      return { runtimeBootId: "r", revision: 4, sendEnabled: true };
+    });
+    const dispatched = { ...body, requestId: "dispatched", expectedRevision: 4 };
+    expect(
+      (await http("/api/web/v1/send", { method: "POST", body: dispatched })).json(),
+    ).toMatchObject({ error: "request_failed", controlOutcome: "unknown" });
+    expect(
+      (await http("/api/web/v1/send", { method: "POST", body: dispatched })).json(),
+    ).toMatchObject({ error: "duplicate_request", controlOutcome: "unknown" });
+    expect(
+      (
+        await http("/api/web/v1/send", {
+          method: "POST",
+          body: { ...dispatched, requestId: "new" },
+        })
+      ).json(),
+    ).toMatchObject({ error: "outcome_unknown", controlOutcome: "unknown" });
+  });
+  it("keeps SSE connected across reserved preflight and mutation, while revocation still closes it", async () => {
+    await bootstrap();
+    const id = await pair(true);
+    const chunks: string[] = [];
+    let streamRequest: ReturnType<typeof request> | undefined;
+    const ended = new Promise<void>((resolve, reject) => {
+      streamRequest = request(
+        {
+          hostname: "127.0.0.1",
+          port,
+          path: "/api/web/v1/stream?sessionId=s",
+          headers: { Cookie: cookie },
+        },
+        (res) => {
+          res.on("data", (chunk) => chunks.push(String(chunk)));
+          res.on("end", resolve);
+        },
+      );
+      streamRequest.on("error", reject);
+      streamRequest.end();
+    });
+    let preflight!: (value: unknown) => void;
+    let mutation!: (value: unknown) => void;
+    try {
+      await vi.waitFor(() => expect(chunks.join("")).toContain("event: snapshot"));
+      runtime.mockImplementation(
+        async (params) =>
+          new Promise((resolve) => {
+            if ((params as { operation: string }).operation === "send") mutation = resolve;
+            else preflight = resolve;
+          }),
+      );
+      const control = http("/api/web/v1/send", {
+        method: "POST",
+        body: { sessionId: "s", text: "x", requestId: "reserved", bootId, expectedRevision: 4 },
+      });
+      await vi.waitFor(() => expect(preflight).toBeTypeOf("function"));
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+      expect(chunks.join("")).not.toContain("event: unavailable");
+      expect(runtime).toHaveBeenCalledTimes(2);
+      preflight({ runtimeBootId: "r", revision: 4, sendEnabled: true });
+      await vi.waitFor(() => expect(mutation).toBeTypeOf("function"));
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+      expect(chunks.join("")).not.toContain("event: unavailable");
+      expect(runtime).toHaveBeenCalledTimes(3);
+      await service.request({ operation: "revoke", id });
+      await ended;
+      expect(chunks.join("")).toContain("event: access-ended");
+      mutation({ accepted: true });
+      expect((await control).json()).toMatchObject({
+        error: "access_ended",
+        controlOutcome: "unknown",
+      });
+    } finally {
+      preflight?.({ runtimeBootId: "r", revision: 4, sendEnabled: true });
+      mutation?.({ accepted: true });
+      streamRequest?.destroy();
+    }
+  }, 10_000);
   it("rejects concurrent control and withholds results after authorization is revoked", async () => {
     await bootstrap();
     const id = await pair(true);
@@ -690,6 +785,29 @@ describe("WebAccessService loopback security boundary", () => {
     expect(
       runtime.mock.calls.filter(([p]) => (p as { operation: string }).operation === "send"),
     ).toHaveLength(1);
+  }, 30_000);
+  it("reports a read-only preflight timeout as not dispatched and permits a fresh request", async () => {
+    await bootstrap();
+    await pair(true);
+    runtime.mockImplementationOnce(() => new Promise(() => {}));
+    const body = {
+      sessionId: "s",
+      text: "x",
+      requestId: "preflight-timeout",
+      bootId,
+      expectedRevision: 4,
+    };
+    const timeout = await http("/api/web/v1/send", { method: "POST", body });
+    expect(timeout.status).toBe(504);
+    expect(timeout.json()).toMatchObject({
+      error: "outcome_unknown",
+      controlOutcome: "not-dispatched",
+    });
+    expect(runtime).toHaveBeenCalledTimes(1);
+    expect(
+      (await http("/api/web/v1/send", { method: "POST", body: { ...body, requestId: "fresh" } }))
+        .status,
+    ).toBe(200);
   }, 30_000);
   it("retains failed dispatch protection when the runtime recovers with a fresh idle snapshot", async () => {
     await bootstrap();

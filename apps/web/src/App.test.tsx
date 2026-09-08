@@ -124,6 +124,22 @@ describe("safe transcript", () => {
   });
 });
 describe("browser client", () => {
+  it.each(["not-dispatched", "unknown", undefined, "invalid"])(
+    "only preserves recognized control outcome %s",
+    async (controlOutcome) => {
+      const client = new WebClient(
+        vi
+          .fn()
+          .mockResolvedValue(
+            Response.json({ code: "permission_denied", controlOutcome }, { status: 403 }),
+          ),
+      );
+      await expect(client.request("send", {})).rejects.toMatchObject({
+        code: "permission_denied",
+        controlOutcome: controlOutcome === "invalid" ? undefined : controlOutcome,
+      });
+    },
+  );
   it("uses same origin cookies and CSRF without automatic mutation retries", async () => {
     const transport = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
     const client = new WebClient(transport);
@@ -212,6 +228,362 @@ function mockServer(initial = "approved") {
   };
 }
 describe("Web access UI", () => {
+  function controlServer() {
+    const server = mockServer();
+    const original = server.fetcher.getMockImplementation()!;
+    const normal = async (url: RequestInfo | URL) => {
+      if (String(url).endsWith("/access"))
+        return Response.json({
+          status: "approved",
+          csrfToken: "x",
+          bootId: "b",
+          experimentalEnabled: true,
+          device: { id: "d", name: "Browser", send: true, approve: true },
+        });
+      if (String(url).includes("/live"))
+        return Response.json({
+          sessionId: "s",
+          status: "idle",
+          revision: 1,
+          sendEnabled: true,
+          approvals: [],
+        });
+      return original(url);
+    };
+    server.fetcher.mockImplementation(normal);
+    return { ...server, normal };
+  }
+  async function openDraft() {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Test session/ }));
+    await screen.findByText("Secret history");
+    fireEvent.change(screen.getByLabelText("发送消息"), { target: { value: "draft" } });
+  }
+  it.each(["permission_denied", "stale_boot"])(
+    "uses dispatch evidence rather than %s to classify a rejection",
+    async (code) => {
+      const server = controlServer();
+      let release!: (response: Response) => void;
+      let rejected = false;
+      server.fetcher.mockImplementation(async (url) => {
+        if (String(url).endsWith("/send")) {
+          rejected = true;
+          return Response.json({ code, controlOutcome: "not-dispatched" }, { status: 409 });
+        }
+        if (rejected && String(url).endsWith("/access"))
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
+        return server.normal(url);
+      });
+      await openDraft();
+      fireEvent.click(screen.getByRole("button", { name: "发送" }));
+      await screen.findByText(dictionaries["zh-CN"].notDispatched);
+      expect(screen.getByLabelText("发送消息")).toHaveValue("draft");
+      expect(screen.getByText("Secret history")).toBeVisible();
+      act(() =>
+        FakeEvents.instances.at(-1)!.emit("snapshot", {
+          sessionId: "s",
+          status: "idle",
+          revision: 2,
+          sendEnabled: true,
+          approvals: [],
+        }),
+      );
+      expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+      await act(async () => release(await server.normal("/access")));
+      await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
+      expect(
+        server.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/send")),
+      ).toHaveLength(1);
+    },
+  );
+  it.each([
+    ["permission_denied", "unknown"],
+    ["stale_boot", "unknown"],
+    ["permission_denied", undefined],
+    ["stale_boot", undefined],
+    ["duplicate_request", "unknown"],
+    ["outcome_unknown", "unknown"],
+  ])("retains uncertainty for %s with evidence %s", async (code, controlOutcome) => {
+    const server = controlServer();
+    server.fetcher.mockImplementation(async (url) =>
+      String(url).endsWith("/send")
+        ? Response.json({ code, controlOutcome }, { status: 409 })
+        : server.normal(url),
+    );
+    await openDraft();
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText(dictionaries["zh-CN"].uncertain);
+    expect(screen.getByLabelText("发送消息")).toHaveValue("draft");
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+  });
+  it("clears private state when rejection refresh discovers revoked access", async () => {
+    const server = controlServer();
+    let rejected = false;
+    server.fetcher.mockImplementation(async (url) => {
+      if (String(url).endsWith("/send")) {
+        rejected = true;
+        return Response.json(
+          { code: "permission_denied", controlOutcome: "not-dispatched" },
+          { status: 403 },
+        );
+      }
+      if (rejected && String(url).endsWith("/access"))
+        return Response.json({ code: "access_ended" }, { status: 403 });
+      return server.normal(url);
+    });
+    await openDraft();
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText("远程访问已结束");
+    expect(screen.queryByText("Secret history")).toBeNull();
+    expect(screen.queryByText(dictionaries["zh-CN"].notDispatched)).toBeNull();
+  });
+  it("keeps a definite rejection definite when its state refresh fails", async () => {
+    const server = controlServer();
+    let rejected = false;
+    server.fetcher.mockImplementation(async (url) => {
+      if (String(url).endsWith("/send")) {
+        rejected = true;
+        return Response.json(
+          { code: "stale_boot", controlOutcome: "not-dispatched" },
+          { status: 409 },
+        );
+      }
+      if (rejected && String(url).endsWith("/access")) throw new TypeError("offline");
+      return server.normal(url);
+    });
+    await openDraft();
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByRole("alert");
+    expect(screen.getByText(dictionaries["zh-CN"].notDispatched)).toBeVisible();
+    expect(screen.queryByText(dictionaries["zh-CN"].uncertain)).toBeNull();
+    act(() =>
+      FakeEvents.instances.at(-1)!.emit("snapshot", {
+        sessionId: "s",
+        status: "idle",
+        revision: 2,
+        sendEnabled: true,
+        approvals: [],
+      }),
+    );
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.getByLabelText("发送消息")).toHaveValue("draft");
+  });
+  it.each(["not-dispatched", "unknown"])(
+    "classifies approval outcome %s without resubmission",
+    async (controlOutcome) => {
+      const server = controlServer();
+      server.fetcher.mockImplementation(async (url) => {
+        if (String(url).endsWith("/approve"))
+          return Response.json(
+            {
+              code: "permission_denied",
+              controlOutcome,
+            },
+            { status: 403 },
+          );
+        if (String(url).includes("/live"))
+          return Response.json({
+            sessionId: "s",
+            status: "awaiting-approval",
+            revision: 2,
+            sendEnabled: false,
+            approvals: [
+              {
+                requestId: 42,
+                turnId: "t",
+                method: "item/commandExecution/requestApproval",
+                command: ["true"],
+                supported: true,
+                availableDecisions: ["accept"],
+              },
+            ],
+          });
+        return server.normal(url);
+      });
+      await openDraft();
+      fireEvent.click(screen.getByRole("button", { name: "等待审批" }));
+      fireEvent.click(screen.getByRole("button", { name: "允许一次" }));
+      await screen.findByText(
+        dictionaries["zh-CN"][controlOutcome === "not-dispatched" ? "notDispatched" : "uncertain"],
+      );
+      expect(
+        server.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/approve")),
+      ).toHaveLength(1);
+      expect(screen.getByText("Secret history")).toBeVisible();
+    },
+  );
+  it("defers busy access polling without erasing history or trusting stream snapshots", async () => {
+    const interval = vi.spyOn(globalThis, "setInterval");
+    const server = controlServer();
+    await openDraft();
+    let reserved = true;
+    server.fetcher.mockImplementation(async (url) =>
+      reserved && String(url).endsWith("/access")
+        ? Response.json({ code: "operation_busy" }, { status: 409 })
+        : server.normal(url),
+    );
+    const poll = interval.mock.calls.find(([, delay]) => delay === 4000)![0] as () => void;
+    await act(async () => {
+      poll();
+    });
+    expect(screen.getByText("Secret history")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    act(() =>
+      FakeEvents.instances.at(-1)!.emit("snapshot", {
+        sessionId: "s",
+        status: "idle",
+        revision: 2,
+        sendEnabled: true,
+        approvals: [],
+      }),
+    );
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    reserved = false;
+    await act(async () => {
+      poll();
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
+    expect(server.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/send"))).toHaveLength(
+      0,
+    );
+  });
+  it("does not unlock an uncertain legacy-host outcome during automatic polling", async () => {
+    const interval = vi.spyOn(globalThis, "setInterval");
+    const server = controlServer();
+    server.fetcher.mockImplementation(async (url) =>
+      String(url).endsWith("/send")
+        ? Response.json({ code: "permission_denied" }, { status: 403 })
+        : server.normal(url),
+    );
+    await openDraft();
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText(dictionaries["zh-CN"].uncertain);
+    const poll = interval.mock.calls.find(([, delay]) => delay === 4000)![0] as () => void;
+    await act(async () => {
+      poll();
+    });
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.getByLabelText("发送消息")).toHaveValue("draft");
+    expect(server.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/send"))).toHaveLength(
+      1,
+    );
+  });
+  it("requires a new manual refresh after a pending send becomes uncertain", async () => {
+    const interval = vi.spyOn(globalThis, "setInterval");
+    const server = controlServer();
+    await openDraft();
+    let finishSend!: (response: Response) => void;
+    let finishAccess!: (response: Response) => void;
+    let deferAccess = true;
+    server.fetcher.mockImplementation(async (url) => {
+      if (String(url).endsWith("/send"))
+        return new Promise<Response>((resolve) => {
+          finishSend = resolve;
+        });
+      if (deferAccess && String(url).endsWith("/access")) {
+        deferAccess = false;
+        return new Promise<Response>((resolve) => {
+          finishAccess = resolve;
+        });
+      }
+      return server.normal(url);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(finishSend).toBeTypeOf("function"));
+    fireEvent.click(screen.getAllByRole("button", { name: "刷新" })[0]);
+    await waitFor(() => expect(finishAccess).toBeTypeOf("function"));
+    await act(async () => {
+      finishSend(Response.json({ code: "permission_denied" }, { status: 403 }));
+    });
+    await screen.findByText(dictionaries["zh-CN"].uncertain);
+    await act(async () => {
+      finishAccess(await server.normal("/access"));
+    });
+    const poll = interval.mock.calls.find(([, delay]) => delay === 4000)![0] as () => void;
+    await act(async () => {
+      poll();
+    });
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.getByLabelText("发送消息")).toHaveValue("draft");
+    expect(server.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/send"))).toHaveLength(
+      1,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: "刷新" })[0]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
+  });
+  it.each([false, true])(
+    "finishes a superseded manual access refresh (uncertain: %s)",
+    async (uncertain) => {
+      const interval = vi.spyOn(globalThis, "setInterval");
+      const server = controlServer();
+      await openDraft();
+      if (uncertain) {
+        server.fetcher.mockImplementation(async (url) =>
+          String(url).endsWith("/send")
+            ? Response.json({ code: "permission_denied" }, { status: 403 })
+            : server.normal(url),
+        );
+        fireEvent.click(screen.getByRole("button", { name: "发送" }));
+        await screen.findByText(dictionaries["zh-CN"].uncertain);
+      }
+      let release!: (response: Response) => void;
+      let firstAccess = true;
+      server.fetcher.mockImplementation(async (url) => {
+        if (firstAccess && String(url).endsWith("/access")) {
+          firstAccess = false;
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
+        }
+        return server.normal(url);
+      });
+      fireEvent.click(screen.getAllByRole("button", { name: "刷新" })[0]);
+      await waitFor(() => expect(release).toBeTypeOf("function"));
+      expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+      const poll = interval.mock.calls.find(([, delay]) => delay === 4000)![0] as () => void;
+      await act(async () => {
+        poll();
+      });
+      await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
+      await act(async () => {
+        release(await server.normal("/access"));
+      });
+      expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+      expect(screen.getByLabelText("发送消息")).toHaveValue("draft");
+    },
+  );
+  it("does not let an older refresh unlock controls after a newer busy poll", async () => {
+    const interval = vi.spyOn(globalThis, "setInterval");
+    const server = controlServer();
+    await openDraft();
+    let release!: (response: Response) => void;
+    let reserved = false;
+    server.fetcher.mockImplementation(async (url) => {
+      if (String(url).includes("/live"))
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      if (reserved && String(url).endsWith("/access"))
+        return Response.json({ code: "operation_busy" }, { status: 409 });
+      return server.normal(url);
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "刷新" })[0]);
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    reserved = true;
+    const poll = interval.mock.calls.find(([, delay]) => delay === 4000)![0] as () => void;
+    await act(async () => {
+      poll();
+    });
+    await act(async () => {
+      release(await server.normal("/live"));
+    });
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.getByText("Secret history")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
   it.each(["openclaw", "hermes", "grok-build"])(
     "reads %s history without offering experimental sending",
     async (agent) => {

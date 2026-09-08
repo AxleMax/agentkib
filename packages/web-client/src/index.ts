@@ -62,6 +62,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public code: string,
+    public controlOutcome?: "not-dispatched" | "unknown",
   ) {
     super(code);
   }
@@ -83,13 +84,20 @@ export class WebClient {
     });
     if (!response.ok) {
       let code = "request_failed";
+      let controlOutcome: ApiError["controlOutcome"];
       try {
         const value = await response.json();
         code = value.code ?? value.error ?? code;
+        if (value.controlOutcome === "not-dispatched" || value.controlOutcome === "unknown")
+          controlOutcome = value.controlOutcome;
       } catch {
         /* Never expose raw HTML/proxy bodies. */
       }
-      throw new ApiError(response.status, typeof code === "string" ? code : "request_failed");
+      throw new ApiError(
+        response.status,
+        typeof code === "string" ? code : "request_failed",
+        controlOutcome,
+      );
     }
     return response.status === 204 ? (undefined as T) : (response.json() as Promise<T>);
   }
