@@ -430,6 +430,85 @@ describe("WebAccessService loopback security boundary", () => {
       ).json(),
     ).toMatchObject({ error: "outcome_unknown", controlOutcome: "unknown" });
   });
+  it.each(["send", "approve"])(
+    "releases the fence for a correlated bridge %s preflight rejection",
+    async (operation) => {
+      await bootstrap();
+      await pair(true, true);
+      const snapshot = {
+        runtimeBootId: "r",
+        revision: 4,
+        sendEnabled: true,
+        approvals: [
+          { requestId: "a", turnId: "t", supported: true, availableDecisions: ["accept"] },
+        ],
+      };
+      runtime.mockImplementation(async (params) => {
+        const p = params as Record<string, unknown>;
+        return p.operation === operation
+          ? {
+              accepted: false,
+              completed: false,
+              controlOutcome: "not-dispatched",
+              requestId: p.requestId,
+              runtimeBootId: "r",
+            }
+          : snapshot;
+      });
+      const body = {
+        sessionId: "s",
+        text: "x",
+        requestId: "first",
+        bootId,
+        expectedRevision: 4,
+        approvalId: "a",
+        turnId: "t",
+        decision: "accept",
+      };
+      const rejected = await http(`/api/web/v1/${operation}`, { method: "POST", body });
+      expect(rejected.status).toBe(409);
+      expect(rejected.json()).toMatchObject({ controlOutcome: "not-dispatched" });
+      expect((await http("/api/web/v1/live?sessionId=s")).json().sendEnabled).toBe(true);
+      runtime.mockResolvedValue({ ...snapshot, accepted: true });
+      expect(
+        (
+          await http(`/api/web/v1/${operation}`, {
+            method: "POST",
+            body: { ...body, requestId: "fresh" },
+          })
+        ).status,
+      ).toBe(200);
+    },
+  );
+  it.each([
+    { requestId: "wrong" },
+    { runtimeBootId: "wrong" },
+    { controlOutcome: undefined },
+    { accepted: undefined },
+  ])("does not release a fence for an uncorrelated rejection %j", async (override) => {
+    await bootstrap();
+    await pair(true);
+    runtime.mockImplementation(async (params) =>
+      (params as { operation: string }).operation === "send"
+        ? {
+            accepted: false,
+            completed: false,
+            requestId: "first",
+            runtimeBootId: "r",
+            controlOutcome: "not-dispatched",
+            ...override,
+          }
+        : { runtimeBootId: "r", revision: 4, sendEnabled: true },
+    );
+    const body = { sessionId: "s", text: "x", requestId: "first", bootId, expectedRevision: 4 };
+    await http("/api/web/v1/send", { method: "POST", body });
+    expect((await http("/api/web/v1/live?sessionId=s")).json().sendEnabled).toBe(false);
+    expect(
+      (
+        await http("/api/web/v1/send", { method: "POST", body: { ...body, requestId: "fresh" } })
+      ).json(),
+    ).toMatchObject({ controlOutcome: "unknown" });
+  });
   it("keeps SSE connected across reserved preflight and mutation, while revocation still closes it", async () => {
     await bootstrap();
     const id = await pair(true);
@@ -747,45 +826,58 @@ describe("WebAccessService loopback security boundary", () => {
     finish({ accepted: true });
     expect((await send).status).toBe(409);
   });
-  it("retains unknown outcome after timeout, late success and runtime restart", async () => {
-    await bootstrap();
-    await pair(true);
-    let finish!: (value: unknown) => void;
-    runtime.mockImplementation(async (p) =>
-      (p as { operation: string }).operation === "send"
-        ? new Promise((resolve) => {
-            finish = resolve;
-          })
-        : { runtimeBootId: "r", revision: 4, sendEnabled: true },
-    );
-    const body = { sessionId: "s", text: "x", requestId: "r", bootId, expectedRevision: 4 };
-    const timeout = await http("/api/web/v1/send", { method: "POST", body });
-    expect(timeout.status).toBe(504);
-    expect(timeout.json().error).toBe("outcome_unknown");
-    expect(
-      (await http("/api/web/v1/send", { method: "POST", body: { ...body, requestId: "r2" } }))
-        .status,
-    ).toBe(409);
-    finish({ accepted: true });
-    expect((await http("/api/web/v1/send", { method: "POST", body })).status).toBe(409);
-    service.runtimeUnavailable();
-    const access = await http("/api/web/v1/access");
-    const next = await http("/api/web/v1/send", {
-      method: "POST",
-      body: { ...body, requestId: "after-restart", bootId: access.json().bootId },
-    });
-    expect(next.status).toBe(409);
-    expect(next.json().error).toBe("outcome_unknown");
-    const live = await http("/api/web/v1/live?sessionId=s");
-    expect(live.json()).toMatchObject({
-      status: "outcome-unknown",
-      sendEnabled: false,
-      approvals: [],
-    });
-    expect(
-      runtime.mock.calls.filter(([p]) => (p as { operation: string }).operation === "send"),
-    ).toHaveLength(1);
-  }, 30_000);
+  it.each([
+    { accepted: true },
+    {
+      accepted: false,
+      completed: false,
+      controlOutcome: "not-dispatched",
+      requestId: "r",
+      runtimeBootId: "r",
+    },
+  ])(
+    "retains unknown outcome after timeout, late receipt %j and runtime restart",
+    async (receipt) => {
+      await bootstrap();
+      await pair(true);
+      let finish!: (value: unknown) => void;
+      runtime.mockImplementation(async (p) =>
+        (p as { operation: string }).operation === "send"
+          ? new Promise((resolve) => {
+              finish = resolve;
+            })
+          : { runtimeBootId: "r", revision: 4, sendEnabled: true },
+      );
+      const body = { sessionId: "s", text: "x", requestId: "r", bootId, expectedRevision: 4 };
+      const timeout = await http("/api/web/v1/send", { method: "POST", body });
+      expect(timeout.status).toBe(504);
+      expect(timeout.json().error).toBe("outcome_unknown");
+      expect(
+        (await http("/api/web/v1/send", { method: "POST", body: { ...body, requestId: "r2" } }))
+          .status,
+      ).toBe(409);
+      finish(receipt);
+      expect((await http("/api/web/v1/send", { method: "POST", body })).status).toBe(409);
+      service.runtimeUnavailable();
+      const access = await http("/api/web/v1/access");
+      const next = await http("/api/web/v1/send", {
+        method: "POST",
+        body: { ...body, requestId: "after-restart", bootId: access.json().bootId },
+      });
+      expect(next.status).toBe(409);
+      expect(next.json().error).toBe("outcome_unknown");
+      const live = await http("/api/web/v1/live?sessionId=s");
+      expect(live.json()).toMatchObject({
+        status: "outcome-unknown",
+        sendEnabled: false,
+        approvals: [],
+      });
+      expect(
+        runtime.mock.calls.filter(([p]) => (p as { operation: string }).operation === "send"),
+      ).toHaveLength(1);
+    },
+    30_000,
+  );
   it("reports a read-only preflight timeout as not dispatched and permits a fresh request", async () => {
     await bootstrap();
     await pair(true);

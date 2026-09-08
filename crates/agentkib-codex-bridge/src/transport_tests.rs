@@ -218,13 +218,130 @@ fn revision_changes_under_operation_lock_prevent_web_send() {
     bridge.enable_controls().unwrap();
     bridge.select(SESSION).unwrap();
     let revision = bridge.state().unwrap().revision();
+    let mut dispatched = false;
     assert!(
         bridge
-            .send_text_at_revision("synthetic hello", revision)
+            .send_text_at_revision_with_dispatch("synthetic hello", revision, || dispatched = true)
             .unwrap_err()
             .to_string()
             .contains("revision changed")
     );
+    assert!(!dispatched);
+    assert_eq!(bridge.state().unwrap().status(), Status::Idle);
+    drop(bridge);
+    server.join().unwrap();
+}
+
+#[test]
+fn dispatch_signal_covers_send_and_approval_owner_failures() {
+    for approval in [false, true] {
+        for receipt in ["reject", "wrong-method", "disconnect"] {
+            let (_dir, path, listener) = endpoint();
+            let server = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                initialize(&mut socket);
+                let mut mutations = 0;
+                while let Some(message) = read(&mut socket) {
+                    match message["method"].as_str().unwrap() {
+                        "thread-owner-discovery" => write(
+                            &mut socket,
+                            json!({
+                            "type":"response","requestId":message["requestId"],
+                            "resultType":"success","handledByClientId":"owner"}),
+                        ),
+                        "thread-stream-following-changed"
+                            if message["params"]["following"] == true =>
+                        {
+                            write(
+                                &mut socket,
+                                snapshot(1, if approval { "active" } else { "idle" }),
+                            )
+                        }
+                        method if method.starts_with("thread-follower-") => {
+                            mutations += 1;
+                            assert_eq!(mutations, 1);
+                            if receipt == "disconnect" {
+                                break;
+                            }
+                            write(
+                                &mut socket,
+                                json!({"type":"response", "requestId":message["requestId"],
+                                "resultType":if receipt == "reject" { "error" } else { "success" },
+                                "method":"unexpected", "handledByClientId":"owner", "error":"request-timeout"}),
+                            );
+                        }
+                        _ => (),
+                    }
+                }
+                assert_eq!(mutations, 1);
+            });
+            let mut bridge = Bridge::connect(&path, known()).unwrap();
+            bridge.enable_controls().unwrap();
+            bridge.select(SESSION).unwrap();
+            let mut dispatched = false;
+            let result = if approval {
+                bridge.approve_at_revision_with_dispatch(
+                    &json!(42),
+                    "turn-1",
+                    Decision::Accept,
+                    Some(1),
+                    || dispatched = true,
+                )
+            } else {
+                bridge.send_text_at_revision_with_dispatch("synthetic hello", Some(1), || {
+                    dispatched = true
+                })
+            };
+            assert!(result.is_err());
+            assert!(dispatched, "{approval} {receipt}");
+            drop(bridge);
+            server.join().unwrap();
+        }
+    }
+}
+
+#[test]
+fn oversized_mutation_frame_is_not_dispatched_or_fenced() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner_with_refresh(listener, "idle", None, true);
+    let mut bridge = Bridge::connect(&path, known()).unwrap();
+    bridge.enable_controls().unwrap();
+    bridge.select(SESSION).unwrap();
+    let mut dispatched = false;
+    // The allowed raw text expands beyond the IPC frame bound when JSON escaped.
+    assert!(
+        bridge
+            .send_text_at_revision_with_dispatch(&"\u{1}".repeat(16384), Some(1), || dispatched =
+                true)
+            .is_err()
+    );
+    assert!(!dispatched);
+    assert_eq!(bridge.state().unwrap().status(), Status::Idle);
+    drop(bridge);
+    server.join().unwrap();
+}
+
+#[test]
+fn approval_revision_change_does_not_dispatch() {
+    let (_dir, path, listener) = endpoint();
+    let server = owner(listener, "active", None);
+    let mut bridge = Bridge::connect(&path, known()).unwrap();
+    bridge.enable_controls().unwrap();
+    bridge.select(SESSION).unwrap();
+    let mut dispatched = false;
+    assert!(
+        bridge
+            .approve_at_revision_with_dispatch(
+                &json!(42),
+                "turn-1",
+                Decision::Accept,
+                Some(1),
+                || dispatched = true
+            )
+            .is_err()
+    );
+    assert!(!dispatched);
+    assert_eq!(bridge.state().unwrap().status(), Status::AwaitingApproval);
     drop(bridge);
     server.join().unwrap();
 }
@@ -241,9 +358,11 @@ fn unchanged_owner_refresh_keeps_revision_and_allows_one_guarded_send() {
         bridge.refresh().unwrap();
         assert_eq!(bridge.state().unwrap().revision(), revision);
     }
+    let mut dispatches = 0;
     bridge
-        .send_text_at_revision("synthetic hello", revision)
+        .send_text_at_revision_with_dispatch("synthetic hello", revision, || dispatches += 1)
         .unwrap();
+    assert_eq!(dispatches, 1);
     bridge.refresh().unwrap();
     assert_eq!(bridge.state().unwrap().status(), Status::OutcomeUnknown);
     assert!(bridge.send_text_at_revision("duplicate", revision).is_err());
@@ -466,9 +585,13 @@ fn approval_removed_during_refresh_sends_no_mutation() {
     b.enable_controls().unwrap();
     b.select(SESSION).unwrap();
     assert_eq!(b.state().unwrap().approvals().len(), 1);
+    let mut dispatched = false;
     let error = b
-        .approve(&json!(42), "turn-1", Decision::Accept)
+        .approve_at_revision_with_dispatch(&json!(42), "turn-1", Decision::Accept, None, || {
+            dispatched = true
+        })
         .unwrap_err();
+    assert!(!dispatched);
     assert!(error.to_string().contains("approval no longer pending"));
     assert!(b.state().unwrap().approvals().is_empty());
     assert_eq!(b.state().unwrap().status(), Status::Running);

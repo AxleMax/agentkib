@@ -170,6 +170,17 @@ impl Bridge {
     }
 
     pub fn send_text_at_revision(&mut self, text: &str, revision: Option<u64>) -> Result<()> {
+        self.send_text_at_revision_with_dispatch(text, revision, || {})
+    }
+
+    /// Runs `dispatch` immediately before the first mutation write attempt, while
+    /// the operation lock is held. Errors before this callback did not send it.
+    pub fn send_text_at_revision_with_dispatch(
+        &mut self,
+        text: &str,
+        revision: Option<u64>,
+        dispatch: impl FnOnce(),
+    ) -> Result<()> {
         crate::validate_send_text(text)?;
         self.ready()?;
         let _operation = OperationGuard::acquire(
@@ -190,8 +201,8 @@ impl Bridge {
             "session is not idle; sending is disabled"
         );
         let id = state.conversation.clone();
-        self.mutate("thread-follower-start-turn", json!({"conversationId":id,
-            "turnStart":{"request":{"threadId":id,"input":[{"type":"text","text":text,"text_elements":[]}]}}})).map(|_| ())
+        self.mutate_with_dispatch("thread-follower-start-turn", json!({"conversationId":id,
+            "turnStart":{"request":{"threadId":id,"input":[{"type":"text","text":text,"text_elements":[]}]}}}), dispatch).map(|_| ())
     }
 
     /// Interrupts the selected turn only. Even a matching owner receipt does not
@@ -235,6 +246,24 @@ impl Bridge {
         expected_turn_id: &str,
         decision: Decision,
         revision: Option<u64>,
+    ) -> Result<()> {
+        self.approve_at_revision_with_dispatch(
+            request_id,
+            expected_turn_id,
+            decision,
+            revision,
+            || {},
+        )
+    }
+
+    /// Like sending, final owner refresh and approval checks precede `dispatch`.
+    pub fn approve_at_revision_with_dispatch(
+        &mut self,
+        request_id: &Value,
+        expected_turn_id: &str,
+        decision: Decision,
+        revision: Option<u64>,
+        dispatch: impl FnOnce(),
     ) -> Result<()> {
         self.ready()?;
         let _operation = OperationGuard::acquire(
@@ -297,9 +326,10 @@ impl Bridge {
             "item/fileChange/requestApproval" => "thread-follower-file-approval-decision",
             _ => anyhow::bail!("please handle this request in the original client"),
         };
-        self.mutate(
+        self.mutate_with_dispatch(
             method,
             json!({"conversationId":state.conversation,"requestId":request_id,"decision":decision}),
+            dispatch,
         )
         .map(|_| ())
     }
@@ -322,19 +352,45 @@ impl Bridge {
     }
 
     fn mutate(&mut self, method: &str, params: Value) -> Result<Value> {
+        self.mutate_with_dispatch(method, params, || {})
+    }
+
+    fn mutate_with_dispatch(
+        &mut self,
+        method: &str,
+        params: Value,
+        dispatch: impl FnOnce(),
+    ) -> Result<Value> {
         let state = self.selected.as_mut().context("no selected session")?;
         let owner = state.owner.clone();
         // Invalidating first prevents a second submission even if the acknowledgement is lost.
+        let previous_status = state.status;
         state.status = Status::OutcomeUnknown;
+        let mut dispatched = false;
         let mut following_requested = false;
-        let response = self.connection.request(method, params, Some(&owner), |m| {
-            if following_status_requested(&m, state) {
-                following_requested = true;
-                Ok(())
-            } else {
-                state.notification(m)
-            }
-        });
+        let response = self.connection.request_with_dispatch(
+            method,
+            params,
+            Some(&owner),
+            |m| {
+                if following_status_requested(&m, state) {
+                    following_requested = true;
+                    Ok(())
+                } else {
+                    state.notification(m)
+                }
+            },
+            || {
+                dispatched = true;
+                dispatch();
+            },
+        );
+        if !dispatched {
+            // No request bytes or notifications were processed. Local framing
+            // failure must not poison the confirmed snapshot as an unknown write.
+            state.status = previous_status;
+            return response;
+        }
         if following_requested && self.connection.is_connected() {
             self.connection.broadcast(
                 "thread-stream-following-changed",

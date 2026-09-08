@@ -652,6 +652,29 @@ export class WebAccessService {
             this.controlAdmission = false;
           });
         const result = await this.runtime(params, pending);
+        // Runtime admission is not owner dispatch: the bridge rechecks state
+        // under its operation lock. Only a correlated definitive rejection can
+        // release this fence; timeouts and unrecognized responses stay uncertain.
+        if (
+          typeof result === "object" &&
+          result !== null &&
+          "accepted" in result &&
+          result.accepted === false &&
+          "completed" in result &&
+          result.completed === false &&
+          "controlOutcome" in result &&
+          result.controlOutcome === "not-dispatched" &&
+          "requestId" in result &&
+          result.requestId === requestId &&
+          "runtimeBootId" in result &&
+          result.runtimeBootId === snapshot.runtimeBootId
+        ) {
+          this.unconfirmed.delete(sessionId);
+          control.dispatched = false;
+          this.grant(hash, permission);
+          if (boot !== this.bootId) throw new HttpError(409, "stale_boot");
+          throw new HttpError(409, "control_preflight_rejected");
+        }
         this.grant(hash, permission);
         if (boot !== this.bootId) throw new HttpError(409, "stale_boot");
         res.once("finish", () => {

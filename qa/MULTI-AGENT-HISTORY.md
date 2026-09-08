@@ -59,6 +59,14 @@
 
 ## 过程记录
 
+### 2026-09-08 Bridge 派发边界与负回执 goal
+
+- 对应评论 `3957044855`，基于 `f428957`。HTTP 预检之后，runtime 与 bridge 仍会刷新并核验版本或审批；原来在这些检查前安装 fence，明确未发送也会永久禁用控制。
+- Bridge 增加写前回调：完成连接、序列化和帧大小校验后，在首个 IPC 写入尝试前安装 runtime fence，仍持有跨进程操作锁。未写入的本地帧拒绝恢复原快照状态；写入尝试后的断线、错误或不明回执保留 fence。
+- runtime 对 claim 之后的未派发预检失败返回关联负回执；旧 fence 和重复请求检查不进入此分类。HTTP 严格匹配请求 ID、runtime 启动 ID 及负回执字段后才清除本层 fence，返回 409 / not-dispatched。超时后迟到回执不清 fence，不自动重发，也不复用请求 ID。
+- 使用隔离模拟 owner 覆盖发送／审批版本变化、审批消失、帧超限、成功回调及派发后失败；HTTP 原行为先复现 2 项失败，再验证发送／审批负回执、身份不匹配及迟到负回执。没有操作真实 Agent 或配对设备，不声称真实桥接验收通过。
+- 验证通过：Rust 全工作区测试、全目标 Clippy、Rust 格式检查；桌面 593 项、Web 56 项、HTTP 36 项及随后新增的迟到回执定向 2 项；类型检查、生产构建、前端格式及 diff 检查。生成绑定无差异。独立 review-agent 完整复核六个实现／测试文件及调用链，最终 No findings。goal 完成；未 commit／push，评论待推送后标记 resolved，保留无关设计改动。
+
 ### 2026-09-08 远程目录发送端数据最小化 goal
 
 - 对应评论 `3956816447`，基于 `f3ac7fc`。先用真实 Store 发现来源夹具复现：本地含 session_cwds 和 repository_group_id 时，原始远程 catalog 响应把 sources、发现路径、repository／manifest 字段一并发送。接收端剥离不足以形成安全边界。

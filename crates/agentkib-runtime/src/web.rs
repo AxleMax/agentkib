@@ -164,166 +164,185 @@ impl Service {
         }
         #[cfg(target_os = "macos")]
         {
-            if session.agent != AgentKind::Codex {
-                return self.unsupported(&request, "provider-unsupported");
-            }
-            let native = provider(session.agent)
-                .context("provider-unavailable")?
-                .list_sessions(&workspace)?
-                .into_iter()
-                .find(|candidate| {
-                    store
-                        .conversation_id(session.agent, &candidate.native_ref)
-                        .is_ok_and(|found| found == id)
-                })
-                .context("session-unavailable")?;
-            let uuid = match provider(session.agent)
-                .context("provider-unavailable")?
-                .verified_control_id(&native.native_ref)
-            {
-                Ok(Some(id)) => id,
-                _ => return self.unsupported(&request, "unverified-session-identity"),
-            };
-            if !self.bridges.contains_key(id) {
-                if self.bridges.len() >= 8 {
-                    // Revalidate a cached idle snapshot before eviction. Never discard a running,
-                    // pending-approval or unresolved-outcome bridge to make room for another tab.
-                    let candidates = idle_candidates(
-                        &self.recency,
-                        self.bridges.iter().map(|(id, bridge)| {
-                            (
-                                id.as_str(),
-                                bridge.state().is_some_and(|state| {
+            let mut dispatched = false;
+            let outcome = (|| -> anyhow::Result<Value> {
+                if session.agent != AgentKind::Codex {
+                    return self.unsupported(&request, "provider-unsupported");
+                }
+                let native = provider(session.agent)
+                    .context("provider-unavailable")?
+                    .list_sessions(&workspace)?
+                    .into_iter()
+                    .find(|candidate| {
+                        store
+                            .conversation_id(session.agent, &candidate.native_ref)
+                            .is_ok_and(|found| found == id)
+                    })
+                    .context("session-unavailable")?;
+                let uuid = match provider(session.agent)
+                    .context("provider-unavailable")?
+                    .verified_control_id(&native.native_ref)
+                {
+                    Ok(Some(id)) => id,
+                    _ => return self.unsupported(&request, "unverified-session-identity"),
+                };
+                if !self.bridges.contains_key(id) {
+                    if self.bridges.len() >= 8 {
+                        // Revalidate a cached idle snapshot before eviction. Never discard a running,
+                        // pending-approval or unresolved-outcome bridge to make room for another tab.
+                        let candidates = idle_candidates(
+                            &self.recency,
+                            self.bridges.iter().map(|(id, bridge)| {
+                                (
+                                    id.as_str(),
+                                    bridge.state().is_some_and(|state| {
+                                        state.status() == agentkib_codex_bridge::Status::Idle
+                                            && state.approvals().is_empty()
+                                    }),
+                                )
+                            }),
+                        );
+                        let mut removed = false;
+                        for candidate in candidates {
+                            let Some(bridge) = self.bridges.get_mut(&candidate) else {
+                                continue;
+                            };
+                            if bridge.refresh().is_ok()
+                                && bridge.state().is_some_and(|state| {
                                     state.status() == agentkib_codex_bridge::Status::Idle
                                         && state.approvals().is_empty()
-                                }),
-                            )
-                        }),
-                    );
-                    let mut removed = false;
-                    for candidate in candidates {
-                        let Some(bridge) = self.bridges.get_mut(&candidate) else {
-                            continue;
-                        };
-                        if bridge.refresh().is_ok()
-                            && bridge.state().is_some_and(|state| {
-                                state.status() == agentkib_codex_bridge::Status::Idle
-                                    && state.approvals().is_empty()
-                            })
-                        {
-                            self.bridges.remove(&candidate);
-                            self.recency.retain(|id| id != &candidate);
-                            removed = true;
-                            break;
+                                })
+                            {
+                                self.bridges.remove(&candidate);
+                                self.recency.retain(|id| id != &candidate);
+                                removed = true;
+                                break;
+                            }
+                        }
+                        if !removed {
+                            return self.unsupported(&request, "live-session-busy");
                         }
                     }
-                    if !removed {
-                        return self.unsupported(&request, "live-session-busy");
+                    let home = dirs::home_dir().context("home-unavailable")?;
+                    let compatibility = agentkib_codex_bridge::Compatibility::inspect(
+                        Path::new("/Applications/ChatGPT.app/Contents/Resources/app.asar"),
+                        &home.join(format!(
+                            ".vscode/extensions/openai.chatgpt-{}-darwin-arm64/package.json",
+                            agentkib_codex_bridge::EXTENSION_VERSION
+                        )),
+                    );
+                    if !compatibility.is_known() {
+                        return self.unsupported(&request, "unverified-installation");
+                    }
+                    let connected = agentkib_codex_bridge::Bridge::connect(
+                        &home.join(".codex/ipc/ipc.sock"),
+                        compatibility,
+                    )
+                    .and_then(|mut bridge| {
+                        bridge.select(&uuid)?;
+                        Ok(bridge)
+                    });
+                    match connected {
+                        Ok(bridge) => {
+                            self.bridges.insert(id.into(), bridge);
+                        }
+                        Err(_) => return self.unsupported(&request, "open-in-original-client"),
                     }
                 }
-                let home = dirs::home_dir().context("home-unavailable")?;
-                let compatibility = agentkib_codex_bridge::Compatibility::inspect(
-                    Path::new("/Applications/ChatGPT.app/Contents/Resources/app.asar"),
-                    &home.join(format!(
-                        ".vscode/extensions/openai.chatgpt-{}-darwin-arm64/package.json",
-                        agentkib_codex_bridge::EXTENSION_VERSION
-                    )),
-                );
-                if !compatibility.is_known() {
-                    return self.unsupported(&request, "unverified-installation");
-                }
-                let connected = agentkib_codex_bridge::Bridge::connect(
-                    &home.join(".codex/ipc/ipc.sock"),
-                    compatibility,
-                )
-                .and_then(|mut bridge| {
-                    bridge.select(&uuid)?;
-                    Ok(bridge)
-                });
-                match connected {
-                    Ok(bridge) => {
-                        self.bridges.insert(id.into(), bridge);
-                    }
-                    Err(_) => return self.unsupported(&request, "open-in-original-client"),
-                }
-            }
-            self.recency.retain(|entry| entry != id);
-            self.recency.push(id.into());
-            let bridge = self.bridges.get_mut(id).context("live-unavailable")?;
-            if bridge
-                .state()
-                .is_none_or(|state| state.conversation_id() != uuid)
-            {
-                self.bridges.remove(id);
                 self.recency.retain(|entry| entry != id);
-                return self.unsupported(&request, "session-identity-changed");
-            }
-            if bridge.refresh().is_err() {
-                self.bridges.remove(id);
-                self.recency.retain(|entry| entry != id);
-                return self.unsupported(&request, "open-in-original-client");
-            }
-            let controls = request.experimental_enabled && bridge.enable_controls().is_ok();
-            if !controls {
-                bridge.disable_controls();
-            }
-            let state = bridge.state().context("state-unavailable")?;
-            if request.operation == "live" {
-                let approvals: Vec<_> = state
-                    .approvals()
-                    .into_iter()
-                    .map(|approval| safe_approval(approval, controls))
-                    .collect();
-                return Ok(
-                    json!({"sessionId":id,"runtimeBootId":self.boot,"status":state.status(),"revision":state.revision(),"turnId":state.active_turn(),"sendEnabled":controls && state.status()==agentkib_codex_bridge::Status::Idle,"approvals":approvals}),
-                );
-            }
-            anyhow::ensure!(
-                controls
-                    && request.expected_revision.is_some()
-                    && request.expected_revision == state.revision(),
-                "stale-or-disabled-control"
-            );
-            source.ensure_available()?;
-            store.workspace_path(&session.workspace_id)?;
-            let outcome = if request.operation == "send" {
-                let text = request.text.as_deref().context("missing-text")?;
-                self.unresolved.insert(id.to_owned());
-                bridge.send_text_at_revision(text, request.expected_revision)
-            } else {
-                let approval_id = request.approval_id.as_ref().context("missing-approval")?;
-                let turn = request.turn_id.as_deref().context("missing-turn")?;
-                let approval = state
-                    .approvals()
-                    .into_iter()
-                    .find(|a| &a.request_id == approval_id && a.turn_id == turn)
-                    .context("approval-no-longer-pending")?;
-                let safe = safe_approval(approval, controls);
-                let decision = request.decision.as_deref().context("missing-decision")?;
+                self.recency.push(id.into());
+                let bridge = self.bridges.get_mut(id).context("live-unavailable")?;
+                if bridge
+                    .state()
+                    .is_none_or(|state| state.conversation_id() != uuid)
+                {
+                    self.bridges.remove(id);
+                    self.recency.retain(|entry| entry != id);
+                    return self.unsupported(&request, "session-identity-changed");
+                }
+                if bridge.refresh().is_err() {
+                    self.bridges.remove(id);
+                    self.recency.retain(|entry| entry != id);
+                    return self.unsupported(&request, "open-in-original-client");
+                }
+                let controls = request.experimental_enabled && bridge.enable_controls().is_ok();
+                if !controls {
+                    bridge.disable_controls();
+                }
+                let state = bridge.state().context("state-unavailable")?;
+                if request.operation == "live" {
+                    let approvals: Vec<_> = state
+                        .approvals()
+                        .into_iter()
+                        .map(|approval| safe_approval(approval, controls))
+                        .collect();
+                    return Ok(
+                        json!({"sessionId":id,"runtimeBootId":self.boot,"status":state.status(),"revision":state.revision(),"turnId":state.active_turn(),"sendEnabled":controls && state.status()==agentkib_codex_bridge::Status::Idle,"approvals":approvals}),
+                    );
+                }
                 anyhow::ensure!(
-                    safe["supported"] == true
-                        && safe["availableDecisions"]
-                            .as_array()
-                            .is_some_and(|list| list.contains(&json!(decision))),
-                    "unsupported-approval"
+                    controls
+                        && request.expected_revision.is_some()
+                        && request.expected_revision == state.revision(),
+                    "stale-or-disabled-control"
                 );
-                let decision = match decision {
-                    "accept" => agentkib_codex_bridge::Decision::Accept,
-                    "decline" => agentkib_codex_bridge::Decision::Decline,
-                    "cancel" => agentkib_codex_bridge::Decision::Cancel,
-                    _ => anyhow::bail!("unsupported-decision"),
+                source.ensure_available()?;
+                store.workspace_path(&session.workspace_id)?;
+                let dispatch = || {
+                    dispatched = true;
+                    self.unresolved.insert(id.to_owned());
                 };
-                self.unresolved.insert(id.to_owned());
-                bridge.approve_at_revision(approval_id, turn, decision, request.expected_revision)
-            };
-            // Conservatively retain the fence on every bridge control error,
-            // including an ambiguous receipt. No GET, new request ID, cache
-            // replacement or permission toggle clears it during this boot.
-            outcome?;
-            self.unresolved.remove(id);
-            Ok(
-                json!({"accepted":true,"completed":false,"requestId":request.request_id,"runtimeBootId":self.boot}),
-            )
+                let outcome = if request.operation == "send" {
+                    let text = request.text.as_deref().context("missing-text")?;
+                    bridge.send_text_at_revision_with_dispatch(
+                        text,
+                        request.expected_revision,
+                        dispatch,
+                    )
+                } else {
+                    let approval_id = request.approval_id.as_ref().context("missing-approval")?;
+                    let turn = request.turn_id.as_deref().context("missing-turn")?;
+                    let approval = state
+                        .approvals()
+                        .into_iter()
+                        .find(|a| &a.request_id == approval_id && a.turn_id == turn)
+                        .context("approval-no-longer-pending")?;
+                    let safe = safe_approval(approval, controls);
+                    let decision = request.decision.as_deref().context("missing-decision")?;
+                    anyhow::ensure!(
+                        safe["supported"] == true
+                            && safe["availableDecisions"]
+                                .as_array()
+                                .is_some_and(|list| list.contains(&json!(decision))),
+                        "unsupported-approval"
+                    );
+                    let decision = match decision {
+                        "accept" => agentkib_codex_bridge::Decision::Accept,
+                        "decline" => agentkib_codex_bridge::Decision::Decline,
+                        "cancel" => agentkib_codex_bridge::Decision::Cancel,
+                        _ => anyhow::bail!("unsupported-decision"),
+                    };
+                    bridge.approve_at_revision_with_dispatch(
+                        approval_id,
+                        turn,
+                        decision,
+                        request.expected_revision,
+                        dispatch,
+                    )
+                };
+                // Only a matching acknowledgement clears a dispatched operation.
+                // Final bridge preflight errors never installed the fence.
+                if outcome.is_ok() {
+                    self.unresolved.remove(id);
+                }
+                control_response(&request, &self.boot, dispatched, outcome)
+            })();
+            match outcome {
+                Err(error) if request.operation != "live" && !dispatched => {
+                    control_response(&request, &self.boot, false, Err(error))
+                }
+                result => result,
+            }
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -360,6 +379,24 @@ impl Service {
             json!({"sessionId":request.session_id,"runtimeBootId":self.boot,"status":"unsupported","revision":null,"turnId":null,"sendEnabled":false,"approvals":[],"reason":reason}),
         )
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn control_response(
+    request: &Request,
+    boot: &str,
+    dispatched: bool,
+    outcome: anyhow::Result<()>,
+) -> anyhow::Result<Value> {
+    if outcome.is_err() && !dispatched {
+        return Ok(json!({"accepted":false,"completed":false,
+            "controlOutcome":"not-dispatched","error":"control_preflight_rejected",
+            "requestId":request.request_id,"runtimeBootId":boot}));
+    }
+    outcome?;
+    Ok(
+        json!({"accepted":true,"completed":false,"requestId":request.request_id,"runtimeBootId":boot}),
+    )
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -505,6 +542,29 @@ fn complete_file_change(change: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_preflight_receipt_depends_on_dispatch_not_error_text() {
+        for operation in ["send", "approve"] {
+            let request: Request = serde_json::from_value(json!({
+                "operation":operation, "requestId":"request-1"
+            }))
+            .unwrap();
+            let error = || anyhow::anyhow!("session revision changed; nothing sent");
+            let receipt = control_response(&request, "boot-1", false, Err(error())).unwrap();
+            assert_eq!(
+                receipt,
+                json!({"accepted":false,"completed":false,
+                "requestId":"request-1","runtimeBootId":"boot-1",
+                "controlOutcome":"not-dispatched","error":"control_preflight_rejected"})
+            );
+            assert!(control_response(&request, "boot-1", true, Err(error())).is_err());
+            assert_eq!(
+                control_response(&request, "boot-1", true, Ok(())).unwrap()["accepted"],
+                true
+            );
+        }
+    }
 
     #[test]
     fn invalid_send_text_never_claims_or_fences_control() {

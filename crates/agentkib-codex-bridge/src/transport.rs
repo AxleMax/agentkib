@@ -114,9 +114,16 @@ impl Connection {
     }
 
     fn write(&mut self, value: &Value) -> Result<()> {
+        self.write_with_dispatch(value, || {})
+    }
+
+    fn write_with_dispatch(&mut self, value: &Value, dispatch: impl FnOnce()) -> Result<()> {
         ensure!(!self.closed, "IPC disconnected");
         let bytes = serde_json::to_vec(value)?;
         ensure!(bytes.len() <= 64 * 1024, "IPC request exceeds limit");
+        // A write error can follow a partial frame. Signal before the first byte,
+        // after all local checks that can prove no mutation was attempted.
+        dispatch();
         let result = self
             .socket
             .write_all(&(bytes.len() as u32).to_le_bytes())
@@ -138,7 +145,18 @@ impl Connection {
         method: &str,
         params: Value,
         owner: Option<&str>,
+        notification: impl FnMut(Value) -> Result<()>,
+    ) -> Result<Value> {
+        self.request_with_dispatch(method, params, owner, notification, || {})
+    }
+
+    pub(crate) fn request_with_dispatch(
+        &mut self,
+        method: &str,
+        params: Value,
+        owner: Option<&str>,
         mut notification: impl FnMut(Value) -> Result<()>,
+        dispatch: impl FnOnce(),
     ) -> Result<Value> {
         let id = Uuid::new_v4().to_string();
         let mut request = json!({"type":"request", "requestId":id, "sourceClientId":self.client_id,
@@ -147,7 +165,7 @@ impl Connection {
         if let Some(owner) = owner {
             request["targetClientId"] = json!(owner);
         }
-        self.write(&request)?;
+        self.write_with_dispatch(&request, dispatch)?;
         // The official router gives each owner-discovery candidate up to ten seconds.
         // This read-only lookup needs a longer deadline than a mutation acknowledgement.
         let deadline = Instant::now()
