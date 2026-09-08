@@ -81,3 +81,24 @@
 - 收尾：撤销“本机串行控制验收”浏览器，关闭实验控制及本机 Web 服务。正式控制仍关闭，无 commit/PR/发布。
 
 剩余门槛：Web 审批请求元数据兼容及真实决定验收；mutation 超时后 bridge 重建是否会清除未知结果保护仍需独立回归；HTTPS/真实手机及其他平台仍未验收。不可将本次串行发送通过写成 Web 全量通过。
+
+## 追加：提交后继续加固（2026-09-08）
+
+- 首版及前述验证提交为 `d683407`，未 push；设计稿、设计 QA 和无关产物未纳入。
+- runtime 增加独立于 bridge 缓存的会话级未知结果保护。桥接控制调用报错后，本次 runtime 启动期间禁止该会话再次发送/审批；live 返回 outcome-unknown，历史读取保留。缓存重建、不同请求 ID、权限重开不能清除；明确回执成功才解除调用期标记。为安全起见，桥接内的发送前错误也会保守锁定，不将错误猜为“可重试”。旧 boot 请求在重启后仍拒绝，不自动恢复执行。
+- Web 四语提示说明运行期控制禁用，不再误导用户仅“打开官方会话”即可恢复。
+- 025 历史没有保存原始审批 params，无法证明具体阻断字段。已安装官方代码存在策略修改提案，与一次允许不同；未直接扩大白名单。API 补充 unsupportedReason 和有界的未知字段名称/类型，不返回字段值，不写原始审批日志；模拟测试确认策略提案仍不可批准。
+- 新增 runtime 保护记录跨缓存清理/新请求 ID 的回归、未知审批诊断不泄露字段值的回归，以及 Web 禁用提示/发送按钮回归。本轮没有新增真实消息或审批，未重启官方 Codex。
+- 限制：尚未完成 HTTP→真实 runtime→模拟 owner 的超时整链测试，运行期保护不声称跨主机重启持久化。审批实际参数的下一次串行验收和外部 HTTPS/手机仍待验证。
+- 本次增量验证：runtime 51 项、Web 19 项通过；`cargo test --workspace` 通过；runtime Clippy、全 Rust 格式、相关前端格式、桌面/Web 类型检查、Web 构建和 `git diff --check` 通过。此批加固保留为未提交修改，尚未重新打包进行真实控制验收。
+
+## 追加：026 审批字段诊断与请求不确定性加固（2026-09-08）
+
+- 重建 release runtime、Web、Electron 和未签名 macOS arm64 安装目录，在独立验收数据目录运行；未退出或重启官方 Codex。正式实验能力仍默认关闭。
+- Electron HTTP 层新增独立会话 fence：控制超时、RPC 错误、已观察到的浏览器断线后，即使 runtime 晚到成功或 runtime 重启，新请求 ID 也不能再次控制同一会话；live/SSE 投影为 outcome-unknown。其他会话不受影响。只有当前 boot 的明确 accepted 回执成功写出才解除；HTTP finish 不证明浏览器收到，不能据此自动重发。此保护不跨整个桌面进程重启持久化。
+- Web 审批弹窗核验完整当前审批投影，而不只是 requestId/turnId。弹窗打开后命令等内容变化时隐藏决定按钮，提交前再次核验，避免用新 revision 批准未审阅内容。
+- 同一指定测试会话串行发送一次 AK-WEB-APPROVAL-026，HTTP 200 accepted:true。真实待审批显示 `/bin/zsh -c /usr/bin/true`、cwd `/tmp`；未通过 Web 提交任何审批决定。安全投影阻断四个非空字段：environmentId:string、kind:string、proposedExecpolicyAmendment:array、startedAtMs:number。诊断未输出未知字段值。
+- 用户确认在官方客户端拒绝后，只读 live 返回 HTTP 200、idle、pending=0。撤销“本机审批诊断验收”浏览器后，页面显示“远程访问已结束”；随后关闭实验控制和 Web 服务。
+- 使用本机安装版本 codex 的 `app-server generate-json-schema --experimental` 离线生成协议定义（没有启动 owner 探针）：kind 枚举为 command/writeStdin，缺失默认 command；environmentId 是命令执行环境；startedAtMs 是 Unix 毫秒时间；execpolicy proposal 是未来相似命令免审批提案。accept 与 acceptWithExecpolicyAmendment 明确不同。当前 bridge 尚无执行环境绑定校验，因此未直接放宽白名单，Web 真实审批仍未通过。
+- 自动化：HTTP 20 项、Web 19 项、桌面/Web 类型检查、Web 构建、git diff --check 通过。断线测试首次全量执行暴露测试同步竞态：本地 close 不等于服务端收到断线；改为观察服务端 close 后模拟晚到回执，全量 20 项通过，安全断言未放宽。
+- 最新审批弹窗防护已通过测试和 Web 构建，尚未重新纳入打包应用实测。真实手机、外部 HTTPS、其他平台和整链 mock owner 验收仍待完成；本轮不声明全量通过。增量未提交、未发布。

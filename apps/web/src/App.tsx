@@ -369,6 +369,14 @@ export function App() {
   }
   async function control(kind: "send" | "approve", approval?: Approval, decision?: Decision) {
     if (mutating.current || !access || !live || !online) return;
+    // A stable request ID does not mean the command/scope shown in an open
+    // dialog is still current. Require the exact reviewed projection.
+    if (
+      kind === "approve" &&
+      (!approval ||
+        !live.approvals.some((current) => JSON.stringify(current) === JSON.stringify(approval)))
+    )
+      return;
     mutating.current = true;
     setBusy(true);
     setNotice(undefined);
@@ -409,13 +417,15 @@ export function App() {
     !!live?.sendEnabled &&
     live.status === "idle";
   const liveText =
-    live?.status === "idle"
-      ? t.idle
-      : live?.status === "running"
-        ? t.running
-        : live?.reason
-          ? t.unavailable
-          : t.unknown;
+    live?.reason === "control-outcome-unconfirmed"
+      ? t.controlUnconfirmed
+      : live?.status === "idle"
+        ? t.idle
+        : live?.status === "running"
+          ? t.running
+          : live?.reason
+            ? t.unavailable
+            : t.unknown;
   const icon = <span className="brand-mark">K</span>;
   return (
     <div className="app">
@@ -738,9 +748,7 @@ export function App() {
           access?.experimentalEnabled &&
           access.device?.approve &&
           online &&
-          live?.approvals.some(
-            (a) => a.requestId === modal.requestId && a.turnId === modal.turnId,
-          ) ? (
+          live?.approvals.some((a) => JSON.stringify(a) === JSON.stringify(modal)) ? (
             <div className="decision-actions">
               {modal.availableDecisions
                 .filter((d) => ["accept", "decline", "cancel"].includes(d))

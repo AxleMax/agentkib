@@ -251,6 +251,28 @@ describe("Web access UI", () => {
     expect(screen.getByRole("button", { name: "允许一次" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "取消轮次" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();
+    act(() =>
+      FakeEvents.instances.at(-1)!.emit("snapshot", {
+        sessionId: "s",
+        status: "running",
+        revision: 3,
+        sendEnabled: false,
+        approvals: [
+          {
+            requestId: 42,
+            turnId: "t",
+            method: "item/commandExecution/requestApproval",
+            cwd: "/tmp/qa",
+            command: ["different-command"],
+            supported: true,
+            availableDecisions: ["accept", "cancel"],
+          },
+        ],
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "取消轮次" })).toBeNull();
+    expect(screen.getByText(/此审批无法安全处理/)).toBeVisible();
     act(() => FakeEvents.instances.at(-1)!.emit("access-ended", {}));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByText("/tmp/qa")).toBeNull();
@@ -376,6 +398,37 @@ describe("Web access UI", () => {
     expect(
       server.fetcher.mock.calls.filter((call) => String(call[0]).endsWith("/send")),
     ).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+  });
+
+  it("explains the host control fence without suggesting reopening restores control", async () => {
+    const server = mockServer();
+    const original = server.fetcher.getMockImplementation()!;
+    server.fetcher.mockImplementation(async (url) => {
+      if (String(url).endsWith("/access"))
+        return Response.json({
+          status: "approved",
+          csrfToken: "x",
+          bootId: "b",
+          experimentalEnabled: true,
+          device: { id: "d", name: "Browser", send: true, approve: true },
+        });
+      if (String(url).includes("/live"))
+        return Response.json({
+          sessionId: "s",
+          status: "outcome-unknown",
+          reason: "control-outcome-unconfirmed",
+          revision: null,
+          sendEnabled: false,
+          approvals: [],
+        });
+      return original(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Test session/ }));
+    await screen.findByText(/本次主机运行期间已禁用控制/);
+    expect(screen.queryByText("请在官方客户端打开此会话")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("发送消息"), { target: { value: "hello" } });
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
   });
 });

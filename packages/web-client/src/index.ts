@@ -44,6 +44,8 @@ export interface Approval {
   changes?: unknown;
   availableDecisions: Decision[];
   supported: boolean;
+  unsupportedReason?: string | null;
+  unsupportedMetadata?: { field: string; type: string }[];
 }
 export interface Live {
   sessionId: string;

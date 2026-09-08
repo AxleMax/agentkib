@@ -75,6 +75,9 @@ export class WebAccessService {
   private browsers = new Map<string, Browser>();
   private streams = new Map<ServerResponse, string>();
   private active = new Set<string>();
+  // Survives runtime replacement and HTTP listener restarts within this host.
+  // An underlying promise settling is not proof that the HTTP reply succeeded.
+  private unconfirmed = new Set<string>();
   private requests = new Set<string>();
   private rates = new Map<string, { count: number; until: number }>();
   private adminQueue: Promise<unknown> = Promise.resolve();
@@ -323,6 +326,18 @@ export class WebAccessService {
     this.bootId = token();
     this.endStreams();
   }
+  private projectLive(sessionId: string | undefined, snapshot: unknown) {
+    if (!sessionId || !this.unconfirmed.has(sessionId)) return snapshot;
+    return {
+      sessionId,
+      status: "outcome-unknown",
+      revision: null,
+      turnId: null,
+      sendEnabled: false,
+      approvals: [],
+      reason: "control-outcome-unconfirmed",
+    };
+  }
   private expire() {
     const now = Date.now();
     if (this.code && this.code.expiresAt <= now) this.code = undefined;
@@ -526,6 +541,7 @@ export class WebAccessService {
       const requestId = this.field(body.requestId, 128);
       if (this.requests.has(requestId)) throw new HttpError(409, "duplicate_request");
       if (this.active.has(sessionId)) throw new HttpError(409, "operation_busy");
+      if (this.unconfirmed.has(sessionId)) throw new HttpError(409, "outcome_unknown");
       if (this.requests.size >= 10_000) throw new HttpError(429, "request_capacity");
       if (!Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0)
         throw new HttpError(400, "invalid_revision");
@@ -594,12 +610,27 @@ export class WebAccessService {
         }
         params.runtimeBootId = snapshot.runtimeBootId;
         dispatched = true;
+        this.unconfirmed.add(sessionId);
         const pending = this.options
           .runtimeRequest(params)
           .finally(() => this.active.delete(sessionId));
         const result = await this.runtime(params, pending);
         this.grant(hash, permission);
         if (boot !== this.bootId) throw new HttpError(409, "stale_boot");
+        res.once("finish", () => {
+          // Node finish confirms the server wrote the response, not that a
+          // browser received it. No automatic resend is safe even after this.
+          if (
+            boot === this.bootId &&
+            !res.destroyed &&
+            res.statusCode === 200 &&
+            typeof result === "object" &&
+            result !== null &&
+            "accepted" in result &&
+            result.accepted === true
+          )
+            this.unconfirmed.delete(sessionId);
+        });
         return this.json(res, 200, result);
       } finally {
         if (!dispatched) this.active.delete(sessionId);
@@ -632,7 +663,7 @@ export class WebAccessService {
           });
           this.grant(hash);
           if (!this.streams.has(res)) return;
-          const data = JSON.stringify(snapshot);
+          const data = JSON.stringify(this.projectLive(sessionId, snapshot));
           if (Buffer.byteLength(data) > 4 * 1024 * 1024) throw new Error("snapshot_too_large");
           if (!res.write(`event: snapshot\ndata: ${data}\n\n`)) {
             res.end();
@@ -670,7 +701,7 @@ export class WebAccessService {
     const result = await this.runtime(params);
     this.grant(hash);
     if (boot !== this.bootId) throw new HttpError(409, "stale_boot");
-    return this.json(res, 200, result);
+    return this.json(res, 200, path === "/live" ? this.projectLive(sessionId, result) : result);
   }
   private async static(req: IncomingMessage, res: ServerResponse) {
     if (req.method !== "GET" && req.method !== "HEAD")

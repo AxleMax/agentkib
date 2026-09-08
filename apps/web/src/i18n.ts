@@ -33,6 +33,8 @@ const zh = {
   offline: "连接已断开 · 控制已禁用",
   retry: "重新连接",
   unknown: "状态未确认",
+  controlUnconfirmed:
+    "上次控制结果未确认，本次主机运行期间已禁用控制。请到官方客户端核对，勿重复提交。",
   idle: "空闲",
   running: "运行中",
   unavailable: "请在官方客户端打开此会话",
@@ -118,6 +120,8 @@ const en: Words = {
   offline: "Disconnected · controls disabled",
   retry: "Reconnect",
   unknown: "State unconfirmed",
+  controlUnconfirmed:
+    "The previous control outcome is unconfirmed. Controls are disabled for this host run. Check the official client; do not resubmit.",
   idle: "Idle",
   running: "Running",
   unavailable: "Open this session in the official client",
@@ -200,6 +204,8 @@ const tw: Words = {
   offline: "連線已中斷 · 控制已停用",
   retry: "重新連線",
   unknown: "狀態未確認",
+  controlUnconfirmed:
+    "上次控制結果未確認，本次主機執行期間已停用控制。請到官方客戶端核對，勿重複提交。",
   idle: "閒置",
   running: "執行中",
   unavailable: "請在官方客戶端開啟此工作階段",
@@ -282,6 +288,8 @@ const ja: Words = {
   offline: "切断されました · 操作は無効です",
   retry: "再接続",
   unknown: "状態未確認",
+  controlUnconfirmed:
+    "前回の操作結果が未確認のため、今回のホスト起動中は操作できません。公式クライアントで確認し、再送しないでください。",
   idle: "待機中",
   running: "実行中",
   unavailable: "公式クライアントでこのセッションを開いてください",

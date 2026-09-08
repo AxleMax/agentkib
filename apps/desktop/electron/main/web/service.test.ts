@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer, request } from "node:http";
+import { createServer, request, ServerResponse } from "node:http";
 import { WebAccessService } from "./service";
 
 describe("WebAccessService loopback security boundary", () => {
@@ -83,6 +83,7 @@ describe("WebAccessService loopback security boundary", () => {
   beforeEach(async () => {
     runtime.mockReset();
     runtime.mockResolvedValue({
+      accepted: true,
       runtimeBootId: "runtime-one",
       revision: 4,
       sendEnabled: true,
@@ -115,6 +116,7 @@ describe("WebAccessService loopback security boundary", () => {
     });
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await service.shutdown();
     await rm(dir, { recursive: true, force: true });
   });
@@ -498,7 +500,7 @@ describe("WebAccessService loopback security boundary", () => {
     finish({ accepted: true });
     expect((await send).status).toBe(409);
   });
-  it("retains the session control lock after timeout until the underlying call settles", async () => {
+  it("retains unknown outcome after timeout, late success and runtime restart", async () => {
     await bootstrap();
     await pair(true);
     let finish!: (value: unknown) => void;
@@ -519,7 +521,154 @@ describe("WebAccessService loopback security boundary", () => {
     ).toBe(409);
     finish({ accepted: true });
     expect((await http("/api/web/v1/send", { method: "POST", body })).status).toBe(409);
+    service.runtimeUnavailable();
+    const access = await http("/api/web/v1/access");
+    const next = await http("/api/web/v1/send", {
+      method: "POST",
+      body: { ...body, requestId: "after-restart", bootId: access.json().bootId },
+    });
+    expect(next.status).toBe(409);
+    expect(next.json().error).toBe("outcome_unknown");
+    const live = await http("/api/web/v1/live?sessionId=s");
+    expect(live.json()).toMatchObject({
+      status: "outcome-unknown",
+      sendEnabled: false,
+      approvals: [],
+    });
+    expect(
+      runtime.mock.calls.filter(([p]) => (p as { operation: string }).operation === "send"),
+    ).toHaveLength(1);
   }, 30_000);
+  it("retains failed dispatch protection when the runtime recovers with a fresh idle snapshot", async () => {
+    await bootstrap();
+    await pair(true, true);
+    runtime.mockImplementation(async (p) => {
+      if ((p as { operation: string }).operation === "send")
+        throw new Error("runtime disconnected");
+      return { runtimeBootId: "new-runtime", revision: 4, sendEnabled: true, approvals: [] };
+    });
+    const body = { sessionId: "s", text: "x", requestId: "first", bootId, expectedRevision: 4 };
+    expect((await http("/api/web/v1/send", { method: "POST", body })).status).toBe(500);
+    service.runtimeUnavailable();
+    const freshBoot = (await http("/api/web/v1/access")).json().bootId;
+    for (const path of ["send", "approve"]) {
+      const result = await http(`/api/web/v1/${path}`, {
+        method: "POST",
+        body: { ...body, bootId: freshBoot, requestId: path },
+      });
+      expect(result.status).toBe(409);
+      expect(result.json().error).toBe("outcome_unknown");
+    }
+    expect((await http("/api/web/v1/live?sessionId=s")).json().sendEnabled).toBe(false);
+    expect((await http("/api/web/v1/live?sessionId=other")).json().sendEnabled).toBe(true);
+    const stream = await new Promise<string>((resolve, reject) => {
+      const req = request(
+        {
+          hostname: "127.0.0.1",
+          port,
+          path: "/api/web/v1/stream?sessionId=s",
+          headers: { Cookie: cookie },
+        },
+        (res) => {
+          res.once("data", (chunk) => {
+            resolve(String(chunk));
+            res.destroy();
+          });
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    expect(stream).toContain('"reason":"control-outcome-unconfirmed"');
+  });
+  it("clears the dispatch fence only after a successful acknowledgement response", async () => {
+    await bootstrap();
+    await pair(true);
+    for (const requestId of ["one", "two"]) {
+      expect(
+        (
+          await http("/api/web/v1/send", {
+            method: "POST",
+            body: {
+              sessionId: "s",
+              text: "x",
+              requestId,
+              bootId,
+              expectedRevision: 4,
+            },
+          })
+        ).status,
+      ).toBe(200);
+    }
+    expect((await http("/api/web/v1/live?sessionId=s")).json().sendEnabled).toBe(true);
+  });
+  it("keeps the fence when the browser disconnects before a late acknowledgement", async () => {
+    await bootstrap();
+    await pair(true);
+    // Client close only confirms the local socket closed. Wait for the server
+    // to observe it before simulating a late runtime acknowledgement.
+    let serverClosed!: () => void;
+    const disconnected = new Promise<void>((resolve) => {
+      serverClosed = resolve;
+    });
+    const emit = ServerResponse.prototype.emit;
+    vi.spyOn(ServerResponse.prototype, "emit").mockImplementation(function (
+      this: ServerResponse,
+      event: string | symbol,
+      ...args: unknown[]
+    ) {
+      const result = emit.call(this, event, ...args);
+      if (event === "close" && this.req.url === "/api/web/v1/send") serverClosed();
+      return result;
+    });
+    let finish!: (value: unknown) => void;
+    runtime.mockImplementation(async (p) =>
+      (p as { operation: string }).operation === "send"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : { runtimeBootId: "r", revision: 4, sendEnabled: true },
+    );
+    const req = request({
+      hostname: "127.0.0.1",
+      port,
+      path: "/api/web/v1/send",
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        Origin: origin,
+        "X-CSRF-Token": csrf,
+        "Content-Type": "application/json",
+      },
+    });
+    req.on("error", () => {});
+    req.end(
+      JSON.stringify({ sessionId: "s", text: "x", requestId: "lost", bootId, expectedRevision: 4 }),
+    );
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    await new Promise<void>((resolve) => {
+      req.once("close", resolve);
+      req.destroy();
+    });
+    await disconnected;
+    finish({ accepted: true });
+    const live = await http("/api/web/v1/live?sessionId=s");
+    expect(live.json()).toMatchObject({ status: "outcome-unknown", sendEnabled: false });
+    const next = await http("/api/web/v1/send", {
+      method: "POST",
+      body: {
+        sessionId: "s",
+        text: "x",
+        requestId: "new",
+        bootId,
+        expectedRevision: 4,
+      },
+    });
+    expect(next.status).toBe(409);
+    expect(
+      runtime.mock.calls.filter(([p]) => (p as { operation: string }).operation === "send"),
+    ).toHaveLength(1);
+  });
   it("limits local acceptance controls to one session and rejects remote configuration", async () => {
     await service.shutdown();
     const sessionId = "a".repeat(64);

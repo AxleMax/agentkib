@@ -91,6 +91,9 @@ struct Request {
 struct Service {
     boot: String,
     used: BTreeSet<String>,
+    // Independent of the bridge cache: reconnect/eviction must not turn a lost
+    // control acknowledgement into permission to submit a second operation.
+    unresolved: BTreeSet<String>,
     #[cfg(target_os = "macos")]
     bridges: BTreeMap<String, agentkib_codex_bridge::Bridge>,
     #[cfg(target_os = "macos")]
@@ -101,6 +104,7 @@ impl Default for Service {
         Self {
             boot: uuid::Uuid::new_v4().to_string(),
             used: BTreeSet::new(),
+            unresolved: BTreeSet::new(),
             #[cfg(target_os = "macos")]
             bridges: BTreeMap::new(),
             #[cfg(target_os = "macos")]
@@ -142,6 +146,12 @@ impl Service {
             .get_conversation_session(id)?
             .context("session-unavailable")?;
         let workspace = store.workspace_path(&session.workspace_id)?;
+        if self.unresolved.contains(id) {
+            anyhow::ensure!(request.operation == "live", "control-outcome-unconfirmed");
+            return Ok(json!({"sessionId":id,"runtimeBootId":self.boot,
+                "status":"outcome-unknown","revision":null,"turnId":null,
+                "sendEnabled":false,"approvals":[],"reason":"control-outcome-unconfirmed"}));
+        }
         if request.operation != "live" {
             self.claim(&request)?;
         }
@@ -269,11 +279,10 @@ impl Service {
             );
             source.ensure_available()?;
             store.workspace_path(&session.workspace_id)?;
-            if request.operation == "send" {
-                bridge.send_text_at_revision(
-                    request.text.as_deref().context("missing-text")?,
-                    request.expected_revision,
-                )?;
+            let outcome = if request.operation == "send" {
+                let text = request.text.as_deref().context("missing-text")?;
+                self.unresolved.insert(id.to_owned());
+                bridge.send_text_at_revision(text, request.expected_revision)
             } else {
                 let approval_id = request.approval_id.as_ref().context("missing-approval")?;
                 let turn = request.turn_id.as_deref().context("missing-turn")?;
@@ -297,13 +306,14 @@ impl Service {
                     "cancel" => agentkib_codex_bridge::Decision::Cancel,
                     _ => anyhow::bail!("unsupported-decision"),
                 };
-                bridge.approve_at_revision(
-                    approval_id,
-                    turn,
-                    decision,
-                    request.expected_revision,
-                )?;
-            }
+                self.unresolved.insert(id.to_owned());
+                bridge.approve_at_revision(approval_id, turn, decision, request.expected_revision)
+            };
+            // Conservatively retain the fence on every bridge control error,
+            // including an ambiguous receipt. No GET, new request ID, cache
+            // replacement or permission toggle clears it during this boot.
+            outcome?;
+            self.unresolved.remove(id);
             Ok(
                 json!({"accepted":true,"completed":false,"requestId":request.request_id,"runtimeBootId":self.boot}),
             )
@@ -315,6 +325,13 @@ impl Service {
         }
     }
     fn claim(&mut self, request: &Request) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            request
+                .session_id
+                .as_ref()
+                .is_none_or(|id| !self.unresolved.contains(id)),
+            "control-outcome-unconfirmed"
+        );
         anyhow::ensure!(
             request.experimental_enabled && request.runtime_boot_id.as_deref() == Some(&self.boot),
             "stale-or-disabled-control"
@@ -371,14 +388,21 @@ fn safe_approval(approval: agentkib_codex_bridge::Approval, controls: bool) -> V
     let valid_decisions = details
         .get("availableDecisions")
         .is_none_or(|value| value.is_null() || value.is_array());
+    let unknown_metadata: Vec<_> = details.as_object().into_iter().flat_map(|object| object.iter())
+        .filter(|(key, value)| !value.is_null() && !matches!(key.as_str(),
+            "threadId"|"turnId"|"itemId"|"approvalId"|"command"|"cwd"|"reason"|"commandActions"|"changes"|"availableDecisions"))
+        .take(32)
+        .map(|(key, value)| json!({"field":key.chars().take(80).collect::<String>(),"type":match value {
+            Value::Null => "null", Value::Bool(_) => "boolean", Value::Number(_) => "number",
+            Value::String(_) => "string", Value::Array(_) => "array", Value::Object(_) => "object"
+        }})).collect();
     let supported = valid_decisions
         && (approval.request_id.is_string() || approval.request_id.is_number())
         && controls
         && complete
         // Version-pinned allowlist: unknown non-null metadata may carry a new permission
         // request or an omitted scope. Never silently hide it while enabling approval.
-        && details.as_object().is_some_and(|object| object.iter().all(|(key,value)| value.is_null() || matches!(key.as_str(),
-            "threadId"|"turnId"|"itemId"|"approvalId"|"command"|"cwd"|"reason"|"commandActions"|"changes"|"availableDecisions")))
+        && details.is_object() && unknown_metadata.is_empty()
         && [
             "additionalPermissions",
             "networkApprovalContext",
@@ -396,7 +420,21 @@ fn safe_approval(approval: agentkib_codex_bridge::Approval, controls: bool) -> V
         .filter(|v| matches!(v.as_str(), Some("accept" | "decline" | "cancel")))
         .collect();
     let supported = supported && !decisions.is_empty();
-    json!({"requestId":approval.request_id,"turnId":approval.turn_id,"method":approval.method,"command":details["command"],"cwd":details["cwd"],"changes":details["changes"],"availableDecisions":if supported { decisions } else {vec![]},"supported":supported})
+    let unsupported_reason = if supported {
+        None
+    } else if !controls {
+        Some("control-disabled")
+    } else if !complete {
+        Some("incomplete-operation-details")
+    } else if !unknown_metadata.is_empty() {
+        Some("unsupported-metadata")
+    } else {
+        Some("unsupported-approval-contract")
+    };
+    // Diagnostic structure only; never expose unknown permission values or log
+    // the raw owner request. It does not grant a new decision or permission.
+    json!({"requestId":approval.request_id,"turnId":approval.turn_id,"method":approval.method,"command":details["command"],"cwd":details["cwd"],"changes":details["changes"],"availableDecisions":if supported { decisions } else {vec![]},"supported":supported,
+        "unsupportedReason":unsupported_reason,"unsupportedMetadata":unknown_metadata})
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -472,6 +510,28 @@ mod tests {
             assert_eq!(file_approval(details)["supported"], false, "{field}");
         }
     }
+
+    #[test]
+    fn unsupported_approval_diagnostics_never_expose_unknown_values_or_enable_decisions() {
+        let projected = safe_approval(
+            agentkib_codex_bridge::Approval {
+                request_id: json!(34),
+                turn_id: "turn".into(),
+                method: "item/commandExecution/requestApproval".into(),
+                details: json!({"command":"/usr/bin/true","cwd":"/tmp",
+                "proposedExecpolicyAmendment":["private-proposal-value"]}),
+            },
+            true,
+        );
+        assert_eq!(projected["supported"], false);
+        assert_eq!(projected["availableDecisions"], json!([]));
+        assert_eq!(projected["unsupportedReason"], "unsupported-metadata");
+        assert_eq!(
+            projected["unsupportedMetadata"],
+            json!([{"field":"proposedExecpolicyAmendment","type":"array"}])
+        );
+        assert!(!projected.to_string().contains("private-proposal-value"));
+    }
     #[test]
     fn command_approval_requires_visible_working_directory_and_complete_scope() {
         let mut approval = agentkib_codex_bridge::Approval {
@@ -534,6 +594,41 @@ mod tests {
         .unwrap();
         assert!(worker.submit(request).unwrap().error.is_some());
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn uncertain_control_fence_survives_bridge_eviction_and_new_request_ids() {
+        let mut service = Service::default();
+        service.unresolved.insert("session-a".into());
+        #[cfg(target_os = "macos")]
+        {
+            service.bridges.clear();
+            service.recency.clear();
+        }
+        for operation in ["send", "approve"] {
+            let request: Request = serde_json::from_value(json!({
+                "operation":operation,"sessionId":"session-a","experimentalEnabled":true,
+                "runtimeBootId":service.boot,"requestId":uuid::Uuid::new_v4().to_string()
+            }))
+            .unwrap();
+            assert!(
+                service
+                    .claim(&request)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("outcome-unconfirmed")
+            );
+        }
+        let other: Request = serde_json::from_value(json!({
+            "operation":"send","sessionId":"session-b","experimentalEnabled":true,
+            "runtimeBootId":service.boot,"requestId":uuid::Uuid::new_v4().to_string()
+        }))
+        .unwrap();
+        service.claim(&other).unwrap();
+        assert!(
+            Service::default().claim(&other).is_err(),
+            "restart must reject the old boot"
+        );
     }
     #[test]
     fn worker_serializes_page_reads_with_a_bounded_queue() {
