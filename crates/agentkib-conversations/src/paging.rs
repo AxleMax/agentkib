@@ -373,7 +373,12 @@ pub(super) fn read_page(
             Record::Line(offset, bytes) => {
                 if state.trailing {
                     state.trailing = false;
-                    continue;
+                    // Only a terminal LF/CRLF produces an empty tail. A complete
+                    // JSON value at EOF needs no newline; parse it normally so
+                    // partial writes are still rejected as damaged records.
+                    if bytes.is_empty() || bytes == b"\r" {
+                        continue;
+                    }
                 }
                 lines += 1;
                 state.sequence += 1;
@@ -1634,6 +1639,80 @@ mod tests {
             serde_json::to_value(retry.events).unwrap()
         );
         assert_eq!(all(&path, Format::Codex, 50).len(), 137);
+    }
+
+    #[test]
+    fn complete_final_record_survives_without_newline_for_all_formats() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tail.jsonl");
+        for (format, record) in [
+            (Format::Codex, primary("tail")),
+            (
+                Format::Claude,
+                serde_json::json!({"type":"user","message":{"role":"user","content":"tail"}}),
+            ),
+            (
+                Format::OpenClaw,
+                serde_json::json!({"type":"message","message":{"role":"user","content":"tail"}}),
+            ),
+            (
+                Format::Hermes,
+                serde_json::json!({"role":"user","content":"tail"}),
+            ),
+            (
+                Format::GrokBuild,
+                serde_json::json!({"type":"user","content":"tail"}),
+            ),
+        ] {
+            for ending in ["", "\n", "\r\n"] {
+                fs::write(&path, format!("{record}{ending}")).unwrap();
+                let page = read_page(&path, None, 1, format).unwrap();
+                assert_eq!(page.events.len(), 1);
+                assert_eq!(page.events[0].content.as_deref(), Some("tail"));
+                assert!(page.next_cursor.is_none());
+                assert!(
+                    !page
+                        .warnings
+                        .iter()
+                        .any(|w| w == "TRANSCRIPT_DAMAGED_LINES")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unterminated_tail_preserves_paging_ids_and_rejects_partial_json() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tail.jsonl");
+        let text = (0..4)
+            .map(|i| primary(&i.to_string()).to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, &text).unwrap();
+        let expected = all(&path, Format::Codex, 1);
+        assert_eq!(expected.len(), 4);
+        let latest = read_page(&path, None, 1, Format::Codex).unwrap();
+        assert_eq!(latest.events[0].content.as_deref(), Some("3"));
+        let cursor = latest.next_cursor.unwrap();
+        let older = read_page(&path, Some(&cursor), 1, Format::Codex).unwrap();
+        let retry = read_page(&path, Some(&cursor), 1, Format::Codex).unwrap();
+        assert_eq!(
+            serde_json::to_value(&older.events).unwrap(),
+            serde_json::to_value(&retry.events).unwrap()
+        );
+        fs::write(&path, format!("{text}\n")).unwrap();
+        assert_eq!(
+            serde_json::to_value(expected).unwrap(),
+            serde_json::to_value(all(&path, Format::Codex, 1)).unwrap()
+        );
+        fs::write(&path, format!("{text}\n{{\"type\":")).unwrap();
+        let page = read_page(&path, None, 50, Format::Codex).unwrap();
+        assert_eq!(page.events.len(), 4);
+        assert!(
+            page.warnings
+                .iter()
+                .any(|w| w == "TRANSCRIPT_DAMAGED_LINES")
+        );
     }
 
     #[test]
