@@ -481,6 +481,24 @@ impl agentkib_remote::Source for RemoteSessionSource {
         workspaces.retain(|workspace| registered.contains(&workspace.id));
         sessions.retain(|session| registered.contains(&session.workspace_id));
         self.ensure_enabled(epoch)?;
+        // Minimize data before it crosses the network. WorkspaceSummary is a
+        // local model whose discovery provenance must not reach paired clients;
+        // receiver-side stripping cannot enforce that boundary.
+        let workspaces = workspaces
+            .into_iter()
+            .map(|workspace| {
+                json!({
+                    "id": workspace.id,
+                    "path": workspace.path,
+                    "name": workspace.name,
+                    "status": workspace.status,
+                    "asset_count": workspace.asset_count,
+                    "warning_count": workspace.warning_count,
+                    "last_active_at": workspace.last_active_at,
+                    "last_scanned_at": workspace.last_scanned_at,
+                })
+            })
+            .collect::<Vec<_>>();
         Ok(json!({"workspaces": workspaces, "sessions": sessions}))
     }
 
@@ -5178,6 +5196,39 @@ mod tests {
         let workspace = directory.path().join("synthetic-project");
         fs::create_dir_all(&workspace).unwrap();
         let registered = store.add_workspace(&workspace).unwrap();
+        let private_cwd = workspace.join("private-discovery-subdirectory");
+        store
+            .sync_discovery(
+                &[agentkib_core::DiscoveryCandidate {
+                    path: workspace.clone(),
+                    display_name: None,
+                    source_agent: Some(AgentKind::Codex),
+                    evidence: agentkib_core::DiscoveryEvidence::SessionCwd,
+                    last_active_at: Some(Utc::now()),
+                    session_count: 1,
+                    explicit_workspace: false,
+                    repository_group_id: Some("private-repository-id".into()),
+                    session_cwds: Some(vec![private_cwd.clone()]),
+                }],
+                &[],
+                &[],
+                Utc::now(),
+                &[],
+            )
+            .unwrap();
+        // Assert the fixture really hydrates internal evidence, rather than
+        // passing because the store happened to contain no discovery sources.
+        let local = store.list_workspaces().unwrap().remove(0);
+        assert!(
+            local
+                .sources
+                .iter()
+                .any(|source| { source.session_cwds.as_ref() == Some(&vec![private_cwd.clone()]) })
+        );
+        assert_eq!(
+            local.repository_group_id.as_deref(),
+            Some("private-repository-id")
+        );
         let native = agentkib_conversations::NativeSessionSummary {
             native_ref: "synthetic-native-id".into(),
             agent: AgentKind::Codex,
@@ -5198,6 +5249,23 @@ mod tests {
             .unwrap();
         let catalog = source.catalog().unwrap();
         assert_eq!(catalog["workspaces"].as_array().unwrap().len(), 1);
+        let expected_workspace = json!({
+            "id": local.id,
+            "path": local.path,
+            "name": local.name,
+            "status": local.status,
+            "asset_count": local.asset_count,
+            "warning_count": local.warning_count,
+            "last_active_at": local.last_active_at,
+            "last_scanned_at": local.last_scanned_at,
+        });
+        assert_eq!(catalog["workspaces"][0], expected_workspace);
+        assert!(
+            !catalog
+                .to_string()
+                .contains("private-discovery-subdirectory")
+        );
+        assert!(!catalog.to_string().contains("private-repository-id"));
         assert_eq!(catalog["sessions"][0]["id"], indexed[0].id);
         assert!(!catalog.to_string().contains("synthetic-native-id"));
         store.exclude_workspace(&registered.id).unwrap();

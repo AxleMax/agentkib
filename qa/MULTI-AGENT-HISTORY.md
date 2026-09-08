@@ -59,6 +59,14 @@
 
 ## 过程记录
 
+### 2026-09-08 远程目录发送端数据最小化 goal
+
+- 对应评论 `3956816447`，基于 `f3ac7fc`。先用真实 Store 发现来源夹具复现：本地含 session_cwds 和 repository_group_id 时，原始远程 catalog 响应把 sources、发现路径、repository／manifest 字段一并发送。接收端剥离不足以形成安全边界。
+- 在 RemoteSessionSource::catalog 发送前显式投影 8 个既有公开工作区字段：id、path、name、status、asset_count、warning_count、last_active_at、last_scanned_at。不修改本地发现诊断、授权、登记检查、会话摘要或持久化结构。
+- 回归先确认夹具真实存有内部来源，再精确比较原始响应字段及私有标记缺失；修复前断言失败，修复后通过。独立 review-agent 只读复核原生远程服务及 Web 调用方、会话摘要和接收端兼容，结论 No findings。
+- 验证通过：runtime 55 项、Rust 全工作区测试、全目标 Clippy、远程解析前端 29 项、类型检查、生产构建、Rust／前端格式检查及 diff 检查；生成协议绑定无差异。前端实现未改，未重复桌面／Web 全量测试。本地 goal 完成。
+- 本轮不操作真实配对设备，不将源响应回归当作真实设备网络验收。保留无关设计修改，未 commit／push，不提前标记远端 resolved。
+
 ### 2026-09-08 完整草稿、工作区筛选与远程时间校验 goal
 
 - 对应最新评论 `3956600378`、`3956600387`、`3956600391`，基于 `9d44e54`。该提交远端五项 CI 已通过，但这不涵盖本轮未提交修复。
