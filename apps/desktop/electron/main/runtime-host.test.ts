@@ -43,6 +43,7 @@ lines.on("line", (line) => {
     process.exit(0);
   }
   if (request.method === "crash") process.exit(14);
+  else if (request.method === "hold") return;
   else respond(request, request.params);
 });
 `;
@@ -51,12 +52,14 @@ describe("DesktopRuntimeHost", () => {
   let directory: string;
   let script: string;
   let hosts: DesktopRuntimeHost[];
+  let children: ChildProcessWithoutNullStreams[];
 
   beforeEach(async () => {
     directory = await mkdtemp(path.join(tmpdir(), "agentkib-runtime-host-"));
     script = path.join(directory, "fake-runtime.cjs");
     await writeFile(script, fakeRuntimeSource);
     hosts = [];
+    children = [];
   });
 
   afterEach(async () => {
@@ -72,15 +75,18 @@ describe("DesktopRuntimeHost", () => {
       clientVersion: "test",
       maxRestarts,
       shutdownTimeoutMs: 200,
-      spawnProcess: (_executablePath, _args, options) =>
-        spawn(process.execPath, [script], {
+      spawnProcess: (_executablePath, _args, options) => {
+        const child = spawn(process.execPath, [script], {
           ...options,
           env: {
             ...options?.env,
             FAKE_RUNTIME_MODE: mode(),
             FAKE_RUNTIME_MARKER: marker,
           },
-        }) as ChildProcessWithoutNullStreams,
+        }) as ChildProcessWithoutNullStreams;
+        children.push(child);
+        return child;
+      },
     });
     hosts.push(host);
     return host;
@@ -128,6 +134,49 @@ describe("DesktopRuntimeHost", () => {
     mode = "ready";
     await expect(host.retry()).resolves.toMatchObject({ protocolVersion: PROTOCOL_VERSION });
     expect(host.status.state).toBe("ready");
+  });
+
+  it("contains startup stdin errors and can retry without a stale error", async () => {
+    let mode = "never-handshake";
+    const host = createHost(() => mode, 0);
+    const starting = expect(host.start()).rejects.toThrow("EPIPE");
+    children[0].stdin.destroy(new Error("EPIPE"));
+    await starting;
+    expect(host.status.state).toBe("failed");
+
+    mode = "ready";
+    await host.retry();
+    expect(host.status).toMatchObject({ state: "ready", restartCount: 0 });
+    expect(host.status.error).toBeUndefined();
+    // Old pipes can emit after the replacement process is already ready.
+    expect(() => children[0].stdin.emit("error", new Error("late EPIPE"))).not.toThrow();
+    await expect(host.request("echo", { recovered: true })).resolves.toEqual({ recovered: true });
+  });
+
+  it("rejects all pending requests on a broken pipe and restarts only once", async () => {
+    const host = createHost(() => "ready", 1);
+    await host.start();
+    const exited = vi.fn();
+    host.on("exit", exited);
+    const first = expect(host.request("hold", {})).rejects.toThrow("EPIPE");
+    const second = expect(host.request("hold", {})).rejects.toThrow("EPIPE");
+    children[0].stdin.destroy(new Error("EPIPE"));
+    await Promise.all([first, second]);
+    await expect(host.request("echo", { recovered: true })).resolves.toEqual({ recovered: true });
+    expect(children).toHaveLength(2);
+    expect(host.status.state).toBe("ready");
+    expect(exited).toHaveBeenCalledTimes(1);
+    expect(exited).toHaveBeenCalledWith(expect.objectContaining({ expected: false }));
+  });
+
+  it("handles synchronous write failure through the same recovery path", async () => {
+    const host = createHost(() => "ready", 0);
+    await host.start();
+    vi.spyOn(children[0].stdin, "write").mockImplementation(() => {
+      throw new Error("synchronous pipe failure");
+    });
+    await expect(host.request("echo", {})).rejects.toThrow("synchronous pipe failure");
+    expect(host.status.state).toBe("failed");
   });
 
   it("cancels startup waiters when stopped", async () => {
