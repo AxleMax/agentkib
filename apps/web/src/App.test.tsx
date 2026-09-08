@@ -212,6 +212,50 @@ function mockServer(initial = "approved") {
   };
 }
 describe("Web access UI", () => {
+  it.each(["openclaw", "hermes", "grok-build"])(
+    "reads %s history without offering experimental sending",
+    async (agent) => {
+      const server = mockServer();
+      const original = server.fetcher.getMockImplementation()!;
+      server.fetcher.mockImplementation(async (url) => {
+        if (String(url).endsWith("/access"))
+          return Response.json({
+            status: "approved",
+            csrfToken: "x",
+            bootId: "b",
+            experimentalEnabled: true,
+            device: { id: "d", name: "Browser", send: true, approve: true },
+          });
+        if (String(url).includes("/catalog"))
+          return Response.json({
+            indexEnabled: true,
+            sessions: [
+              {
+                id: "s",
+                title: "Test session",
+                workspace_id: "w",
+                agent,
+                availability: "readable",
+              },
+            ],
+          });
+        if (String(url).includes("/live"))
+          return Response.json({
+            sessionId: "s",
+            status: "unsupported",
+            sendEnabled: false,
+            approvals: [],
+          });
+        return original(url);
+      });
+      render(<App />);
+      fireEvent.click(await screen.findByRole("button", { name: /Test session/ }));
+      expect(await screen.findByText("Secret history")).toBeVisible();
+      expect(screen.queryByLabelText("发送消息")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "发送" })).not.toBeInTheDocument();
+      expect(screen.getByText(dictionaries["zh-CN"].readOnly)).toBeVisible();
+    },
+  );
   it("shows the command directory and only owner-offered approval decisions", async () => {
     const server = mockServer();
     const original = server.fetcher.getMockImplementation()!;

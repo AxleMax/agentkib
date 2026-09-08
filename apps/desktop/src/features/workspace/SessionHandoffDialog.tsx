@@ -26,6 +26,7 @@ import type {
   SessionHandoffRequest,
   WorkspaceSummary,
 } from "@/core/types";
+import { canContinueFromHistory } from "@/features/agents/agent-capabilities";
 import { sessionHandoffTargets } from "./session-handoff-targets";
 
 export function SessionHandoffDialog({
@@ -58,6 +59,7 @@ export function SessionHandoffDialog({
       ),
     [session.agent, targetAgents],
   );
+  const sourceCanContinue = canContinueFromHistory(session.agent);
   const defaultTarget =
     availableTargets.find(([agent]) => agent !== session.agent)?.[0] ??
     availableTargets[0]?.[0] ??
@@ -128,6 +130,7 @@ export function SessionHandoffDialog({
   };
 
   const prepare = async () => {
+    if (!sourceCanContinue) return;
     const identity = captureIdentity();
     setBusy(true);
     setError("");
@@ -143,10 +146,10 @@ export function SessionHandoffDialog({
   };
 
   useEffect(() => {
-    if (!initialRequest?.autoPrepare || autoPreparedRef.current) return;
+    if (!sourceCanContinue || !initialRequest?.autoPrepare || autoPreparedRef.current) return;
     autoPreparedRef.current = true;
     void prepare();
-  });
+  }, [initialRequest?.autoPrepare, sourceCanContinue]);
 
   const plan = async () => {
     if (!draft) return;
@@ -432,7 +435,7 @@ export function SessionHandoffDialog({
               </CollapsibleContent>
             </Collapsible>
           </div>
-        ) : (
+        ) : sourceCanContinue ? (
           <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
             <div className="grid grid-cols-2 gap-3 max-[820px]:grid-cols-1">
               <Label className="col-span-full grid gap-1.5 text-xs text-muted-foreground">
@@ -520,6 +523,15 @@ export function SessionHandoffDialog({
               </Collapsible>
             </div>
           </div>
+        ) : (
+          <div className="grid min-h-[360px] place-content-center px-6 py-8 text-center">
+            <div
+              role="alert"
+              className="mx-auto max-w-md rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-relaxed text-amber-800 dark:text-amber-200"
+            >
+              {tr("handoff.sourceReadOnly")}
+            </div>
+          </div>
         )}
         <footer className="flex min-h-16 items-center justify-end gap-2 border-t border-border px-5 py-3">
           {draft ? (
@@ -544,7 +556,7 @@ export function SessionHandoffDialog({
               </Button>
             </>
           ) : (
-            <Button disabled={busy} onClick={() => void prepare()}>
+            <Button disabled={busy || !sourceCanContinue} onClick={() => void prepare()}>
               <FileOutput size={14} />
               {tr(busy ? "common.loading" : "handoff.prepare")}
             </Button>

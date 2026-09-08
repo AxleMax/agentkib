@@ -642,7 +642,7 @@ export function App() {
                     {t[notice]}
                   </p>
                 )}
-                {access.experimentalEnabled && access.device?.send ? (
+                {current?.agent === "codex" && access.experimentalEnabled && access.device?.send ? (
                   <form
                     className="composer"
                     onSubmit={(e) => {
@@ -676,7 +676,9 @@ export function App() {
                   </form>
                 ) : (
                   <footer className="readonly">
-                    {access.experimentalEnabled && access.device?.approve
+                    {current?.agent === "codex" &&
+                    access.experimentalEnabled &&
+                    access.device?.approve
                       ? t.noSendPermission
                       : t.readOnly}
                   </footer>

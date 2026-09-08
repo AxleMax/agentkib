@@ -180,6 +180,20 @@ describe("SessionHubPage", () => {
     expect(hub.select).toHaveBeenLastCalledWith();
   });
 
+  it.each(["open-claw", "hermes", "grok-build"] as const)(
+    "does not offer continuation for %s historical sources",
+    (agent) => {
+      hub = {
+        ...hub,
+        selected: { ...readable, id: `${agent}-history`, agent },
+        selectedWorkspace: workspace,
+      };
+      render(<SessionWindowToolbar />);
+
+      expect(screen.queryByRole("button", { name: "Continue in workspace" })).toBeNull();
+    },
+  );
+
   it("explains metadata-only records without reading history or offering continuation", () => {
     hub = { ...hub, selected: metadata, selectedWorkspace: workspace };
     render(sessionSurface());

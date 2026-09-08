@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useI18n } from "@/core/useI18n";
 import { AgentIcon } from "@/features/agents/AgentIcon";
+import { canContinueFromHistory } from "@/features/agents/agent-capabilities";
 import { displaySessionTitle } from "@/features/workspace/session-title";
 import { useSessionHub } from "./SessionHubContext";
 
@@ -26,7 +27,11 @@ export function SessionWindowToolbar() {
         </div>
       </div>
     );
-  const canContinue = workspace && !selected.remote && selected.availability === "readable";
+  const canContinue =
+    workspace &&
+    !selected.remote &&
+    selected.availability === "readable" &&
+    canContinueFromHistory(selected.agent);
   const continueSession = () => {
     if (!canContinue) return;
     void navigate({

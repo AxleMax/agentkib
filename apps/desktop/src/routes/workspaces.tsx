@@ -24,12 +24,13 @@ import { formatRelativeTime, tr } from "../core/i18n";
 import {
   homeKeys,
   useHomeCatalog,
+  useHomeDiscovery,
   useHomeRefreshJobs,
   useHomeWorkspaces,
 } from "@/features/home/home-query";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { ChevronLeft, ChevronRight, FolderGit2, RefreshCw, Search, Trash2 } from "lucide-react";
-import type { AgentKind, RefreshJobStatus, WorkspaceSummary } from "../core/types";
+import type { AgentKind, DiscoveryReport, RefreshJobStatus, WorkspaceSummary } from "../core/types";
 import { cn } from "@/lib/utils";
 
 type WorkspaceView = "list" | "storage";
@@ -54,6 +55,7 @@ function WorkspacesRoute() {
   const search = useSearch({ strict: false }) as WorkspacesSearch;
   const view = search.workspaceView ?? "list";
   const { data: workspaces = [], isPending: workspacesPending } = useHomeWorkspaces();
+  const { data: discovery } = useHomeDiscovery();
   const { data: catalog = [], isPending: catalogPending } = useHomeCatalog();
   const { data: refreshJobs = [] } = useHomeRefreshJobs();
   const openRequest = useRef(0);
@@ -168,12 +170,19 @@ function WorkspacesRoute() {
       view={view}
       storageJob={storageJob}
       workspaces={workspaces}
+      discovery={discovery}
       assetCounts={assetCounts}
       discoveryRefreshing={discoveryRefreshing}
       onAddWorkspace={() => void addWorkspace()}
       onViewChange={setView}
       onOpen={openWorkspace}
       onRefreshDiscovery={refreshDiscovery}
+      onOpenDiscoveryDetails={() =>
+        void navigate({
+          to: "/settings",
+          search: { settingsSection: "discovery", settingsTarget: "discovery-status" },
+        })
+      }
       onRefreshWorkspace={refreshWorkspace}
       onExclude={excludeWorkspace}
     />
@@ -184,28 +193,32 @@ function WorkspacesPage({
   view,
   storageJob,
   workspaces,
+  discovery,
   assetCounts,
   discoveryRefreshing,
   onAddWorkspace,
   onViewChange,
   onOpen,
   onRefreshDiscovery,
+  onOpenDiscoveryDetails,
   onRefreshWorkspace,
   onExclude,
 }: {
   view: WorkspaceView;
   storageJob?: RefreshJobStatus;
   workspaces: WorkspaceSummary[];
+  discovery?: DiscoveryReport;
   assetCounts: Map<string, number>;
   discoveryRefreshing: boolean;
   onAddWorkspace: () => void;
   onViewChange: (view: WorkspaceView) => void;
   onOpen: (workspace: WorkspaceSummary) => Promise<void>;
   onRefreshDiscovery: () => Promise<void>;
+  onOpenDiscoveryDetails: () => void;
   onRefreshWorkspace: (id: string) => Promise<void>;
   onExclude: (id: string) => Promise<void>;
 }) {
-  const { tr } = useI18n();
+  const { tr, formatRelativeTime } = useI18n();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | WorkspaceSummary["status"]>("all");
   const [agent, setAgent] = useState<"all" | AgentKind>("all");
@@ -355,6 +368,12 @@ function WorkspacesPage({
       </CardContent>
     </Card>
   );
+  const discoveryStatus = discoveryStatusSummary(
+    discovery,
+    discoveryRefreshing,
+    tr,
+    formatRelativeTime,
+  );
   if (view === "storage")
     return (
       <div className="grid gap-5">
@@ -366,6 +385,31 @@ function WorkspacesPage({
     <div className="grid gap-4">
       {pageIntro}
       {filterBar}
+      <Button
+        variant="ghost"
+        className="h-auto min-h-8 justify-start gap-2 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+        onClick={onOpenDiscoveryDetails}
+        aria-label={tr("workspace.discoveryDetailsLink")}
+      >
+        <span
+          className={cn(
+            "size-1.5 rounded-full",
+            discoveryStatus.tone === "error"
+              ? "bg-destructive"
+              : discoveryStatus.tone === "warning"
+                ? "bg-amber-500"
+                : discoveryStatus.tone === "success"
+                  ? "bg-emerald-500"
+                  : "bg-muted-foreground",
+          )}
+        />
+        <span>{discoveryStatus.label}</span>
+        {discoveryStatus.reportedAt && (
+          <span className="text-muted-foreground/70">{discoveryStatus.reportedAt}</span>
+        )}
+        <span className="text-muted-foreground/70">·</span>
+        <span>{tr("workspace.discoveryDetailsLink")}</span>
+      </Button>
       <div className="grid items-start gap-5 min-[1024px]:grid-cols-[minmax(360px,1fr)_minmax(0,1.25fr)]">
         <section className="flex max-h-[680px] min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
           <header className="flex min-h-[58px] items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -591,6 +635,63 @@ function WorkspaceEmptyState({ title, text }: { title: string; text: string }) {
     </div>
   );
 }
+
+export function discoveryStatusSummary(
+  discovery: DiscoveryReport | undefined,
+  refreshing: boolean,
+  translate: typeof tr,
+  relativeTime: (value: string | Date) => string,
+) {
+  if (!discovery) {
+    return {
+      label: translate(
+        refreshing ? "workspace.discoveryScanning" : "workspace.discoveryNotScanned",
+      ),
+      tone: "neutral" as const,
+    };
+  }
+  const reportedAt = discovery.finished_at || discovery.started_at;
+  const reportedLabel = reportedAt
+    ? translate("workspace.discoveryReportedAt", { time: relativeTime(reportedAt) })
+    : undefined;
+  if (refreshing) {
+    return {
+      label: translate("workspace.discoveryScanning"),
+      reportedAt: reportedLabel,
+      tone: "neutral" as const,
+    };
+  }
+  const sourceFailures =
+    discovery.source_diagnostics?.filter((source) =>
+      ["failed", "permission-denied"].includes(source.status),
+    ).length ?? 0;
+  if (discovery.errors.length || sourceFailures > 0) {
+    return {
+      label: translate("workspace.discoveryAttention", {
+        count: discovery.errors.length + sourceFailures,
+      }),
+      reportedAt: reportedLabel,
+      tone: "error" as const,
+    };
+  }
+  if (
+    discovery.source_diagnostics?.some((source) =>
+      ["not-configured", "missing", "partial", "unsupported"].includes(source.status),
+    )
+  ) {
+    return {
+      label: translate("workspace.discoveryPartial"),
+      reportedAt: reportedLabel,
+      tone: "warning" as const,
+    };
+  }
+  return {
+    label: translate("workspace.discoveryComplete"),
+    reportedAt: reportedLabel,
+    tone: "success" as const,
+  };
+}
+
 function workspaceStatusLabel(status: WorkspaceSummary["status"]) {
   return tr(`status.workspace.${status}`);
 }

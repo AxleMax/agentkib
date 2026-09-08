@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 pub const WEB_REQUEST_METHOD: &str = "web.request";
 pub const REMOTE_REQUEST_METHOD: &str = "remote.request";
 pub const HANDSHAKE_METHOD: &str = "agentkib.handshake";

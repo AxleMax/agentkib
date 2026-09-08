@@ -77,6 +77,46 @@ describe("WorkspaceSessionsPage", () => {
     );
   });
 
+  it.each(["open-claw", "hermes", "grok-build"] as const)(
+    "keeps %s history read-only in the workspace session view",
+    async (agent) => {
+      const source = {
+        ...cachedSession,
+        id: `${agent}-session`,
+        agent,
+        title: `${agent} history`,
+      } satisfies ConversationSessionSummary;
+      vi.mocked(api.workspaceSessions).mockResolvedValue([source]);
+      vi.mocked(api.refreshWorkspaceSessions).mockResolvedValue([source]);
+      vi.mocked(api.sessionEvents).mockResolvedValue({
+        events: [
+          {
+            id: `${agent}-event`,
+            kind: "agent-message",
+            content: `${agent} history content`,
+            attachment_count: 0,
+            truncated: false,
+          },
+        ],
+        warnings: [],
+      });
+
+      render(
+        <WorkspaceSessionsPage
+          workspace={workspace}
+          enabled
+          targetAgents={["grok-build"]}
+          onRuntimeChanged={vi.fn()}
+          onHandoffPlanned={vi.fn()}
+          onMcpConnectionPlanned={vi.fn()}
+        />,
+      );
+
+      expect(await screen.findByText(`${agent} history content`)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Continue in another Agent" })).toBeNull();
+    },
+  );
+
   it("uses the shared auxiliary toggle consistently with the visible workspace count", async () => {
     const auxiliary = {
       ...cachedSession,

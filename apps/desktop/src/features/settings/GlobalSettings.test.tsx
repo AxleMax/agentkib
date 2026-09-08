@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { changeLocale, formatDateTime, initializeI18n, tr } from "@/core/i18n";
 import type { GlobalSettingsProps } from "./GlobalSettings";
@@ -116,5 +116,66 @@ describe("GlobalSettings diagnostics health", () => {
 
     expect(screen.queryByText("Running normally")).toBeNull();
     expect(screen.getByText("Needs attention")).toBeTruthy();
+  });
+
+  it("renders source diagnostics and their full path when the runtime provides them", () => {
+    render(
+      <GlobalSettings
+        {...baseProps}
+        section="discovery"
+        discovery={{
+          started_at: "2026-09-08T08:00:00Z",
+          finished_at: "2026-09-08T08:00:01Z",
+          discovered_count: 1,
+          removed_count: 0,
+          errors: [],
+          source_diagnostics: [
+            {
+              agent: "open-claw",
+              source: "sessions",
+              path: "/Users/example/.open-claw/very/deep/sessions.jsonl",
+              status: "partial",
+              started_at: "2026-09-08T08:00:00Z",
+              finished_at: "2026-09-08T08:00:01Z",
+              candidate_count: 4,
+              included_count: 1,
+              skipped_count: 3,
+              reasons: ["source-read-failed"],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Discovery sources" })).toBeTruthy();
+    expect(screen.getByText("OpenClaw · sessions")).toBeTruthy();
+    expect(screen.getByText("Partial")).toBeTruthy();
+    expect(screen.getByText("/Users/example/.open-claw/very/deep/sessions.jsonl")).toBeTruthy();
+    expect(screen.queryByText("source-read-failed")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /OpenClaw · sessions/ }));
+    expect(screen.getAllByText("/Users/example/.open-claw/very/deep/sessions.jsonl").length).toBe(
+      2,
+    );
+    expect(screen.getByText("Source could not be read")).toBeTruthy();
+  });
+
+  it("explains when an old runtime has no source diagnostics", () => {
+    render(
+      <GlobalSettings
+        {...baseProps}
+        section="discovery"
+        discovery={{
+          started_at: "2026-09-08T08:00:00Z",
+          finished_at: "2026-09-08T08:00:01Z",
+          discovered_count: 0,
+          removed_count: 0,
+          errors: [],
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText("Detailed source diagnostics are unavailable in this runtime."),
+    ).toBeTruthy();
   });
 });

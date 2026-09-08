@@ -36,6 +36,7 @@ export const settingsTargets = [
   "general-shortcuts",
   "general-quota",
   "discovery-status",
+  "discovery-sources",
   "discovery-roots",
   "discovery-excluded",
   "tools-app",
@@ -124,6 +125,12 @@ const searchEntries: Array<{
     target: "discovery-roots",
     label: "settings.scanRoots",
     keywords: ["settings.addFolder", "settings.maxDepth"],
+  },
+  {
+    section: "discovery",
+    target: "discovery-sources",
+    label: "settings.discoverySources",
+    keywords: ["settings.discoveryDetails", "settings.discoveryReasons"],
   },
   {
     section: "discovery",

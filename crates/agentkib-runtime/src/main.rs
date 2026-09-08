@@ -1147,13 +1147,32 @@ fn refresh_workspace_sessions(
     let workspace = store.workspace_path(&request.workspace_id)?;
     for source in providers() {
         let agent = source.agent();
-        match source.list_sessions(&workspace) {
-            Ok(sessions) => {
+        match source.list_sessions_detailed(&workspace) {
+            Ok(listing) => {
                 let _guard = session_index_write_lock()?;
                 if !session_index_refresh_is_current(refresh_epoch, &data_dir) {
                     return Ok(Vec::new());
                 }
-                store.sync_conversation_sessions(&request.workspace_id, agent, &sessions)?;
+                if listing.incomplete {
+                    // A failed profile/source must not erase its previously indexed sessions.
+                    store.sync_conversation_sessions_partial(
+                        &request.workspace_id,
+                        agent,
+                        &listing.sessions,
+                    )?;
+                    store.record_conversation_index_failure(
+                        &request.workspace_id,
+                        agent,
+                        "errors.conversations.sourceUnavailable",
+                        "Some conversation sources could not be read; previous records were retained",
+                    )?;
+                } else {
+                    store.sync_conversation_sessions(
+                        &request.workspace_id,
+                        agent,
+                        &listing.sessions,
+                    )?;
+                }
             }
             Err(_) => {
                 let _guard = session_index_write_lock()?;
@@ -4253,12 +4272,13 @@ fn refresh_discovery(_: EmptyRequest) -> anyhow::Result<RefreshReceipt> {
         .map(|root| (root.path, root.max_depth))
         .collect::<Vec<_>>();
     let snapshot = discover_local_workspaces(&roots);
-    Store::open_default()?.sync_discovery(
+    Store::open_default()?.sync_discovery_with_diagnostics(
         &snapshot.candidates,
         &snapshot.installations,
         &snapshot.home_assets,
         started_at,
         &snapshot.errors,
+        &snapshot.source_diagnostics,
     )?;
     Ok(completed_refresh_receipt(
         "discovery",
@@ -5062,6 +5082,8 @@ fn handle_handshake(request: RpcRequest) -> (RpcResponse, bool) {
         capabilities: vec![
             "web-v1".into(),
             "experimental-codex-bridge-version-gated".into(),
+            "discovery-source-diagnostics".into(),
+            "agent-history-capabilities".into(),
         ],
     };
 
@@ -5384,7 +5406,52 @@ mod tests {
 
         assert!(response.error.is_none());
         assert!(!should_shutdown);
+        let result = response.result.unwrap();
+        assert_eq!(result["protocolVersion"], PROTOCOL_VERSION);
+        let capabilities = result["capabilities"].as_array().unwrap();
+        assert!(capabilities.contains(&json!("discovery-source-diagnostics")));
+        assert!(capabilities.contains(&json!("agent-history-capabilities")));
         assert!(MCP_HUB.get().is_none());
+    }
+
+    #[test]
+    fn previous_desktop_protocol_cannot_silently_use_new_runtime() {
+        let (response, should_shutdown) = handle_handshake(RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(1),
+            method: HANDSHAKE_METHOD.into(),
+            params: json!({
+                "protocolVersion": PROTOCOL_VERSION - 1,
+                "client": {"name": "older-desktop", "version": "0.0.0"}
+            }),
+        });
+        assert!(response.error.is_some());
+        assert!(response.result.is_none());
+        assert!(!should_shutdown);
+    }
+
+    #[test]
+    fn declared_history_support_matches_registered_providers_without_expanding_control() {
+        use agentkib_core::{AgentControlSupport, AgentSupportCapabilities};
+        for agent in AgentKind::ALL {
+            let support = AgentSupportCapabilities::for_agent(agent);
+            assert_eq!(support.session_list, provider(agent).is_some(), "{agent:?}");
+            assert_eq!(support.history_read, support.session_list);
+            if matches!(
+                agent,
+                AgentKind::OpenClaw | AgentKind::Hermes | AgentKind::GrokBuild
+            ) {
+                assert!(!support.continuation);
+                assert_eq!(support.control, AgentControlSupport::None);
+                assert!(
+                    provider(agent)
+                        .unwrap()
+                        .verified_control_id("untrusted")
+                        .unwrap()
+                        .is_none()
+                );
+            }
+        }
     }
 
     #[test]

@@ -19,6 +19,9 @@ const TTL: Duration = Duration::from_secs(15 * 60);
 pub(super) enum Format {
     Codex,
     Claude,
+    OpenClaw,
+    Hermes,
+    GrokBuild,
 }
 
 #[derive(Clone)]
@@ -864,6 +867,13 @@ fn record_turn(value: &Value, payload: &Value) -> Option<String> {
 
 fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [ConversationEvent]) {
     let timestamp = value.get("timestamp").and_then(parse_json_timestamp);
+    if matches!(
+        state.format,
+        Format::OpenClaw | Format::Hermes | Format::GrokBuild
+    ) {
+        parse_compatible_record(state, offset, value, timestamp);
+        return;
+    }
     if state.format == Format::Claude {
         let record_type = value.get("type").and_then(Value::as_str);
         if !matches!(record_type, Some("user" | "assistant"))
@@ -1093,6 +1103,208 @@ fn parse_record(state: &mut State, offset: u64, value: &Value, page: &mut [Conve
     }
 }
 
+fn parse_compatible_record(
+    state: &mut State,
+    offset: u64,
+    value: &Value,
+    timestamp: Option<DateTime<Utc>>,
+) {
+    let record = value;
+    let record_type = record.get("type").and_then(Value::as_str);
+    match state.format {
+        // GrokBuild's top-level type is the verified message discriminator.
+        // Do not let a nested assistant role turn reasoning/internal records
+        // into visible conversation text.
+        Format::GrokBuild
+            if !matches!(
+                record_type,
+                Some("user" | "assistant" | "tool" | "toolResult" | "tool_result")
+            ) =>
+        {
+            return;
+        }
+        // OpenClaw records use the explicit message envelope. Metadata and
+        // lifecycle records are not conversation events.
+        Format::OpenClaw if record_type.is_some() && record_type != Some("message") => return,
+        // Hermes has both raw role records and typed envelopes. Explicit
+        // private/system phases are never user-visible, even when they carry
+        // an assistant role for internal bookkeeping.
+        Format::Hermes
+            if matches!(
+                record_type,
+                Some("reasoning" | "thinking" | "redacted_thinking" | "internal" | "system")
+            ) =>
+        {
+            return;
+        }
+        _ => {}
+    }
+    let message = value.get("message").unwrap_or(value);
+    let role = message
+        .get("role")
+        .or_else(|| record.get("role"))
+        .or_else(|| {
+            (state.format == Format::GrokBuild)
+                .then(|| record.get("type"))
+                .flatten()
+        })
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let event_timestamp = timestamp.or_else(|| {
+        message
+            .get("timestamp")
+            .or_else(|| message.get("ts"))
+            .and_then(parse_json_timestamp)
+    });
+    let content_value = message.get("content").or_else(|| record.get("content"));
+    let content = content_value.and_then(|value| response_message_text(Some(value)));
+    // These providers do not expose a verified Codex-style turn boundary. A
+    // field named `turn_id` in an arbitrary transcript is not enough to infer
+    // grouping, so leave both fields unset and keep unknown records expanded.
+    let turn = None;
+    if matches!(role, "tool" | "toolResult" | "tool_result") {
+        let name = message
+            .get("toolName")
+            .or_else(|| message.get("tool_name"))
+            .or_else(|| message.get("name"))
+            .or_else(|| record.get("toolName"))
+            .or_else(|| record.get("tool_name"))
+            .or_else(|| record.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("tool");
+        let status = message
+            .get("status")
+            .or_else(|| record.get("status"))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                message
+                    .get("isError")
+                    .or_else(|| message.get("is_error"))
+                    .and_then(Value::as_bool)
+                    .map(|failed| if failed { "failed" } else { "completed" })
+            });
+        let (content, truncated) = content
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| truncate_utf8(&value, MAX_MESSAGE_BYTES))
+            .map_or((None, false), |(value, truncated)| (Some(value), truncated));
+        state.pending.push_back(ConversationEvent {
+            id: format!("tool-{offset}"),
+            kind: ConversationEventKind::ToolSummary,
+            turn_id: turn,
+            message_phase: None,
+            timestamp: event_timestamp,
+            content,
+            tool_name: Some(sanitize_tool_name(name)),
+            tool_status: status.map(sanitize_tool_status),
+            duration_ms: message
+                .get("durationMs")
+                .or_else(|| message.get("duration_ms"))
+                .or_else(|| record.get("durationMs"))
+                .and_then(Value::as_u64),
+            attachment_count: 0,
+            truncated,
+        });
+        return;
+    }
+
+    // OpenClaw/Pi-style assistant messages can carry tool calls as content
+    // blocks without a separate role=tool record. Preserve the real tool name
+    // and result status instead of silently reducing a tool-only message to
+    // empty text. No inferred turn/phase metadata is attached here.
+    if let Some(blocks) = content_value.and_then(Value::as_array) {
+        for (index, block) in blocks.iter().enumerate() {
+            let Some(block_type) = block.get("type").and_then(Value::as_str) else {
+                continue;
+            };
+            let is_call = matches!(block_type, "toolCall" | "tool_use" | "toolUse");
+            let is_result = matches!(block_type, "toolResult" | "tool_result");
+            if !is_call && !is_result {
+                continue;
+            }
+            let name = block
+                .get("name")
+                .or_else(|| block.get("toolName"))
+                .or_else(|| block.get("tool_name"))
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
+            let status = if is_result {
+                block.get("status").and_then(Value::as_str).or_else(|| {
+                    block
+                        .get("isError")
+                        .or_else(|| block.get("is_error"))
+                        .and_then(Value::as_bool)
+                        .map(|failed| if failed { "failed" } else { "completed" })
+                })
+            } else {
+                block.get("status").and_then(Value::as_str)
+            };
+            let block_content = block
+                .get("content")
+                .or_else(|| block.get("output"))
+                .or_else(|| block.get("result"))
+                .or_else(|| block.get("input"))
+                .and_then(|value| response_message_text(Some(value)))
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| truncate_utf8(&value, MAX_MESSAGE_BYTES));
+            let (content, truncated) =
+                block_content.map_or((None, false), |(value, truncated)| (Some(value), truncated));
+            state.pending.push_back(ConversationEvent {
+                id: format!("tool-{offset}-{index}"),
+                kind: ConversationEventKind::ToolSummary,
+                turn_id: None,
+                message_phase: None,
+                timestamp: event_timestamp,
+                content,
+                tool_name: Some(sanitize_tool_name(name)),
+                tool_status: status.map(sanitize_tool_status),
+                duration_ms: block
+                    .get("durationMs")
+                    .or_else(|| block.get("duration_ms"))
+                    .and_then(Value::as_u64),
+                attachment_count: 0,
+                truncated,
+            });
+        }
+    }
+    let kind = match role {
+        "user" => ConversationEventKind::UserMessage,
+        "assistant" | "agent" => ConversationEventKind::AgentMessage,
+        // System records are provider metadata, not conversation content.
+        _ => return,
+    };
+    let Some(content) = content else { return };
+    if content.trim().is_empty() {
+        return;
+    }
+    let phase = None;
+    let attachments = content_value.map_or(0, |value| {
+        value.as_array().map_or(0, |blocks| {
+            blocks
+                .iter()
+                .filter(|block| {
+                    matches!(
+                        block.get("type").and_then(Value::as_str),
+                        Some("image" | "document" | "file" | "input_image" | "input_file")
+                    )
+                })
+                .count() as u64
+        })
+    });
+    state.pending.push_back(ConversationEvent {
+        id: format!("event-{offset}"),
+        kind,
+        turn_id: turn,
+        message_phase: phase,
+        timestamp: event_timestamp,
+        content: Some(truncate_utf8(&content, MAX_MESSAGE_BYTES).0),
+        tool_name: None,
+        tool_status: None,
+        duration_ms: None,
+        attachment_count: attachments,
+        truncated: content.len() > MAX_MESSAGE_BYTES,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1116,6 +1328,44 @@ mod tests {
             assistant(&format!("final-{id}"), "final_answer"),
             serde_json::json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":id}}),
         ]
+    }
+
+    #[test]
+    fn compatible_providers_preserve_tool_blocks_without_inferred_turns() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("compatible.jsonl");
+        write_records(
+            &path,
+            &[
+                serde_json::json!({
+                    "type": "message",
+                    "message": {"role": "user", "content": "run it", "turn_id": "untrusted"}
+                }),
+                serde_json::json!({
+                    "type": "message",
+                    "message": {"role": "assistant", "content": [{"type": "toolCall", "name": "shell", "input": {"command": "true"}}]}
+                }),
+                serde_json::json!({"type": "reasoning", "content": "must not render"}),
+                serde_json::json!({"type": "reasoning", "message": {"role": "assistant", "content": "private assistant reasoning"}}),
+                serde_json::json!({
+                    "type": "message",
+                    "message": {"role": "assistant", "content": "done", "phase": "final_answer", "turn_id": "untrusted"}
+                }),
+            ],
+        );
+        let page = read_page(&path, None, 50, Format::OpenClaw).unwrap();
+        assert_eq!(page.events.len(), 3);
+        assert_eq!(page.events[0].kind, ConversationEventKind::UserMessage);
+        assert_eq!(page.events[1].kind, ConversationEventKind::ToolSummary);
+        assert_eq!(page.events[1].tool_name.as_deref(), Some("shell"));
+        assert_eq!(page.events[1].tool_status, None);
+        assert_eq!(page.events[2].content.as_deref(), Some("done"));
+        assert!(page.events.iter().all(|event| event.turn_id.is_none()));
+        assert!(
+            page.events
+                .iter()
+                .all(|event| event.message_phase.is_none())
+        );
     }
 
     #[test]

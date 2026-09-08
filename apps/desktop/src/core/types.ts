@@ -323,6 +323,7 @@ export type AppUpdateProgress =
 export type WorkspaceStatus = "healthy" | "attention";
 export type DiscoveryEvidence = "session-cwd" | "configured-workspace" | "scan-marker" | "manual";
 export interface WorkspaceSource {
+  session_cwds?: string[] | null;
   agent?: AgentKind;
   evidence: DiscoveryEvidence;
   session_count: number;
@@ -357,6 +358,19 @@ export interface AgentInstallation {
   version?: string;
   home?: string;
   warnings: string[];
+  /** Optional in protocol v15; absent on older runtimes. */
+  support?: AgentSupport;
+}
+
+export type AgentControlCapability = "none" | "experimental";
+
+/** Static feature support, separate from whether an Agent is installed/configured. */
+export interface AgentSupport {
+  workspace_discovery: boolean;
+  session_list: boolean;
+  history_read: boolean;
+  continuation: boolean;
+  control: AgentControlCapability;
 }
 export type AgentToolState =
   | "current"
@@ -538,6 +552,31 @@ export interface DiscoveryReport {
   discovered_count: number;
   removed_count: number;
   errors: string[];
+  /** Optional in protocol v15; older reports remain valid without details. */
+  source_diagnostics?: DiscoverySourceDiagnostic[];
+}
+
+export type DiscoverySourceStatus =
+  | "not-configured"
+  | "missing"
+  | "empty"
+  | "succeeded"
+  | "partial"
+  | "permission-denied"
+  | "unsupported"
+  | "failed";
+
+export interface DiscoverySourceDiagnostic {
+  agent?: AgentKind;
+  source: string;
+  path?: string;
+  status: DiscoverySourceStatus | string;
+  started_at?: string;
+  finished_at?: string;
+  candidate_count?: number;
+  included_count?: number;
+  skipped_count?: number;
+  reasons?: string[];
 }
 export interface ScanRoot {
   id: string;
@@ -989,7 +1028,7 @@ export interface ConversationSessionSummary {
   remote?: RemoteRecordSource;
   id: string;
   workspace_id: string;
-  agent: "codex" | "claude-code" | "opencode";
+  agent: AgentKind;
   title?: string;
   created_at?: string;
   updated_at?: string;
@@ -1004,7 +1043,7 @@ export interface ConversationSessionSummary {
 }
 export interface ConversationIndexStatus {
   workspace_id: string;
-  agent: "codex" | "claude-code" | "opencode";
+  agent: AgentKind;
   freshness: SessionIndexFreshness;
   session_count: number;
   last_attempt_at?: string;

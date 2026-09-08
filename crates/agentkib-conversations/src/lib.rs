@@ -15,10 +15,17 @@ use walkdir::WalkDir;
 
 mod archive;
 mod continuation;
+mod grokbuild;
+mod hermes;
+mod history;
+mod openclaw;
 mod opencode;
 mod paging;
 pub use archive::*;
 pub use continuation::*;
+pub use grokbuild::GrokBuildProvider;
+pub use hermes::HermesProvider;
+pub use openclaw::OpenClawProvider;
 pub use opencode::OpenCodeProvider;
 
 const MAX_TITLE_CHARS: usize = 200;
@@ -139,6 +146,16 @@ pub struct ConversationIndexStatus {
     pub last_success_at: Option<DateTime<Utc>>,
     pub error_key: Option<String>,
     pub error_detail: Option<String>,
+}
+
+/// A provider may return usable sessions while one of its native sources was
+/// unreadable or exceeded the discovery budget. Callers must retain the last
+/// successful index when `incomplete` is true instead of treating it as an
+/// authoritative empty result.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NativeSessionListing {
+    pub sessions: Vec<NativeSessionSummary>,
+    pub incomplete: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -919,6 +936,12 @@ fn key_words(key: &str) -> Vec<String> {
 pub trait ConversationProvider {
     fn agent(&self) -> AgentKind;
     fn list_sessions(&self, workspace: &Path) -> Result<Vec<NativeSessionSummary>>;
+    fn list_sessions_detailed(&self, workspace: &Path) -> Result<NativeSessionListing> {
+        Ok(NativeSessionListing {
+            sessions: self.list_sessions(workspace)?,
+            incomplete: false,
+        })
+    }
     /// Resolve through provider metadata, never interpret an opaque reference as a file path.
     fn verified_control_id(&self, _native_ref: &str) -> Result<Option<String>> {
         Ok(None)
@@ -943,6 +966,9 @@ pub fn providers() -> Vec<Box<dyn ConversationProvider + Send + Sync>> {
         Box::new(CodexProvider::default()),
         Box::new(ClaudeProvider::default()),
         Box::new(OpenCodeProvider::default()),
+        Box::new(OpenClawProvider::default()),
+        Box::new(HermesProvider::default()),
+        Box::new(GrokBuildProvider::default()),
     ]
 }
 
@@ -951,6 +977,9 @@ pub fn provider(agent: AgentKind) -> Option<Box<dyn ConversationProvider + Send 
         AgentKind::Codex => Some(Box::new(CodexProvider::default())),
         AgentKind::ClaudeCode => Some(Box::new(ClaudeProvider::default())),
         AgentKind::OpenCode => Some(Box::new(OpenCodeProvider::default())),
+        AgentKind::OpenClaw => Some(Box::new(OpenClawProvider::default())),
+        AgentKind::Hermes => Some(Box::new(HermesProvider::default())),
+        AgentKind::GrokBuild => Some(Box::new(GrokBuildProvider::default())),
         _ => None,
     }
 }

@@ -80,6 +80,8 @@ monorepo 中的独立 Web 构建随 Electron 打包。在 **设置 → 远程连
 
 完整的全局视图、工作区能力、Agent 支持和平台状态见[功能与兼容矩阵](docs/FEATURES.md)。
 
+开发版的新增只读来源和“找不到工作区”排查方式见[发现与历史阅读说明](docs/DISCOVERY-HISTORY.md)，实际验证范围见[分层 QA](qa/MULTI-AGENT-HISTORY.md)。
+
 ## 文档与社区
 
 - [功能矩阵](docs/FEATURES.md)

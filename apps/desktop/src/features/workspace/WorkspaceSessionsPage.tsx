@@ -33,6 +33,7 @@ import {
 import { api } from "@/core/api";
 import { DEFAULT_SESSION_PAGE_SIZE } from "@/core/session-history";
 import { AgentIcon } from "@/features/agents/AgentIcon";
+import { canContinueFromHistory } from "@/features/agents/agent-capabilities";
 
 import type {
   AgentKind,
@@ -246,7 +247,12 @@ export function WorkspaceSessionsPage({
       return;
     }
     const target = sessions.find(({ id }) => id === resumeContinuation.sessionId);
-    if (target) revealSession(target);
+    if (!target) return;
+    if (!canContinueFromHistory(target.agent)) {
+      onResumeConsumed?.();
+      return;
+    }
+    revealSession(target);
     setFilter("all");
     setSelectedId(resumeContinuation.sessionId);
     setResumedRequest(resumeContinuation);
@@ -669,16 +675,18 @@ export function WorkspaceSessionsPage({
                     )}
                   </div>
                 </div>
-                {selected.availability === "readable" && events.length > 0 && (
-                  <Button
-                    variant="outline"
-                    className="shrink-0"
-                    onClick={() => setShowHandoff(true)}
-                  >
-                    <FileOutput size={14} />
-                    {tr("handoff.create")}
-                  </Button>
-                )}
+                {selected.availability === "readable" &&
+                  canContinueFromHistory(selected.agent) &&
+                  events.length > 0 && (
+                    <Button
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => setShowHandoff(true)}
+                    >
+                      <FileOutput size={14} />
+                      {tr("handoff.create")}
+                    </Button>
+                  )}
               </>
             ) : (
               <div className="flex items-center gap-3 text-muted-foreground">

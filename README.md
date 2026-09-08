@@ -80,6 +80,8 @@ Only use files from the official release and verify the matching `.sha256` check
 
 See the [complete feature and compatibility matrix](docs/FEATURES.md) for global views, workspace capabilities, agent support, and platform status.
 
+For development-only read-only sources and missing-workspace troubleshooting, see the [discovery and history guide (Chinese)](docs/DISCOVERY-HISTORY.md) and [layered QA record](qa/MULTI-AGENT-HISTORY.md). These additions are not a claim about released packages.
+
 ## Documentation and community
 
 - [Feature matrix](docs/FEATURES.md)

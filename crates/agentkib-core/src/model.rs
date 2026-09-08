@@ -458,6 +458,11 @@ pub struct DiscoveryCandidate {
     pub session_count: u64,
     pub explicit_workspace: bool,
     pub repository_group_id: Option<String>,
+    /// Original working directories observed in session metadata before the
+    /// candidate is normalized to its workspace root. Kept optional so old
+    /// discovery payloads and callers remain compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_cwds: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -466,6 +471,9 @@ pub struct WorkspaceSource {
     pub evidence: DiscoveryEvidence,
     pub session_count: u64,
     pub last_active_at: Option<DateTime<Utc>>,
+    /// Original session working directories contributing to this source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_cwds: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -497,6 +505,58 @@ pub struct AgentInstallation {
     pub version: Option<String>,
     pub home: Option<PathBuf>,
     pub warnings: Vec<String>,
+    /// Capabilities of the native integration. This is optional on the wire so
+    /// older persisted/runtime payloads continue to deserialize unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support: Option<AgentSupportCapabilities>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentControlSupport {
+    #[default]
+    None,
+    Experimental,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AgentSupportCapabilities {
+    #[serde(default)]
+    pub workspace_discovery: bool,
+    #[serde(default)]
+    pub session_list: bool,
+    #[serde(default)]
+    pub history_read: bool,
+    #[serde(default)]
+    pub continuation: bool,
+    #[serde(default)]
+    pub control: AgentControlSupport,
+}
+
+impl AgentSupportCapabilities {
+    pub fn for_agent(agent: AgentKind) -> Self {
+        let session_list = matches!(
+            agent,
+            AgentKind::Codex
+                | AgentKind::ClaudeCode
+                | AgentKind::OpenCode
+                | AgentKind::OpenClaw
+                | AgentKind::Hermes
+                | AgentKind::GrokBuild
+        );
+        Self {
+            workspace_discovery: true,
+            session_list,
+            history_read: session_list,
+            continuation: matches!(
+                agent,
+                AgentKind::Codex | AgentKind::ClaudeCode | AgentKind::OpenCode
+            ),
+            control: matches!(agent, AgentKind::Codex)
+                .then_some(AgentControlSupport::Experimental)
+                .unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -791,6 +851,42 @@ pub struct DiscoveryReport {
     pub discovered_count: usize,
     pub removed_count: usize,
     pub errors: Vec<String>,
+    /// Per-source diagnostics are additive and optional for compatibility with
+    /// reports written before source-level discovery reporting existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_diagnostics: Vec<DiscoverySourceDiagnostic>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiscoveryDiagnosticStatus {
+    NotConfigured,
+    Missing,
+    Empty,
+    Succeeded,
+    Partial,
+    PermissionDenied,
+    Unsupported,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverySourceDiagnostic {
+    pub agent: Option<AgentKind>,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub included_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_count: Option<usize>,
+    pub status: DiscoveryDiagnosticStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1046,5 +1142,31 @@ mod tests {
             AgentKind::GrokBuild
         );
         assert!(AgentKind::WRITABLE.contains(&AgentKind::GrokBuild));
+    }
+
+    #[test]
+    fn agent_support_is_static_and_old_installations_remain_compatible() {
+        let codex = AgentSupportCapabilities::for_agent(AgentKind::Codex);
+        assert!(codex.workspace_discovery);
+        assert!(codex.session_list);
+        assert!(codex.history_read);
+        assert!(codex.continuation);
+        assert_eq!(codex.control, AgentControlSupport::Experimental);
+
+        let cursor = AgentSupportCapabilities::for_agent(AgentKind::Cursor);
+        assert!(cursor.workspace_discovery);
+        assert!(!cursor.session_list);
+        assert_eq!(cursor.control, AgentControlSupport::None);
+
+        let legacy: AgentInstallation = serde_json::from_value(serde_json::json!({
+            "agent": "codex",
+            "installed": true,
+            "configured": true,
+            "version": null,
+            "home": null,
+            "warnings": []
+        }))
+        .unwrap();
+        assert!(legacy.support.is_none());
     }
 }
