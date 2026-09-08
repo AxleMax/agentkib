@@ -71,6 +71,7 @@
 - 本机验证：全工作区 Rust 测试／Clippy、桌面 559 项及 Web 25 项、类型检查和生产构建通过；Linux bridge 交叉目标 Clippy 通过。最终文件身份修改另行重跑 conversations 测试及全工作区 Clippy。
 - Windows conversations 交叉检查被本机缺少 Windows C 标准库头文件阻塞（`libsqlite3-sys` 编译报 `stdlib.h` 不存在），不记为通过；实际 Windows 测试交由 PR CI 验证。
 - 本轮不向真实 Agent 发送控制请求；无关设计稿、截图和 `design-qa.md` 保留。跨平台最终结果以本轮推送后的 CI 为准，不能以交叉编译代替 Windows 实际执行测试。
+- `8de04f6` 推送后的 CI：Fedora x64、Ubuntu ARM64、Windows ARM64 编译通过。Windows x64 历史测试通过后，在 runtime 的四项审批投影测试发现写死 Unix `/tmp` 的夹具错误；补改为主机绝对临时路径，保留相对路径负例和全部生产校验，继续由新提交 CI 复验。
 
 ### 2026-09-08 审查／修复闭环复核
 

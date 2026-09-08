@@ -498,6 +498,16 @@ fn complete_file_change(change: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Projection uses the host's absolute-path semantics, even when control is
+    // unavailable on that host. Keep fixtures valid on Windows as well as Unix.
+    fn test_cwd() -> std::path::PathBuf {
+        std::env::temp_dir()
+    }
+
+    fn test_file() -> std::path::PathBuf {
+        test_cwd().join("qa.txt")
+    }
     fn file_approval(details: Value) -> Value {
         safe_approval(
             agentkib_codex_bridge::Approval {
@@ -511,14 +521,14 @@ mod tests {
     }
     #[test]
     fn file_approval_requires_full_known_change_not_a_path_summary() {
-        let good = json!({"changes":[{"path":"/tmp/qa.txt","kind":{"type":"add"},"diff":"QA\n"}]});
+        let good = json!({"changes":[{"path":test_file(),"kind":{"type":"add"},"diff":"QA\n"}]});
         assert_eq!(file_approval(good.clone())["supported"], true);
         for changes in [
-            json!([{"path":"/tmp/qa.txt","kind":{"type":"add"}}]),
-            json!([{"path":"/tmp/qa.txt","kind":{"type":"add"},"diff":null}]),
+            json!([{"path":test_file(),"kind":{"type":"add"}}]),
+            json!([{"path":test_file(),"kind":{"type":"add"},"diff":null}]),
             json!([{"path":"qa.txt","kind":{"type":"add"},"diff":"QA"}]),
-            json!([{"path":"/tmp/qa.txt","kind":{"type":"unknown"},"diff":"QA"}]),
-            json!([{"path":"/tmp/qa.txt","kind":{"type":"add"},"diff":"QA","truncated":true}]),
+            json!([{"path":test_file(),"kind":{"type":"unknown"},"diff":"QA"}]),
+            json!([{"path":test_file(),"kind":{"type":"add"},"diff":"QA","truncated":true}]),
         ] {
             let projected = file_approval(json!({"changes":changes}));
             assert_eq!(projected["supported"], false);
@@ -545,7 +555,7 @@ mod tests {
                 request_id: json!(34),
                 turn_id: "turn".into(),
                 method: "item/commandExecution/requestApproval".into(),
-                details: json!({"command":"/usr/bin/true","cwd":"/tmp",
+                details: json!({"command":"/usr/bin/true","cwd":test_cwd(),
                 "unknownPermissionScope":["private-proposal-value"]}),
             },
             true,
@@ -565,7 +575,7 @@ mod tests {
             request_id: json!(42),
             turn_id: "turn".into(),
             method: "item/commandExecution/requestApproval".into(),
-            details: json!({"command":"/usr/bin/true","cwd":"/tmp","kind":"command","environmentId":"local",
+            details: json!({"command":"/usr/bin/true","cwd":test_cwd(),"kind":"command","environmentId":"local",
                 "startedAtMs":1770000000000_u64,"proposedExecpolicyAmendment":["/usr/bin/true"],
                 "availableDecisions":["accept","acceptForSession",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["/usr/bin/true"]}},"decline"]}),
         };
@@ -612,7 +622,7 @@ mod tests {
             request_id: json!(1),
             turn_id: "turn".into(),
             method: "item/commandExecution/requestApproval".into(),
-            details: json!({"command":"/usr/bin/true","cwd":"/tmp"}),
+            details: json!({"command":"/usr/bin/true","cwd":test_cwd()}),
         };
         assert_eq!(safe_approval(approval.clone(), true)["supported"], true);
         approval.details["cwd"] = Value::Null;
