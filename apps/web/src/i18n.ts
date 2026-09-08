@@ -1,6 +1,8 @@
 const zh = {
   connect: "连接桌面 AgentKib",
   cwd: "执行目录",
+  localExecution: "执行环境：主机本机",
+  policyProposal: "候选免审批规则（未授权）。允许一次不会保存此规则；Web 不提供持久放行。",
   remote: "远程访问",
   pairTitle: "用桌面端授权这个浏览器",
   pairInfo: "输入桌面端显示的 8 位配对码。桌面端仍是会话与权限的控制中枢。",
@@ -76,6 +78,7 @@ const zh = {
   warnings: "读取警告",
   tool: "工具详情",
   readOnly: "当前浏览器仅可读取",
+  noSendPermission: "当前浏览器未获发送权限",
   device: "已授权浏览器",
   safety: "连接与数据保留在你自己的设备，不需要官方账号。",
 };
@@ -84,6 +87,9 @@ export type Locale = "zh-CN" | "zh-TW" | "en-US" | "ja-JP";
 const en: Words = {
   connect: "Connect to desktop AgentKib",
   cwd: "Working directory",
+  localExecution: "Execution environment: local to the host",
+  policyProposal:
+    "Proposed approval rule (not authorized). Allow once does not save this rule; persistent approval is not available on Web.",
   remote: "Remote access",
   pairTitle: "Authorize this browser on your desktop",
   pairInfo:
@@ -165,6 +171,7 @@ const en: Words = {
   warnings: "Read warnings",
   tool: "Tool details",
   readOnly: "This browser has read-only access",
+  noSendPermission: "This browser does not have permission to send messages",
   device: "Authorized browser",
   safety: "Connections and data stay on your own devices. No official account required.",
 };
@@ -172,6 +179,8 @@ const tw: Words = {
   ...zh,
   connect: "連接桌面 AgentKib",
   cwd: "執行目錄",
+  localExecution: "執行環境：主機本機",
+  policyProposal: "候選免審批規則（未授權）。允許一次不會儲存此規則；Web 不提供持久放行。",
   remote: "遠端存取",
   pairTitle: "用桌面端授權這個瀏覽器",
   pairInfo: "輸入桌面端顯示的 8 位配對碼。桌面端仍是工作階段與權限的控制中樞。",
@@ -247,12 +256,16 @@ const tw: Words = {
   warnings: "讀取警告",
   tool: "工具詳細資訊",
   readOnly: "目前瀏覽器僅可讀取",
+  noSendPermission: "目前瀏覽器未獲傳送權限",
   device: "已授權瀏覽器",
   safety: "連線與資料保留在你自己的裝置，不需要官方帳號。",
 };
 const ja: Words = {
   connect: "デスクトップ AgentKib に接続",
   cwd: "実行ディレクトリ",
+  localExecution: "実行環境：ホストのローカル環境",
+  policyProposal:
+    "承認省略ルールの候補（未承認）。一度だけ許可しても保存されません。Web では永続的な許可はできません。",
   remote: "リモートアクセス",
   pairTitle: "デスクトップでこのブラウザーを承認",
   pairInfo:
@@ -331,6 +344,7 @@ const ja: Words = {
   warnings: "読み取りの警告",
   tool: "ツールの詳細",
   readOnly: "このブラウザーは読み取り専用です",
+  noSendPermission: "このブラウザーにはメッセージの送信権限がありません",
   device: "承認済みブラウザー",
   safety: "接続とデータは自身のデバイスに保持されます。公式アカウントは不要です。",
 };

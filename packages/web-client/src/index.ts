@@ -46,6 +46,8 @@ export interface Approval {
   supported: boolean;
   unsupportedReason?: string | null;
   unsupportedMetadata?: { field: string; type: string }[];
+  proposedExecpolicyAmendment?: string[] | null;
+  environmentId?: "local" | null;
 }
 export interface Live {
   sessionId: string;

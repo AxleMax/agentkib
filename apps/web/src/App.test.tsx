@@ -227,7 +227,7 @@ describe("Web access UI", () => {
       if (String(url).includes("/live"))
         return Response.json({
           sessionId: "s",
-          status: "running",
+          status: "awaiting-approval",
           revision: 2,
           sendEnabled: false,
           approvals: [
@@ -237,6 +237,8 @@ describe("Web access UI", () => {
               method: "item/commandExecution/requestApproval",
               cwd: "/tmp/qa",
               command: ["true"],
+              environmentId: "local",
+              proposedExecpolicyAmendment: ["/usr/bin/true"],
               supported: true,
               availableDecisions: ["accept", "cancel"],
             },
@@ -248,6 +250,11 @@ describe("Web access UI", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Test session/ }));
     fireEvent.click(await screen.findByRole("button", { name: "等待审批" }));
     expect(screen.getByText("/tmp/qa")).toBeVisible();
+    expect(screen.getByText("执行环境：主机本机")).toBeVisible();
+    expect(screen.getByText("当前浏览器未获发送权限")).toBeVisible();
+    expect(screen.queryByText("当前浏览器仅可读取")).toBeNull();
+    expect(screen.getByText(/允许一次不会保存此规则/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /持久放行/ })).toBeNull();
     expect(screen.getByRole("button", { name: "允许一次" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "取消轮次" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();

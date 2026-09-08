@@ -371,6 +371,29 @@ fn idle_candidates<'a>(
 #[cfg(any(target_os = "macos", test))]
 fn safe_approval(approval: agentkib_codex_bridge::Approval, controls: bool) -> Value {
     let details = approval.details;
+    let command_request = approval.method == "item/commandExecution/requestApproval";
+    // Pinned official schema: omitted kind means command, not terminal input.
+    // A proposal is not an authorization; only one-shot decisions are exposed.
+    let valid_metadata = !command_request
+        || (details.get("kind").is_none_or(|v| v == "command")
+            && details
+                .get("startedAtMs")
+                .is_none_or(|v| v.as_u64().is_some_and(|n| n <= 9_007_199_254_740_991))
+            // codex rust-v0.153.4 reserves `local` for LocalProcess and rejects
+            // remote environment registration under this ID (see QA source).
+            && details.get("environmentId").is_none_or(|v| v.is_null() || v == "local")
+            && details.get("proposedExecpolicyAmendment").is_none_or(|v| {
+                v.is_null()
+                    || v.as_array().is_some_and(|items| {
+                        !items.is_empty()
+                            && items.len() <= 100
+                            && items.iter().all(|item| {
+                                item.as_str().is_some_and(|s| {
+                                    !s.is_empty() && s.len() <= 4096 && !s.contains('\0')
+                                })
+                            })
+                    })
+            }));
     let complete = match approval.method.as_str() {
         "item/commandExecution/requestApproval" => {
             details["command"]
@@ -389,14 +412,16 @@ fn safe_approval(approval: agentkib_codex_bridge::Approval, controls: bool) -> V
         .get("availableDecisions")
         .is_none_or(|value| value.is_null() || value.is_array());
     let unknown_metadata: Vec<_> = details.as_object().into_iter().flat_map(|object| object.iter())
-        .filter(|(key, value)| !value.is_null() && !matches!(key.as_str(),
-            "threadId"|"turnId"|"itemId"|"approvalId"|"command"|"cwd"|"reason"|"commandActions"|"changes"|"availableDecisions"))
+        .filter(|(key, value)| !(value.is_null() || matches!(key.as_str(),
+            "threadId"|"turnId"|"itemId"|"approvalId"|"command"|"cwd"|"reason"|"commandActions"|"changes"|"availableDecisions")
+            || (command_request && matches!(key.as_str(), "kind"|"startedAtMs"|"environmentId"|"proposedExecpolicyAmendment"))))
         .take(32)
         .map(|(key, value)| json!({"field":key.chars().take(80).collect::<String>(),"type":match value {
             Value::Null => "null", Value::Bool(_) => "boolean", Value::Number(_) => "number",
             Value::String(_) => "string", Value::Array(_) => "array", Value::Object(_) => "object"
         }})).collect();
     let supported = valid_decisions
+        && valid_metadata
         && (approval.request_id.is_string() || approval.request_id.is_number())
         && controls
         && complete
@@ -434,7 +459,9 @@ fn safe_approval(approval: agentkib_codex_bridge::Approval, controls: bool) -> V
     // Diagnostic structure only; never expose unknown permission values or log
     // the raw owner request. It does not grant a new decision or permission.
     json!({"requestId":approval.request_id,"turnId":approval.turn_id,"method":approval.method,"command":details["command"],"cwd":details["cwd"],"changes":details["changes"],"availableDecisions":if supported { decisions } else {vec![]},"supported":supported,
-        "unsupportedReason":unsupported_reason,"unsupportedMetadata":unknown_metadata})
+        "unsupportedReason":unsupported_reason,"unsupportedMetadata":unknown_metadata,
+        "proposedExecpolicyAmendment":if command_request && valid_metadata {details["proposedExecpolicyAmendment"].clone()} else {Value::Null},
+        "environmentId":if command_request && valid_metadata {details["environmentId"].clone()} else {Value::Null}})
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -519,7 +546,7 @@ mod tests {
                 turn_id: "turn".into(),
                 method: "item/commandExecution/requestApproval".into(),
                 details: json!({"command":"/usr/bin/true","cwd":"/tmp",
-                "proposedExecpolicyAmendment":["private-proposal-value"]}),
+                "unknownPermissionScope":["private-proposal-value"]}),
             },
             true,
         );
@@ -528,9 +555,56 @@ mod tests {
         assert_eq!(projected["unsupportedReason"], "unsupported-metadata");
         assert_eq!(
             projected["unsupportedMetadata"],
-            json!([{"field":"proposedExecpolicyAmendment","type":"array"}])
+            json!([{"field":"unknownPermissionScope","type":"array"}])
         );
         assert!(!projected.to_string().contains("private-proposal-value"));
+    }
+    #[test]
+    fn command_metadata_is_typed_and_never_grants_persistent_rules() {
+        let mut approval = agentkib_codex_bridge::Approval {
+            request_id: json!(42),
+            turn_id: "turn".into(),
+            method: "item/commandExecution/requestApproval".into(),
+            details: json!({"command":"/usr/bin/true","cwd":"/tmp","kind":"command","environmentId":"local",
+                "startedAtMs":1770000000000_u64,"proposedExecpolicyAmendment":["/usr/bin/true"],
+                "availableDecisions":["accept","acceptForSession",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["/usr/bin/true"]}},"decline"]}),
+        };
+        let good = safe_approval(approval.clone(), true);
+        assert_eq!(good["supported"], true);
+        assert_eq!(good["availableDecisions"], json!(["accept", "decline"]));
+        assert_eq!(good["environmentId"], "local");
+        assert_eq!(
+            good["proposedExecpolicyAmendment"],
+            json!(["/usr/bin/true"])
+        );
+        for (field, value) in [
+            ("kind", json!("writeStdin")),
+            ("kind", json!("unknown")),
+            ("kind", Value::Null),
+            ("startedAtMs", json!(-1)),
+            ("startedAtMs", json!(1.5)),
+            ("startedAtMs", json!("123")),
+            ("startedAtMs", json!(9_007_199_254_740_992_u64)),
+            ("environmentId", json!("unverified-environment")),
+            ("proposedExecpolicyAmendment", json!([1])),
+            ("proposedExecpolicyAmendment", json!({})),
+            ("proposedExecpolicyAmendment", json!(["bad\0value"])),
+            ("additionalPermissions", json!({})),
+            ("proposedNetworkPolicyAmendments", json!([])),
+        ] {
+            let mut invalid = approval.clone();
+            invalid.details[field] = value;
+            let result = safe_approval(invalid, true);
+            assert_eq!(result["supported"], false, "{field}");
+            assert_eq!(result["availableDecisions"], json!([]), "{field}");
+        }
+        approval.details.as_object_mut().unwrap().remove("kind");
+        approval
+            .details
+            .as_object_mut()
+            .unwrap()
+            .remove("startedAtMs");
+        assert_eq!(safe_approval(approval, true)["supported"], true);
     }
     #[test]
     fn command_approval_requires_visible_working_directory_and_complete_scope() {

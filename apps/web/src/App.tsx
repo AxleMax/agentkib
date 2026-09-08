@@ -423,9 +423,11 @@ export function App() {
         ? t.idle
         : live?.status === "running"
           ? t.running
-          : live?.reason
-            ? t.unavailable
-            : t.unknown;
+          : live?.status === "awaiting-approval"
+            ? t.approval
+            : live?.reason
+              ? t.unavailable
+              : t.unknown;
   const icon = <span className="brand-mark">K</span>;
   return (
     <div className="app">
@@ -673,7 +675,11 @@ export function App() {
                     </div>
                   </form>
                 ) : (
-                  <footer className="readonly">{t.readOnly}</footer>
+                  <footer className="readonly">
+                    {access.experimentalEnabled && access.device?.approve
+                      ? t.noSendPermission
+                      : t.readOnly}
+                  </footer>
                 )}
               </>
             )}
@@ -737,6 +743,7 @@ export function App() {
       {typeof modal === "object" && "requestId" in modal && (
         <Dialog closeLabel={t.close} title={t.approval} onClose={() => setModal(undefined)}>
           <p>{t.decisionInfo}</p>
+          {modal.environmentId === "local" && <p>{t.localExecution}</p>}
           {modal.cwd && (
             <dl>
               <dt>{t.cwd}</dt>
@@ -744,6 +751,12 @@ export function App() {
             </dl>
           )}
           <pre>{JSON.stringify(modal.command ?? modal.changes ?? null, null, 2)}</pre>
+          {modal.proposedExecpolicyAmendment && (
+            <aside className="info policy-proposal">
+              <p>{t.policyProposal}</p>
+              <pre>{JSON.stringify(modal.proposedExecpolicyAmendment, null, 2)}</pre>
+            </aside>
+          )}
           {modal.supported &&
           access?.experimentalEnabled &&
           access.device?.approve &&

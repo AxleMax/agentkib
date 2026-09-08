@@ -102,3 +102,27 @@
 - 使用本机安装版本 codex 的 `app-server generate-json-schema --experimental` 离线生成协议定义（没有启动 owner 探针）：kind 枚举为 command/writeStdin，缺失默认 command；environmentId 是命令执行环境；startedAtMs 是 Unix 毫秒时间；execpolicy proposal 是未来相似命令免审批提案。accept 与 acceptWithExecpolicyAmendment 明确不同。当前 bridge 尚无执行环境绑定校验，因此未直接放宽白名单，Web 真实审批仍未通过。
 - 自动化：HTTP 20 项、Web 19 项、桌面/Web 类型检查、Web 构建、git diff --check 通过。断线测试首次全量执行暴露测试同步竞态：本地 close 不等于服务端收到断线；改为观察服务端 close 后模拟晚到回执，全量 20 项通过，安全断言未放宽。
 - 最新审批弹窗防护已通过测试和 Web 构建，尚未重新纳入打包应用实测。真实手机、外部 HTTPS、其他平台和整链 mock owner 验收仍待完成；本轮不声明全量通过。增量未提交、未发布。
+
+## 追加：审批元数据的版本化兼容（2026-09-08）
+
+- 上一批保护提交为 `10bdc66`，未 push。提交后全前端回归：桌面 534 项、Web 19 项；Rust workspace 测试通过，协议生成无差异。
+- 先前仅凭安装包 schema 无法证明执行环境的本地含义。本次进一步核对安装 CLI 版本 `0.153.4` 对应的[官方版本源码](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/exec-server/src/environment.rs)：`LOCAL_ENVIRONMENT_ID` 为 `local`，`from_snapshot` 与 `validate_environment_id` 拒绝远程环境占用该 ID；`Environment::local` 使用 LocalProcess。此证据取代字符串猜测；未知版本仍受原有安装版本门禁限制。
+- 命令审批只兼容明确 `kind=command`（缺失遵循旧协议默认），拒绝 writeStdin/未知/错误类型；startedAtMs 必须为非负安全整数；非空 environmentId 只接受保留的 local，其他环境继续禁用。已有缺失/null 环境字段兼容行为保留，不据此显示“本机”。
+- 候选 execpolicy 规则按有界字符串数组验证并完整展示，四语明确标注“未授权、允许一次不保存”。仅提供 owner 已支持的一次性 accept/decline/cancel，不提供 acceptForSession、持久 execpolicy 或网络规则操作。额外权限和未知字段继续禁用。
+- 增加错误类型、未知环境、终端输入、超大时间戳、持久决定过滤等 runtime 回归，以及 Web 候选规则/环境显示测试。最新真实审批结果将在完成后追加，不将模拟测试写成实际审批通过。
+
+### 027：打包版真实一次性命令审批通过
+
+- 隔离 macOS arm64 包重新配对“本机审批兼容验收”，两端校验数字相同，分别授予发送/审批，仅指定原测试会话可控制。
+- 提交前 live 为 idle、pending=0。只发送一次 AK-WEB-APPROVAL-027（正常申请 `/tmp` 下执行一次 `/usr/bin/true`），发送回执 HTTP 200 accepted:true。
+- owner 待审批投影显示 command `/bin/zsh -c /usr/bin/true`、cwd `/tmp`、environmentId local、候选规则 `["/usr/bin/true"]`；supported:true，实际可选决定只有 accept/cancel，未显示不存在的 decline。
+- 从 Web 弹窗点击一次“允许一次”：审批 HTTP 200、accepted:true、completed:false；未发送持久规则决定。随后 live idle、pending=0；同一 turn_id 下恰好一条用户请求和一条 final_answer“AK-WEB-APPROVAL-027：审批通过，已执行一次，退出码为 0。”，exec/wait 工具摘要均 completed。
+- 此结论仅证明当前安装版本、本机一次性命令批准链路。取消轮次、文件变更审批、外部 HTTPS、实际手机和其他平台不能据此标为通过；正式实验验收开关仍为 false。
+- 撤销临时浏览器后页面显示访问结束，关闭实验控制与 Web 服务。没有重启 Codex，没有并发真实请求、没有停止实验。
+
+### 界面收尾与验证
+
+- 真实截图发现候选规则复用了横向 `.info` 布局而被挤压；改为纵向排布。修复 awaiting-approval 被写成“状态未确认”，以及仅有审批权限却显示“仅可读取”的文案。
+- 最新打包静态资源用独立 Chromium 合成 API 检查；全部 API 被本地 fixture 拦截，控制返回拒绝，不接真实 owner。390×844、768×1024、1360×860、1440×920 的深浅主题均无 dialog/候选规则横向溢出。Escape 关闭后焦点回审批入口。主代理查看 1440 浅色与 390 深色截图；截图见 `output/playwright/web-v1/approval-final-*.png`。桌面 viewport 不是实际手机验收。
+- 最新增量 runtime 52 项、Web 19 项通过；runtime Clippy、Rust 格式、相关前端格式、桌面/Web 类型检查、完整 build 与未签名安装目录打包通过。最后权限文案经 Web 测试和构建后重新打包，未额外重发真实审批。保留未提交增量，不发布。
+- 最终增量再次运行 `cargo test --workspace --quiet`、全 workspace/all-targets Clippy（`-D warnings`）通过；验收服务关闭后 1421 不再响应，隔离应用与两个验收浏览器均结束，官方 Codex 保持运行。
