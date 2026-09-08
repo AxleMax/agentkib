@@ -75,6 +75,9 @@ export class WebAccessService {
   private browsers = new Map<string, Browser>();
   private streams = new Map<ServerResponse, string>();
   private active = new Set<string>();
+  // One runtime worker serves all Web sessions. Reserve its admission across
+  // preflight and mutation; new reads must not queue behind that preflight.
+  private controlAdmission = false;
   // Survives runtime replacement and HTTP listener restarts within this host.
   // An underlying promise settling is not proof that the HTTP reply succeeded.
   private unconfirmed = new Set<string>();
@@ -410,7 +413,8 @@ export class WebAccessService {
       throw new HttpError(400, "invalid_input");
     return value;
   }
-  private async runtime(params: unknown, existing?: Promise<unknown>) {
+  private async runtime(params: unknown, existing?: Promise<unknown>, reserved = false) {
+    if (!existing && !reserved && this.controlAdmission) throw new HttpError(409, "operation_busy");
     // Timeout does not cancel owner execution. Callers never automatically retry mutations.
     let timer: ReturnType<typeof setTimeout>;
     try {
@@ -553,7 +557,12 @@ export class WebAccessService {
         experimentalEnabled: true,
       };
       if (permission === "send") {
-        if (typeof body.text !== "string" || !body.text.trim() || body.text.length > 16_000)
+        if (
+          typeof body.text !== "string" ||
+          !body.text.trim() ||
+          body.text.length > 16_000 ||
+          Buffer.byteLength(body.text, "utf8") > 16_384
+        )
           throw new HttpError(400, "invalid_text");
         params.text = body.text;
       } else {
@@ -568,17 +577,23 @@ export class WebAccessService {
           throw new HttpError(400, "invalid_decision");
         params.decision = body.decision;
       }
+      if (this.controlAdmission) throw new HttpError(409, "operation_busy");
       this.rate(`control:${hash}`, 30);
       this.requests.add(requestId);
       this.active.add(sessionId);
+      this.controlAdmission = true;
       const boot = this.bootId;
       let dispatched = false;
       try {
-        const snapshot = (await this.runtime({
-          operation: "live",
-          sessionId,
-          experimentalEnabled: true,
-        })) as {
+        const snapshot = (await this.runtime(
+          {
+            operation: "live",
+            sessionId,
+            experimentalEnabled: true,
+          },
+          undefined,
+          true,
+        )) as {
           runtimeBootId?: string;
           revision?: number;
           sendEnabled?: boolean;
@@ -611,9 +626,12 @@ export class WebAccessService {
         params.runtimeBootId = snapshot.runtimeBootId;
         dispatched = true;
         this.unconfirmed.add(sessionId);
-        const pending = this.options
-          .runtimeRequest(params)
-          .finally(() => this.active.delete(sessionId));
+        const pending = Promise.resolve()
+          .then(() => this.options.runtimeRequest(params))
+          .finally(() => {
+            this.active.delete(sessionId);
+            this.controlAdmission = false;
+          });
         const result = await this.runtime(params, pending);
         this.grant(hash, permission);
         if (boot !== this.bootId) throw new HttpError(409, "stale_boot");
@@ -633,7 +651,10 @@ export class WebAccessService {
         });
         return this.json(res, 200, result);
       } finally {
-        if (!dispatched) this.active.delete(sessionId);
+        if (!dispatched) {
+          this.active.delete(sessionId);
+          this.controlAdmission = false;
+        }
       }
     }
     if (req.method !== "GET") throw new HttpError(405, "method_not_allowed");

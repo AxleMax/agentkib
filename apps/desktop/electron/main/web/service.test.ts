@@ -242,6 +242,158 @@ describe("WebAccessService loopback security boundary", () => {
         .status,
     ).toBe(409);
   });
+  it.each([
+    ["ASCII character limit", "x".repeat(16_000)],
+    ["Chinese UTF-8 byte limit", "中".repeat(5_461) + "x"],
+    ["emoji UTF-8 byte limit", "😀".repeat(4_096)],
+  ])(
+    "rejects text above the %s before runtime dispatch without fencing control",
+    async (_label, boundary) => {
+      await bootstrap();
+      await pair(true);
+      const body = {
+        sessionId: "session",
+        text: boundary + "x",
+        requestId: "one",
+        bootId,
+        expectedRevision: 4,
+      };
+      runtime.mockClear();
+      const rejected = await http("/api/web/v1/send", { method: "POST", body });
+      expect(rejected.status).toBe(400);
+      expect(rejected.json()).toMatchObject({ error: "invalid_text" });
+      expect(runtime).not.toHaveBeenCalled();
+      // Reusing the request and session proves validation consumed no request ID
+      // and left neither the active-operation guard nor an outcome fence behind.
+      const accepted = await http("/api/web/v1/send", {
+        method: "POST",
+        body: { ...body, text: boundary },
+      });
+      expect(accepted.status).toBe(200);
+      expect(runtime).toHaveBeenLastCalledWith(
+        expect.objectContaining({ operation: "send", text: boundary }),
+      );
+    },
+  );
+  it.each(["send", "approve"])(
+    "reserves worker admission across %s preflight and dispatch",
+    async (operation) => {
+      await bootstrap();
+      await pair(true, true);
+      let finishPreflight!: (value: unknown) => void;
+      let finishControl!: (value: unknown) => void;
+      runtime.mockImplementation(async (params) => {
+        const op = (params as { operation: string }).operation;
+        if (op === "live")
+          return new Promise((resolve) => {
+            finishPreflight = resolve;
+          });
+        if (op === operation)
+          return new Promise((resolve) => {
+            finishControl = resolve;
+          });
+        return { sessions: [], events: [] };
+      });
+      const body = {
+        sessionId: "s",
+        text: "x",
+        requestId: "r",
+        bootId,
+        expectedRevision: 4,
+        turnId: "turn",
+        approvalId: "approval",
+        decision: "accept",
+      };
+      const control = http(`/api/web/v1/${operation}`, { method: "POST", body });
+      await vi.waitFor(() => expect(finishPreflight).toBeTypeOf("function"));
+      for (const path of ["catalog", "events?sessionId=s", "live?sessionId=s"]) {
+        expect((await http(`/api/web/v1/${path}`)).status).toBe(409);
+      }
+      expect(
+        (
+          await http(`/api/web/v1/${operation}`, {
+            method: "POST",
+            body: { ...body, sessionId: "other", requestId: "other" },
+          })
+        ).status,
+      ).toBe(409);
+      expect(runtime).toHaveBeenCalledTimes(1);
+      finishPreflight({
+        runtimeBootId: "r",
+        revision: 4,
+        sendEnabled: true,
+        approvals: [
+          {
+            requestId: "approval",
+            turnId: "turn",
+            supported: true,
+            availableDecisions: ["accept"],
+          },
+        ],
+      });
+      await vi.waitFor(() => expect(finishControl).toBeTypeOf("function"));
+      expect((await http("/api/web/v1/catalog")).status).toBe(409);
+      expect(runtime.mock.calls.map(([p]) => (p as { operation: string }).operation)).toEqual([
+        "live",
+        operation,
+      ]);
+      finishControl({ accepted: true });
+      expect((await control).status).toBe(200);
+      expect((await http("/api/web/v1/catalog")).status).toBe(200);
+    },
+  );
+  it("lets existing reads drain before the reserved preflight dispatches control", async () => {
+    await bootstrap();
+    await pair(true);
+    let finishRead!: () => void;
+    const readFinished = new Promise<void>((resolve) => {
+      finishRead = resolve;
+    });
+    let reading = false;
+    runtime.mockImplementation(async (params) => {
+      const op = (params as { operation: string }).operation;
+      if (op === "catalog") {
+        reading = true;
+        await readFinished;
+        reading = false;
+        return { sessions: [] };
+      }
+      if (op === "live") {
+        await readFinished;
+        return { runtimeBootId: "r", revision: 4, sendEnabled: true };
+      }
+      if (reading) throw new Error("web-busy");
+      return { accepted: true };
+    });
+    const catalog = http("/api/web/v1/catalog");
+    await vi.waitFor(() => expect(reading).toBe(true));
+    const control = http("/api/web/v1/send", {
+      method: "POST",
+      body: { sessionId: "s", text: "x", requestId: "r", bootId, expectedRevision: 4 },
+    });
+    await vi.waitFor(() => expect(runtime).toHaveBeenCalledTimes(2));
+    expect((await http("/api/web/v1/events?sessionId=s")).status).toBe(409);
+    finishRead();
+    expect((await catalog).status).toBe(200);
+    expect((await control).status).toBe(200);
+    expect(runtime.mock.calls.map(([p]) => (p as { operation: string }).operation)).toEqual([
+      "catalog",
+      "live",
+      "send",
+    ]);
+  });
+  it("releases read admission after preflight rejection without fencing the session", async () => {
+    await bootstrap();
+    await pair(true);
+    runtime.mockRejectedValueOnce(new Error("preflight unavailable"));
+    const body = { sessionId: "s", text: "x", requestId: "r", bootId, expectedRevision: 4 };
+    expect((await http("/api/web/v1/send", { method: "POST", body })).status).toBe(500);
+    expect((await http("/api/web/v1/catalog")).status).toBe(200);
+    expect(
+      (await http("/api/web/v1/send", { method: "POST", body: { ...body, requestId: "retry" } }))
+        .status,
+    ).toBe(200);
+  });
   it("rejects concurrent control and withholds results after authorization is revoked", async () => {
     await bootstrap();
     const id = await pair(true);

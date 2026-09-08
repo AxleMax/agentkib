@@ -59,6 +59,16 @@
 
 ## 过程记录
 
+### 2026-09-08 剩余 PR 评论本地 goal／review 闭环
+
+- 范围：评论 `3955837839`（UTF-8 超长）与 `3955837857`（Web worker 读请求抢占），以及本轮修改的 HTTP → RuntimeHost → Worker → Bridge 调用链；不是对整条 PR 的无缺陷保证。
+- 保留 16,000 字符限制，Web 使用 TextEncoder、HTTP 使用 Buffer.byteLength，额外执行 bridge 的 16,384 UTF-8 字节上限。Rust 共用验证函数在 runtime 读取来源、占用请求 ID 和建立 fence 前执行；bridge 保留独立调用时的同一校验。
+- HTTP 对整个 worker 的控制准入进行预留：从 preflight 至底层 mutation 完成，新的目录／历史／实时读和其他控制不入队；已有读取按 FIFO 排空。预检错误释放预留，mutation 超时不提前释放，真实不确定结果的 session fence 保留。无需扩大 runtime 接口或放宽 worker 的 idle-only 校验。
+- 补 ASCII／中文／emoji 边界、超长不调用 runtime 且可重用请求 ID、发送／审批期间读取竞争、预检错误释放、已有读取排空回归。所有测试使用隔离 fixture，不操作真实 Agent。
+- 独立 reviewer 按 review-agent 只读检查两轮：均为 No findings；第二轮重新核对最终 diff 和补充的已排队读取测试。覆盖限制：没有新增真实浏览器／真实 owner 验收，preflight 超时未单设回归（预检错误释放及 mutation 超时已覆盖）。
+- 本地验证：Rust 全工作区测试和 Clippy 通过；桌面全量 565 项、Web 27 项通过；最后补充读取排空测试后 HTTP 定向 27 项通过。类型检查、生产构建、Rust／前端格式检查、diff 检查通过；构建生成协议无差异。Linux bridge 交叉目标 Clippy 通过，不等于其他平台的实际执行验收。
+- 本地闭环完成后，按用户要求提交并推送至 PR #63，申请新一轮 Codex review；远端 CI／review 结果单独确认，不将本地通过等同于远端通过。保留 `design-qa.md` 和其他无关工作。
+
 ### 2026-09-08 PR #63 评论与跨平台 CI 修复
 
 - 更正上轮验证范围：本机 macOS 测试通过不能代表跨平台通过。提交 `b8bcfba` 的 CI 暴露了 Linux bridge dead-code lint、SQLite 新库并发 WAL 转换，以及 Windows 历史 fixture／游标问题。

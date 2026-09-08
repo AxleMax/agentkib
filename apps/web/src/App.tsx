@@ -28,6 +28,16 @@ import { Transcript } from "@agentkib/session-ui";
 import { dictionaries, type Locale } from "./i18n";
 const client = new WebClient();
 const MAX_MESSAGE_LENGTH = 16_000;
+const MAX_MESSAGE_BYTES = 16_384;
+const messageEncoder = new TextEncoder();
+function isValidMessage(message: string) {
+  const text = message.trim();
+  return (
+    !!text &&
+    message.length <= MAX_MESSAGE_LENGTH &&
+    messageEncoder.encode(text).byteLength <= MAX_MESSAGE_BYTES
+  );
+}
 export function Dialog({
   title,
   closeLabel,
@@ -371,7 +381,7 @@ export function App() {
   async function control(kind: "send" | "approve", approval?: Approval, decision?: Decision) {
     if (mutating.current || !access || !live || !online) return;
     const text = message.trim();
-    if (kind === "send" && (!text || message.length > MAX_MESSAGE_LENGTH)) return;
+    if (kind === "send" && !isValidMessage(message)) return;
     // A stable request ID does not mean the command/scope shown in an open
     // dialog is still current. Require the exact reviewed projection.
     if (
@@ -650,8 +660,7 @@ export function App() {
                     className="composer"
                     onSubmit={(e) => {
                       e.preventDefault();
-                      if (canSend && message.trim() && message.length <= MAX_MESSAGE_LENGTH)
-                        void control("send");
+                      if (canSend && isValidMessage(message)) void control("send");
                     }}
                   >
                     <label className="sr-only" htmlFor="message">
@@ -672,9 +681,7 @@ export function App() {
                       <button
                         className="send"
                         aria-label={t.send}
-                        disabled={
-                          !canSend || !message.trim() || message.length > MAX_MESSAGE_LENGTH
-                        }
+                        disabled={!canSend || !isValidMessage(message)}
                       >
                         <ArrowUp size={20} />
                       </button>

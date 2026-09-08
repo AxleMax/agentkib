@@ -23,6 +23,14 @@ pub const CLIENT_TYPE: &str = "agentkib-codex-bridge";
 pub const DESKTOP_VERSION: &str = "26.901.51231";
 pub const EXTENSION_VERSION: &str = "26.901.22334";
 
+pub fn validate_send_text(text: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !text.trim().is_empty() && text.len() <= 16 * 1024,
+        "text must be 1–16384 bytes"
+    );
+    Ok(())
+}
+
 /// These are per-method versions, not the unrelated App Server protocol version.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn method_version(method: &str) -> Option<u64> {

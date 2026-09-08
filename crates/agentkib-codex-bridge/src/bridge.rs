@@ -170,10 +170,7 @@ impl Bridge {
     }
 
     pub fn send_text_at_revision(&mut self, text: &str, revision: Option<u64>) -> Result<()> {
-        ensure!(
-            !text.trim().is_empty() && text.len() <= 16 * 1024,
-            "text must be 1–16384 bytes"
-        );
+        crate::validate_send_text(text)?;
         self.ready()?;
         let _operation = OperationGuard::acquire(
             &self.endpoint,

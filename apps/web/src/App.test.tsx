@@ -503,7 +503,11 @@ describe("Web access UI", () => {
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
   });
 
-  it("limits messages to the server's 16,000-character bound and validates before sending", async () => {
+  it.each([
+    ["ASCII character limit", "x".repeat(16_000)],
+    ["Chinese UTF-8 byte limit", "中".repeat(5_461) + "x"],
+    ["emoji UTF-8 byte limit", "😀".repeat(4_096)],
+  ])("validates the %s before sending", async (_label, boundary) => {
     const server = mockServer();
     const original = server.fetcher.getMockImplementation()!;
     server.fetcher.mockImplementation(async (url) => {
@@ -523,6 +527,7 @@ describe("Web access UI", () => {
           sendEnabled: true,
           approvals: [],
         });
+      if (String(url).endsWith("/send")) return Response.json({ accepted: true });
       return original(url);
     });
     render(<App />);
@@ -530,11 +535,23 @@ describe("Web access UI", () => {
     await screen.findByText("Secret history");
     const input = screen.getByLabelText("发送消息") as HTMLTextAreaElement;
     expect(input.maxLength).toBe(16_000);
-    fireEvent.change(input, { target: { value: "x".repeat(16_001) } });
+    fireEvent.change(input, { target: { value: boundary + "x" } });
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    fireEvent.submit(input.closest("form")!);
     expect(
       server.fetcher.mock.calls.filter((call) => String(call[0]).endsWith("/send")),
     ).toHaveLength(0);
+    fireEvent.change(input, { target: { value: boundary } });
+    expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(input).toHaveValue(""));
+    const requests = server.fetcher.mock.calls.filter((call) => String(call[0]).endsWith("/send"));
+    expect(requests).toHaveLength(1);
+    expect(server.fetcher).toHaveBeenCalledWith(
+      expect.stringMatching(/\/send$/),
+      expect.objectContaining({ body: expect.stringContaining(JSON.stringify(boundary)) }),
+    );
   });
 
   it("explains the host control fence without suggesting reopening restores control", async () => {

@@ -115,6 +115,13 @@ impl Default for Service {
 impl Service {
     fn request(&mut self, value: Value) -> anyhow::Result<Value> {
         let request: Request = serde_json::from_value(value)?;
+        // Reject known-invalid input before claiming a request or installing a
+        // control fence. The bridge shares this exact UTF-8 byte validation.
+        if request.operation == "send" {
+            agentkib_codex_bridge::validate_send_text(
+                request.text.as_deref().context("missing-text")?,
+            )?;
+        }
         anyhow::ensure!(
             matches!(
                 request.operation.as_str(),
@@ -498,6 +505,27 @@ fn complete_file_change(change: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_send_text_never_claims_or_fences_control() {
+        let mut service = Service::default();
+        for text in [" ".to_owned(), "中".repeat(6000), "🙂".repeat(4097)] {
+            assert!(
+                service
+                    .request(json!({"operation":"send", "sessionId":"test", "text":text}))
+                    .is_err()
+            );
+            assert!(service.used.is_empty());
+            assert!(service.unresolved.is_empty());
+        }
+        for text in [
+            "a".repeat(16384),
+            "🙂".repeat(4096),
+            format!("{}a", "中".repeat(5461)),
+        ] {
+            assert!(agentkib_codex_bridge::validate_send_text(&text).is_ok());
+        }
+    }
 
     // Projection uses the host's absolute-path semantics, even when control is
     // unavailable on that host. Keep fixtures valid on Windows as well as Unix.
